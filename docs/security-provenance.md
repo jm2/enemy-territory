@@ -31,6 +31,9 @@ it, and what has not been done. A cross-build proves only that code compiles.
 | libjpeg error exits were `ERR_FATAL`, so one bad file quit the game | Q3A `a1fd4795` | Mutation test: a bad file loads as no image |
 | WAV chunk and format bounds, sub-byte widths, rates and lengths the resamplers overflow, ADPCM temp buffer, sounds that outgrow the pool | Q3A `effec0fe`, `29c2d6bd`, `cb2dd0a3`, `80753e78`, `111f7aa2`, part of `dcc71126` and `716f7778` | `tests/security/test_wav.c` tests `GetWavinfo` under ASan and UBSan with truncation and 200,000 mutated headers. All 1,166 WAVs in the paks report the same format, length and offset as before. The review found a 0-sample 16-bit stream swapped its way up the stack on big-endian, now refused, with the swap tested. The resampler, pool and mixer guards have code review only |
 | Evicting a sound that is still playing | Not ported from Q3A (`dcc71126`). The mixer now skips a sound with no data, so this costs a dropped sound, not a NULL read | Code review |
+| pk3 zip reader: unterminated names, false entry counts, short reads taken as data, truncated stored entries, read position after metadata calls, decoder replacement | Q3A `2e59e544`, `40912889`, `2bd8a321`, `4c73c900`, `c73bd683`, `4d648eb6`, `b65457cb`, `ed0bff82`, `579bd4da`, and its `FS_LoadZipFile` | `tests/security/test_zip.c` under ASan and UBSan: crafted long name, false entry count and short stored entry, truncation, and 60,000 mutated files through the reader and `FS_LoadZipFile`. The host client joins with `sv_pure 1`, so the real paks still checksum the same |
+| zlib 1.1.3 double free of the bit length table | CVE-2002-0059, as zlib 1.1.4 | `test_zip.c`, with one crafted block: this zlib answers `Z_MEM_ERROR` from the data alone when a table outgrows `MANY` |
+| An entry declaring 2 GB or more reached callers as a negative length, and `FS_ReadFile` wrote the whole payload past its buffer. One just under 2 GB wrapped the hunk's own check to the same end, so entries over 1 GiB are refused and the check is made before the arithmetic. A short read returned stale hunk memory. A reopened handle shared the pak handle's decoder, for a use-after-free after an `ERR_DROP` | Q3A `204fe36d`, part of `03ec911e` and `d5ccf9d4`, and the `files.c` half of `40912889`. The 1 GiB cap and hunk check are local, and Q3A's hunk has the same wrap. All found by the independent review | The reviewer reproduced each under ASan with the real `files.c` and hunk code, the size bugs at `-m32` too, and confirmed the refusals at both word sizes. That harness is not in `tests/`. A real read of every entry in the four pk3s had no failures |
 | `SV_WriteDownloadToClient` checks | CVE-2006-2082 | Already in the 2.60 GPL source |
 | Unchecked allocations a Mac reaches (`R_GetImageBuffer`, `R_Hunk_Begin`, `SND_setup`) | Local | The first was found on the emulator (commit aa88b4d) |
 
@@ -40,8 +43,8 @@ it, and what has not been done. A cross-build proves only that code compiles.
   (`13f30fcb`) and `COM_ParseExt` (`22c68029`) are not reviewed against this tree yet.
 - `sv_userInfoFloodProtect` (`f5258c7d`) and the other server-side ETL fixes matter only for a
   listen server and are not ported.
-- BSP, model, shader, cinematic and zip loaders take pk3 content from a server. Only the image
-  loaders and the WAV and streaming paths are hardened so far. Q3A has a long validation series (`docs/review-*`
+- BSP, model, shader and cinematic loaders take pk3 content from a server, and are not hardened
+  yet. `inflate` itself is zlib 1.1.3 with the fix above and has only had the mutation test. Q3A has a long validation series (`docs/review-*`
   there). **A malicious server's pk3 remains the largest open risk**, and `sv_pure` does not
   defend a client against it.
 - `cm_optimizePatchPlanes` is not followed (E5). When it is, read it from `systemInfo`: the

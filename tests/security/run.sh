@@ -32,6 +32,17 @@ open(sys.argv[1],'w',encoding='latin-1').write(s[a:b]+d[c:e])
 W
 "$CC" $FLAGS -D__MACOS__ "-DWAV_INC=\"$OUT/wav.inc\"" tests/security/test_wav.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/wav"
 "$OUT/wav"
+# FS_LoadZipFile alone: its file needs the whole engine
+python3 - "$OUT/zip.inc" <<'Z'
+import sys
+s=open('src/qcommon/files.c',encoding='latin-1').read()
+a=s.index('#define MAX_ZPATH'); b=s.index('} pack_t;',a)+len('} pack_t;\n')
+c=s.index('static long FS_HashFileName'); d=s.index('\n}\n',c)+3
+e=s.index('static pack_t *FS_LoadZipFile('); f=s.index('\n}\n',e)+3
+open(sys.argv[1],'w',encoding='latin-1').write(s[a:b]+s[c:d]+s[e:f])
+Z
+"$CC" $FLAGS "-DZIP_INC=\"$OUT/zip.inc\"" tests/security/test_zip.c src/qcommon/unzip.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/zip"
+"$OUT/zip"
 JPEG=$(for f in jdapimin jdapistd jdatasrc jdcoefct jdcolor jddctmgr jdhuff jdinput jdmainct jdmarker jdmaster jdpostct jdsample jerror jmemmgr jmemnobs jutils jcomapi jidctflt; do echo src/jpeg-6/$f.c; done)
 # libjpeg's Huffman reader shifts its bit buffer through the sign bit by design. Harmless: its
 # memory errors are what matter, so only that check is off for it.
