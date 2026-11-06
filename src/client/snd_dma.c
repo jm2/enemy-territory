@@ -583,6 +583,12 @@ void S_memoryLoad( sfx_t *sfx ) {
 	if ( !S_LoadSound( sfx ) ) {
 //		Com_Printf( S_COLOR_YELLOW "WARNING: couldn't load sound: %s\n", sfx->soundName );
 		sfx->defaultSound = qtrue;
+		// a paged-out sound kept its length, which a refusal in S_LoadSound leaves, and the
+		// mixer would read that many samples from nothing. The default sound fails here
+		// every time, by its name, with its data intact
+		if ( !sfx->soundData ) {
+			sfx->soundLength = 0;
+		}
 	}
 	sfx->inMemory = qtrue;
 }
@@ -1068,6 +1074,11 @@ void S_AddLoopingSound( const vec3_t origin, const vec3_t velocity, const int ra
 		S_memoryLoad( sfx );
 	}
 
+	// a sound that failed to load or page back in plays nothing, as on a channel
+	if ( !sfx->soundLength && sfx->defaultSound ) {
+		return;
+	}
+
 	if ( !sfx->soundLength ) {
 		Com_Error( ERR_DROP, "%s has length 0", sfx->soundName );
 	}
@@ -1167,6 +1178,11 @@ void S_AddRealLoopingSound( const vec3_t origin, const vec3_t velocity, const in
 
 	if ( sfx->inMemory == qfalse ) {
 		S_memoryLoad( sfx );
+	}
+
+	// a sound that failed to load or page back in plays nothing, as on a channel
+	if ( !sfx->soundLength && sfx->defaultSound ) {
+		return;
 	}
 
 	if ( !sfx->soundLength ) {
@@ -1327,7 +1343,8 @@ If raw data was calculated, as with ADPCM, this should not be called.
 void S_ByteSwapRawSamples( int samples, int width, int s_channels, short *data ) {
 	int i;
 
-	if ( width != 2 ) {
+	// the loop below is a do-while: at 0 it would swap its way up the stack
+	if ( width != 2 || samples <= 0 ) {
 		return;
 	}
 #ifndef __MACOS__   //DAJ save this test
@@ -2026,7 +2043,6 @@ int FGetLittleShort( const fileHandle_t f ) {
 	return LittleShort( v );
 }
 
-// returns the length of the data in the chunk, or 0 if not found
 // the sample count divides by the frame size, S_RawSamples plays only 8 and 16 bit mono and
 // stereo at a positive rate, and the streaming code multiplies the rate by up to a buffer
 qboolean S_WavFormatPlayable( const wavinfo_t *info ) {
@@ -2034,6 +2050,7 @@ qboolean S_WavFormatPlayable( const wavinfo_t *info ) {
 		   && info->rate > 0 && info->rate <= 0x7fffffff / MAX_RAW_SAMPLES;
 }
 
+// returns the length of the data in the chunk, or 0 if not found
 int S_FindWavChunk( const fileHandle_t f, const char *chunk ) {
 	char name[5];
 	int len;
@@ -2212,9 +2229,15 @@ void S_StartBackgroundTrack( const char *intro, const char *loop, int fadeupTime
 		Com_Printf( "MUSIC: StartBgTrack:\n   playing %s\n   looping %s %d\n", intro, loopMusic, fadeupTime );
 	}
 
-	Cvar_Set( "s_currentMusic", loopMusic ); //----(SA)	so the savegame will have the right music
-
 	ss->info.samples = len / ( ss->info.width * ss->info.channels );
+	if ( ss->info.samples <= 0 ) {
+		FS_FCloseFile( fh );
+		Com_Printf( "No samples in %s\n", ss->name );
+		Sys_LeaveCriticalSection( crit );
+		return;
+	}
+
+	Cvar_Set( "s_currentMusic", loopMusic ); //----(SA)	so the savegame will have the right music
 
 	ss->samples = ss->info.samples;
 
@@ -2493,6 +2516,12 @@ float S_StartStreamingSound( const char *intro, const char *loop, int entnum, in
 	}
 
 	ss->info.samples = len / ( ss->info.width * ss->info.channels );
+	if ( ss->info.samples <= 0 ) {
+		FS_FCloseFile( fh );
+		Com_Printf( "No samples in %s\n", ss->name );
+		Sys_LeaveCriticalSection( crit );
+		return 0;
+	}
 
 	ss->samples = ss->info.samples;
 	ss->channel = channel;

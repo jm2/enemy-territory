@@ -69,6 +69,14 @@ int main( void ) {
 		for ( k = 1 + rand() % 6; k > 0; k-- ) m[rand() % 60] = rand() & 1 ? rand() : 0xff;
 		Parse( m, rand() & 3 ? n : rand() % ( n + 1 ) );
 	}
+	// a stream of no samples: this swap is a do-while on the big-endian path
+	{
+		short raw[8], canary = 0x1234;
+		memset( raw, 0, sizeof( raw ) );
+		raw[0] = canary;
+		S_ByteSwapRawSamples( 0, 2, 2, raw );
+		if ( raw[0] != canary ) { fprintf( stderr, "FAIL: swapped nothing\n" ); return 1; }
+	}
 	printf( "wav tests passed\n" );
 	return 0;
 }

@@ -26,9 +26,11 @@ python3 - "$OUT/wav.inc" <<'W'
 import sys
 s=open('src/client/snd_mem.c',encoding='latin-1').read()
 a=s.index('static byte    *data_p;'); b=s.index('\n}\n',s.index('static wavinfo_t GetWavinfo('))+3
-open(sys.argv[1],'w',encoding='latin-1').write(s[a:b])
+d=open('src/client/snd_dma.c',encoding='latin-1').read()
+c=d.index('void S_ByteSwapRawSamples( int samples, int width, int s_channels, short *data ) {'); e=d.index('\n}\n',c)+3
+open(sys.argv[1],'w',encoding='latin-1').write(s[a:b]+d[c:e])
 W
-"$CC" $FLAGS "-DWAV_INC=\"$OUT/wav.inc\"" tests/security/test_wav.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/wav"
+"$CC" $FLAGS -D__MACOS__ "-DWAV_INC=\"$OUT/wav.inc\"" tests/security/test_wav.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/wav"
 "$OUT/wav"
 JPEG=$(for f in jdapimin jdapistd jdatasrc jdcoefct jdcolor jddctmgr jdhuff jdinput jdmainct jdmarker jdmaster jdpostct jdsample jerror jmemmgr jmemnobs jutils jcomapi jidctflt; do echo src/jpeg-6/$f.c; done)
 # libjpeg's Huffman reader shifts its bit buffer through the sign bit by design. Harmless: its

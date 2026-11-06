@@ -853,7 +853,8 @@ void S_PaintChannels( int endtime ) {
 				count = sc->soundLength - sampleOffset;
 			}
 
-			if ( count > 0 ) {
+			// a sound that could not be paged back in has no data to paint
+			if ( count > 0 && sc->soundData ) {
 #ifdef TALKANIM
 				// Ridah, talking animations
 				// TODO: check that this entity has talking animations enabled!
