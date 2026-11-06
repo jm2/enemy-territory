@@ -2090,59 +2090,70 @@ Creates a new pak_t in the search chain for the contents
 of a zip file.
 =================
 */
-static pack_t *FS_LoadZipFile( char *zipfile, const char *basename ) {
-	fileInPack_t    *buildBuffer;
-	pack_t          *pack;
-	unzFile uf;
-	int err;
+static pack_t *FS_LoadZipFile( char *zipfile, const char *basename )
+{
+	fileInPack_t	*buildBuffer = NULL;
+	pack_t			*pack = NULL;
+	unzFile			uf;
+	int				err;
 	unz_global_info gi;
-	char filename_inzip[MAX_ZPATH];
-	unz_file_info file_info;
-	int i, len;
-	long hash;
-	int fs_numHeaderLongs;
-	int             *fs_headerLongs;
-	char            *namePtr;
+	char			filename_inzip[MAX_ZPATH];
+	unz_file_info	file_info;
+	int				i, len;
+	long			hash;
+	int				fs_numHeaderLongs;
+	int				*fs_headerLongs = NULL;
+	char			*namePtr;
+	int				nameBytes;
 
 	fs_numHeaderLongs = 0;
 
-	uf = unzOpen( zipfile );
-	err = unzGetGlobalInfo( uf,&gi );
-
-	if ( err != UNZ_OK ) {
+	uf = unzOpen(zipfile);
+	if (!uf)
 		return NULL;
-	}
+	err = unzGetGlobalInfo (uf,&gi);
 
-	fs_packFiles += gi.number_entry;
+	if (err != UNZ_OK)
+		goto invalid;
+	if (gi.number_entry > (unsigned long)(INT_MAX / sizeof(fileInPack_t)) ||
+		gi.number_entry > (unsigned long)(INT_MAX / sizeof(int)) ||
+		fs_packFiles < 0 || gi.number_entry > (unsigned long)(INT_MAX - fs_packFiles))
+		goto invalid;
 
 	len = 0;
-	unzGoToFirstFile( uf );
-	for ( i = 0; i < gi.number_entry; i++ )
+	if (gi.number_entry && unzGoToFirstFile(uf) != UNZ_OK)
+		goto invalid;
+	for (i = 0; i < gi.number_entry; i++)
 	{
-		err = unzGetCurrentFileInfo( uf, &file_info, filename_inzip, sizeof( filename_inzip ), NULL, 0, NULL, 0 );
-		if ( err != UNZ_OK ) {
-			break;
-		}
-		len += strlen( filename_inzip ) + 1;
-		unzGoToNextFile( uf );
+		err = unzGetCurrentFileInfo(uf, &file_info, filename_inzip, sizeof(filename_inzip), NULL, 0, NULL, 0);
+		if (err != UNZ_OK || file_info.size_filename >= sizeof(filename_inzip))
+			goto invalid;
+		nameBytes = (int)strlen(filename_inzip) + 1;
+		if (nameBytes != (int)file_info.size_filename + 1 || len > INT_MAX - nameBytes)
+			goto invalid;
+		len += nameBytes;
+		if (i + 1 < gi.number_entry && unzGoToNextFile(uf) != UNZ_OK)
+			goto invalid;
 	}
+	if (gi.number_entry > (unsigned long)((INT_MAX - len) / sizeof(fileInPack_t)))
+		goto invalid;
 
-	buildBuffer = Z_Malloc( ( gi.number_entry * sizeof( fileInPack_t ) ) + len );
-	namePtr = ( (char *) buildBuffer ) + gi.number_entry * sizeof( fileInPack_t );
-	fs_headerLongs = Z_Malloc( gi.number_entry * sizeof( int ) );
+	buildBuffer = Z_Malloc( (gi.number_entry * sizeof( fileInPack_t )) + len );
+	namePtr = ((char *) buildBuffer) + gi.number_entry * sizeof( fileInPack_t );
+	fs_headerLongs = Z_Malloc( gi.number_entry * sizeof(int) );
 
 	// get the hash table size from the number of files in the zip
 	// because lots of custom pk3 files have less than 32 or 64 files
-	for ( i = 1; i <= MAX_FILEHASH_SIZE; i <<= 1 ) {
-		if ( i > gi.number_entry ) {
+	for (i = 1; i <= MAX_FILEHASH_SIZE; i <<= 1) {
+		if (i > gi.number_entry) {
 			break;
 		}
 	}
 
-	pack = Z_Malloc( sizeof( pack_t ) + i * sizeof( fileInPack_t * ) );
+	pack = Z_Malloc( sizeof( pack_t ) + i * sizeof(fileInPack_t *) );
 	pack->hashSize = i;
-	pack->hashTable = ( fileInPack_t ** )( ( (char *) pack ) + sizeof( pack_t ) );
-	for ( i = 0; i < pack->hashSize; i++ ) {
+	pack->hashTable = (fileInPack_t **) (((char *) pack) + sizeof( pack_t ));
+	for(i = 0; i < pack->hashSize; i++) {
 		pack->hashTable[i] = NULL;
 	}
 
@@ -2156,39 +2167,55 @@ static pack_t *FS_LoadZipFile( char *zipfile, const char *basename ) {
 
 	pack->handle = uf;
 	pack->numfiles = gi.number_entry;
-	unzGoToFirstFile( uf );
+	if (gi.number_entry && unzGoToFirstFile(uf) != UNZ_OK)
+		goto invalid;
 
-	for ( i = 0; i < gi.number_entry; i++ )
+	for (i = 0; i < gi.number_entry; i++)
 	{
-		err = unzGetCurrentFileInfo( uf, &file_info, filename_inzip, sizeof( filename_inzip ), NULL, 0, NULL, 0 );
-		if ( err != UNZ_OK ) {
-			break;
-		}
-		if ( file_info.uncompressed_size > 0 ) {
-			fs_headerLongs[fs_numHeaderLongs++] = LittleLong( file_info.crc );
+		err = unzGetCurrentFileInfo(uf, &file_info, filename_inzip, sizeof(filename_inzip), NULL, 0, NULL, 0);
+		if (err != UNZ_OK || file_info.size_filename >= sizeof(filename_inzip))
+			goto invalid;
+		nameBytes = (int)strlen(filename_inzip) + 1;
+		if (nameBytes != (int)file_info.size_filename + 1 || nameBytes > len)
+			goto invalid;
+		if (file_info.uncompressed_size > 0) {
+			fs_headerLongs[fs_numHeaderLongs++] = LittleLong(file_info.crc);
 		}
 		Q_strlwr( filename_inzip );
-		hash = FS_HashFileName( filename_inzip, pack->hashSize );
+		hash = FS_HashFileName(filename_inzip, pack->hashSize);
 		buildBuffer[i].name = namePtr;
 		strcpy( buildBuffer[i].name, filename_inzip );
-		namePtr += strlen( filename_inzip ) + 1;
+		namePtr += nameBytes;
+		len -= nameBytes;
 		// store the file position in the zip
-		unzGetCurrentFileInfoPosition( uf, &buildBuffer[i].pos );
+		if (unzGetCurrentFileInfoPosition(uf, &buildBuffer[i].pos) != UNZ_OK)
+			goto invalid;
 		//
 		buildBuffer[i].next = pack->hashTable[hash];
 		pack->hashTable[hash] = &buildBuffer[i];
-		unzGoToNextFile( uf );
+		if (i + 1 < gi.number_entry && unzGoToNextFile(uf) != UNZ_OK)
+			goto invalid;
 	}
+	if (len)
+		goto invalid;
 
 	pack->checksum = Com_BlockChecksum( fs_headerLongs, 4 * fs_numHeaderLongs );
-	pack->pure_checksum = Com_BlockChecksumKey( fs_headerLongs, 4 * fs_numHeaderLongs, LittleLong( fs_checksumFeed ) );
+	pack->pure_checksum = Com_BlockChecksumKey( fs_headerLongs, 4 * fs_numHeaderLongs, LittleLong(fs_checksumFeed) );
 	pack->checksum = LittleLong( pack->checksum );
 	pack->pure_checksum = LittleLong( pack->pure_checksum );
 
-	Z_Free( fs_headerLongs );
+	Z_Free(fs_headerLongs);
 
 	pack->buildBuffer = buildBuffer;
+	fs_packFiles += (int)gi.number_entry;
 	return pack;
+
+invalid:
+	if (fs_headerLongs) Z_Free(fs_headerLongs);
+	if (buildBuffer) Z_Free(buildBuffer);
+	if (pack) Z_Free(pack);
+	unzClose(uf);
+	return NULL;
 }
 
 /*
