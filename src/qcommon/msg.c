@@ -127,15 +127,12 @@ bit functions
 // negative bit values include signs
 void MSG_WriteBits( msg_t *msg, int value, int bits ) {
 	int i;
-//	FILE*	fp;
 
 	oldsize += bits;
 
 	msg->uncompsize += bits;            // NERVE - SMF - net debugging
 
-	// this isn't an exact overflow check, but close enough
-	if ( msg->maxsize - msg->cursize < 32 ) {
-		msg->overflowed = qtrue;
+	if ( msg->overflowed ) {
 		return;
 	}
 
@@ -143,50 +140,30 @@ void MSG_WriteBits( msg_t *msg, int value, int bits ) {
 		Com_Error( ERR_DROP, "MSG_WriteBits: bad bits %i", bits );
 	}
 
-	// TTimo - the overflow count is not used anywhere atm
-#if 0
-	// check for overflows
-	if ( bits != 32 ) {
-		if ( bits > 0 ) {
-			if ( value > ( ( 1 << bits ) - 1 ) || value < 0 ) {
-				overflows++;
-			}
-		} else {
-			int r;
-			r = 1 << ( bits - 1 );
-			if ( value >  r - 1 || value < -r ) {
-				overflows++;
-			}
-		}
-	}
-#endif
 	if ( bits < 0 ) {
 		bits = -bits;
 	}
 	if ( msg->oob ) {
-		if ( bits == 8 ) {
-			msg->data[msg->cursize] = value;
-			msg->cursize += 1;
-			msg->bit += 8;
-		} else if ( bits == 16 ) {
-			unsigned short *sp = (unsigned short *)&msg->data[msg->cursize];
-			*sp = LittleShort( value );
-			msg->cursize += 2;
-			msg->bit += 16;
-		} else if ( bits == 32 ) {
-			unsigned int *ip = (unsigned int *)&msg->data[msg->cursize];
-			*ip = LittleLong( value );
-			msg->cursize += 4;
-			msg->bit += 8;
-		} else {
-			Com_Error( ERR_DROP, "can't read %d bits\n", bits );
+		if ( bits != 8 && bits != 16 && bits != 32 ) {
+			Com_Error( ERR_DROP, "MSG_WriteBits: can't write %d bits", bits );
 		}
+		if ( msg->cursize + ( bits >> 3 ) > msg->maxsize ) {
+			msg->overflowed = qtrue;
+			return;
+		}
+		for ( i = 0; i < bits; i += 8 ) {
+			msg->data[msg->cursize++] = ( value >> i ) & 0xff;
+		}
+		msg->bit += bits;
 	} else {
-//		fp = fopen("c:\\netchan.bin", "a");
 		value &= ( 0xffffffff >> ( 32 - bits ) );
 		if ( bits & 7 ) {
-			int nbits;
-			nbits = bits & 7;
+			int nbits = bits & 7;
+
+			if ( msg->bit + nbits > msg->maxsize << 3 ) {
+				msg->overflowed = qtrue;
+				return;
+			}
 			for ( i = 0; i < nbits; i++ ) {
 				Huff_putBit( ( value & 1 ), msg->data, &msg->bit );
 				value = ( value >> 1 );
@@ -195,13 +172,16 @@ void MSG_WriteBits( msg_t *msg, int value, int bits ) {
 		}
 		if ( bits ) {
 			for ( i = 0; i < bits; i += 8 ) {
-//				fwrite(bp, 1, 1, fp);
-				Huff_offsetTransmit( &msgHuff.compressor, ( value & 0xff ), msg->data, &msg->bit );
+				Huff_offsetTransmit( &msgHuff.compressor, ( value & 0xff ), msg->data, &msg->bit, msg->maxsize << 3 );
 				value = ( value >> 8 );
+
+				if ( msg->bit >= msg->maxsize << 3 ) {
+					msg->overflowed = qtrue;
+					return;
+				}
 			}
 		}
 		msg->cursize = ( msg->bit >> 3 ) + 1;
-//		fclose(fp);
 	}
 }
 
@@ -210,9 +190,14 @@ int MSG_ReadBits( msg_t *msg, int bits ) {
 	int get;
 	qboolean sgn;
 	int i, nbits;
-//	FILE*	fp;
 
 	value = 0;
+
+	// a read past the end leaves readcount beyond cursize, which every
+	// MSG_Read* wrapper and CL_ParseServerMessage check
+	if ( msg->readcount > msg->cursize ) {
+		return 0;
+	}
 
 	if ( bits < 0 ) {
 		bits = -bits;
@@ -222,44 +207,47 @@ int MSG_ReadBits( msg_t *msg, int bits ) {
 	}
 
 	if ( msg->oob ) {
-		if ( bits == 8 ) {
-			value = msg->data[msg->readcount];
-			msg->readcount += 1;
-			msg->bit += 8;
-		} else if ( bits == 16 ) {
-			unsigned short *sp = (unsigned short *)&msg->data[msg->readcount];
-			value = LittleShort( *sp );
-			msg->readcount += 2;
-			msg->bit += 16;
-		} else if ( bits == 32 ) {
-			unsigned int *ip = (unsigned int *)&msg->data[msg->readcount];
-			value = LittleLong( *ip );
-			msg->readcount += 4;
-			msg->bit += 32;
-		} else {
-			Com_Error( ERR_DROP, "can't read %d bits\n", bits );
+		if ( bits != 8 && bits != 16 && bits != 32 ) {
+			Com_Error( ERR_DROP, "MSG_ReadBits: can't read %d bits", bits );
 		}
+		if ( msg->readcount + ( bits >> 3 ) > msg->cursize ) {
+			msg->readcount = msg->cursize + 1;
+			return 0;
+		}
+		for ( i = 0; i < bits; i += 8 ) {
+			value |= (unsigned int)msg->data[msg->readcount++] << i;
+		}
+		if ( bits == 16 ) {
+			value = (short)value;
+		}
+		msg->bit += bits;
 	} else {
 		nbits = 0;
 		if ( bits & 7 ) {
 			nbits = bits & 7;
+			if ( msg->bit + nbits > msg->cursize << 3 ) {
+				msg->readcount = msg->cursize + 1;
+				return 0;
+			}
 			for ( i = 0; i < nbits; i++ ) {
 				value |= ( Huff_getBit( msg->data, &msg->bit ) << i );
 			}
 			bits = bits - nbits;
 		}
 		if ( bits ) {
-//			fp = fopen("c:\\netchan.bin", "a");
 			for ( i = 0; i < bits; i += 8 ) {
-				Huff_offsetReceive( msgHuff.decompressor.tree, &get, msg->data, &msg->bit );
-//				fwrite(&get, 1, 1, fp);
-				value |= ( get << ( i + nbits ) );
+				Huff_offsetReceive( msgHuff.decompressor.tree, &get, msg->data, &msg->bit, msg->cursize << 3 );
+				value = (unsigned int)value | ( (unsigned int)get << ( i + nbits ) );
+
+				if ( msg->bit > msg->cursize << 3 ) {
+					msg->readcount = msg->cursize + 1;
+					return 0;
+				}
 			}
-//			fclose(fp);
 		}
 		msg->readcount = ( msg->bit >> 3 ) + 1;
 	}
-	if ( sgn ) {
+	if ( sgn && bits > 0 && bits < 32 ) {
 		if ( value & ( 1 << ( bits - 1 ) ) ) {
 			value |= -1 ^ ( ( 1 << bits ) - 1 );
 		}
@@ -267,7 +255,6 @@ int MSG_ReadBits( msg_t *msg, int bits ) {
 
 	return value;
 }
-
 
 
 //================================================================================
@@ -1154,8 +1141,8 @@ void MSG_ReadDeltaEntity( msg_t *msg, entityState_t *from, entityState_t *to,
 	numFields = sizeof( entityStateFields ) / sizeof( entityStateFields[0] );
 	lc = MSG_ReadByte( msg );
 
-	if ( lc > numFields ) { //DAJ FIXME have gotten lc = 76 which is bigger than numFields!
-		lc = numFields;
+	if ( lc > numFields || lc < 0 ) {
+		Com_Error( ERR_DROP, "invalid field count %i in a delta", lc );
 	}
 
 	// shownet 2/3 will interleave with other printed info, -1 will
@@ -1747,6 +1734,10 @@ void MSG_ReadDeltaPlayerstate( msg_t *msg, playerState_t *from, playerState_t *t
 
 	numFields = sizeof( playerStateFields ) / sizeof( playerStateFields[0] );
 	lc = MSG_ReadByte( msg );
+
+	if ( lc > numFields || lc < 0 ) {
+		Com_Error( ERR_DROP, "invalid field count %i in a player delta", lc );
+	}
 
 	for ( i = 0, field = playerStateFields ; i < lc ; i++, field++ ) {
 		fromF = ( int * )( (byte *)from + field->offset );

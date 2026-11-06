@@ -882,6 +882,11 @@ fileHandle_t FS_FOpenFileWrite( const char *filename ) {
 		Com_Error( ERR_FATAL, "Filesystem call made without initialization\n" );
 	}
 
+	if ( !FS_CheckQPath( filename ) ) {
+		Com_Printf( "WARNING: refusing to write illegal qpath \"%s\"\n", filename );
+		return 0;
+	}
+
 	f = FS_HandleForFile();
 	fsh[f].zipFile = qfalse;
 
@@ -921,6 +926,11 @@ fileHandle_t FS_FOpenFileAppend( const char *filename ) {
 
 	if ( !fs_searchpaths ) {
 		Com_Error( ERR_FATAL, "Filesystem call made without initialization\n" );
+	}
+
+	if ( !FS_CheckQPath( filename ) ) {
+		Com_Printf( "WARNING: refusing to append to illegal qpath \"%s\"\n", filename );
+		return 0;
 	}
 
 	f = FS_HandleForFile();
@@ -1111,7 +1121,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 	// make absolutely sure that it can't back up the path.
 	// The searchpaths do guarantee that something will always
 	// be prepended, so we don't need to worry about "c:" or "//limbo"
-	if ( strstr( filename, ".." ) || strstr( filename, "::" ) ) {
+	if ( !FS_CheckQPath( filename ) ) {
 		*file = 0;
 		return -1;
 	}
@@ -1848,7 +1858,7 @@ int FS_FileIsInPAK( const char *filename, int *pChecksum ) {
 	// make absolutely sure that it can't back up the path.
 	// The searchpaths do guarantee that something will always
 	// be prepended, so we don't need to worry about "c:" or "//limbo"
-	if ( strstr( filename, ".." ) || strstr( filename, "::" ) ) {
+	if ( !FS_CheckQPath( filename ) ) {
 		return -1;
 	}
 
@@ -4063,7 +4073,7 @@ void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames )
 		fs_serverReferencedPaks[i] = atoi( Cmd_Argv( i ) );
 	}
 
-	for ( i = 0 ; i < c ; i++ ) {
+	for ( i = 0 ; i < MAX_SEARCH_PATHS ; i++ ) {
 		if ( fs_serverReferencedPakNames[i] ) {
 			Z_Free( fs_serverReferencedPakNames[i] );
 		}
@@ -4073,12 +4083,18 @@ void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames )
 		Cmd_TokenizeString( pakNames );
 
 		d = Cmd_Argc();
-		if ( d > MAX_SEARCH_PATHS ) {
-			d = MAX_SEARCH_PATHS;
+		if ( d > c ) {
+			d = c;
 		}
 
 		for ( i = 0 ; i < d ; i++ ) {
-			fs_serverReferencedPakNames[i] = CopyString( Cmd_Argv( i ) );
+			// these become paths in the home directory when a pak is
+			// downloaded, so an unsafe one is dropped here
+			if ( FS_CheckPakName( Cmd_Argv( i ) ) ) {
+				fs_serverReferencedPakNames[i] = CopyString( Cmd_Argv( i ) );
+			} else {
+				Com_Printf( "WARNING: ignoring unsafe pak name from the server\n" );
+			}
 		}
 	}
 }

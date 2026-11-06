@@ -188,7 +188,7 @@ void        NET_Restart( void );
 void        NET_Config( qboolean enableNetworking );
 
 void        NET_SendPacket( netsrc_t sock, int length, const void *data, netadr_t to );
-void QDECL NET_OutOfBandPrint( netsrc_t net_socket, netadr_t adr, const char *format, ... );
+void QDECL NET_OutOfBandPrint( netsrc_t net_socket, netadr_t adr, const char *format, ... ) Q_PRINTF_FORMAT( 3, 4 );
 void QDECL NET_OutOfBandData( netsrc_t sock, netadr_t adr, byte *format, int len );
 
 qboolean    NET_CompareAdr( netadr_t a, netadr_t b );
@@ -613,6 +613,10 @@ void Com_DumpFlightRecord( const char *fileName );
 #endif
 
 qboolean FS_Initialized();
+qboolean FS_CheckQPath( const char *qpath );
+qboolean FS_CheckGameDir( const char *dir );
+qboolean FS_CheckPakName( const char *name );
+qboolean FS_CheckDownloadName( const char *name );
 
 void    FS_InitFilesystem( void );
 void    FS_Shutdown( qboolean closemfp );
@@ -699,7 +703,7 @@ int     FS_FTell( fileHandle_t f );
 
 void    FS_Flush( fileHandle_t f );
 
-void QDECL FS_Printf( fileHandle_t f, const char *fmt, ... );
+void QDECL FS_Printf( fileHandle_t f, const char *fmt, ... ) Q_PRINTF_FORMAT( 2, 3 );
 // like fprintf
 
 int     FS_FOpenFileByMode( const char *qpath, fileHandle_t *f, fsMode_t mode );
@@ -1142,7 +1146,7 @@ void    *Sys_GetBotLibAPI( void *parms );
 
 char    *Sys_GetCurrentUser( void );
 
-void QDECL Sys_Error( const char *error, ... );
+void QDECL Sys_Error( const char *error, ... ) Q_PRINTF_FORMAT( 1, 2 );
 void    Sys_Quit( void );
 char    *Sys_GetClipboardData( void );  // note that this isn't journaled...
 
@@ -1247,9 +1251,9 @@ void    Huff_Decompress( msg_t *buf, int offset );
 void    Huff_Init( huffman_t *huff );
 void    Huff_addRef( huff_t* huff, byte ch );
 int     Huff_Receive( node_t *node, int *ch, byte *fin );
-void    Huff_transmit( huff_t *huff, int ch, byte *fout );
-void    Huff_offsetReceive( node_t *node, int *ch, byte *fin, int *offset );
-void    Huff_offsetTransmit( huff_t *huff, int ch, byte *fout, int *offset );
+void    Huff_transmit( huff_t *huff, int ch, byte *fout, int maxoffset );
+void    Huff_offsetReceive( node_t *node, int *ch, byte *fin, int *offset, int maxoffset );
+void    Huff_offsetTransmit( huff_t *huff, int ch, byte *fout, int *offset, int maxoffset );
 void    Huff_putBit( int bit, byte *fout, int *offset );
 int     Huff_getBit( byte *fout, int *offset );
 

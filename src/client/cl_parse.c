@@ -426,7 +426,7 @@ void CL_ParseSnapshot( msg_t *msg ) {
 	// read areamask
 	len = MSG_ReadByte( msg );
 
-	if ( len > sizeof( newSnap.areamask ) ) {
+	if ( len < 0 || len > sizeof( newSnap.areamask ) ) {
 		Com_Error( ERR_DROP,"CL_ParseSnapshot: Invalid size %d for areamask.", len );
 		return;
 	}
@@ -665,6 +665,10 @@ void CL_ParseGamestate( msg_t *msg ) {
 	}
 
 	clc.clientNum = MSG_ReadLong( msg );
+	// cgame indexes its client tables with this
+	if ( clc.clientNum < 0 || clc.clientNum >= MAX_CLIENTS ) {
+		Com_Error( ERR_DROP, "CL_ParseGamestate: clientNum %i out of range", clc.clientNum );
+	}
 	// read the checksum feed
 	clc.checksumFeed = MSG_ReadLong( msg );
 
@@ -776,7 +780,7 @@ void CL_ParseDownload( msg_t *msg ) {
 		Cvar_SetValue( "cl_downloadSize", clc.downloadSize );
 
 		if ( clc.downloadSize < 0 ) {
-			Com_Error( ERR_DROP, MSG_ReadString( msg ) );
+			Com_Error( ERR_DROP, "%s", MSG_ReadString( msg ) );
 			return;
 		}
 	}

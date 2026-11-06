@@ -1837,7 +1837,12 @@ Requests a file to download from the server.  Stores it in the current
 game directory.
 =================
 */
-void CL_BeginDownload( const char *localName, const char *remoteName ) {
+qboolean CL_BeginDownload( const char *localName, const char *remoteName ) {
+
+	if ( !FS_CheckDownloadName( localName ) || !FS_CheckDownloadName( remoteName ) ) {
+		Com_Printf( "WARNING: refusing a download with an unsafe name\n" );
+		return qfalse;
+	}
 
 	Com_DPrintf( "***** CL_BeginDownload *****\n"
 				 "Localname: %s\n"
@@ -1857,6 +1862,7 @@ void CL_BeginDownload( const char *localName, const char *remoteName ) {
 	clc.downloadCount = 0;
 
 	CL_AddReliableCommand( va( "download %s", remoteName ) );
+	return qtrue;
 }
 
 /*
@@ -1869,6 +1875,7 @@ A download completed or failed
 void CL_NextDownload( void ) {
 	char *s;
 	char *remoteName, *localName;
+	qboolean downloadStarted;
 
 	// We are looking to start a download here
 	if ( *clc.downloadList ) {
@@ -1895,12 +1902,17 @@ void CL_NextDownload( void ) {
 			s = localName + strlen( localName ); // point at the nul byte
 
 		}
-		CL_BeginDownload( localName, remoteName );
-
-		cls.downloadRestart = qtrue;
+		downloadStarted = CL_BeginDownload( localName, remoteName );
 
 		// move over the rest
 		memmove( clc.downloadList, s, strlen( s ) + 1 );
+
+		if ( !downloadStarted ) {
+			CL_NextDownload();
+			return;
+		}
+
+		cls.downloadRestart = qtrue;
 
 		return;
 	}
@@ -2008,7 +2020,7 @@ void CL_CheckForResend( void ) {
 		// EVEN BALANCE - T.RAY
 		strcpy( pkt, "getchallenge" ) ;
 		pktlen = strlen( pkt ) ;
-		NET_OutOfBandPrint( NS_CLIENT, clc.serverAddress, pkt );
+		NET_OutOfBandPrint( NS_CLIENT, clc.serverAddress, "%s", pkt );
 		break;
 
 	case CA_CHALLENGING:
@@ -2081,7 +2093,7 @@ void CL_DisconnectPacket( netadr_t from ) {
 	if ( !cls.bWWWDlDisconnected ) {
 		// drop the connection
 		message = "Server disconnected for unknown reason";
-		Com_Printf( message );
+		Com_Printf( "%s", message );
 		Cvar_Set( "com_errorMessage", message );
 		CL_Disconnect( qtrue );
 	} else {
@@ -2140,18 +2152,18 @@ void CL_PrintPacket( netadr_t from, msg_t *msg ) {
 	if ( !Q_stricmpn( s, "[err_dialog]", 12 ) ) {
 		Q_strncpyz( clc.serverMessage, s + 12, sizeof( clc.serverMessage ) );
 		// Cvar_Set("com_errorMessage", clc.serverMessage );
-		Com_Error( ERR_DROP, clc.serverMessage );
+		Com_Error( ERR_DROP, "%s", clc.serverMessage );
 	} else if ( !Q_stricmpn( s, "[err_prot]", 10 ) )       {
 		Q_strncpyz( clc.serverMessage, s + 10, sizeof( clc.serverMessage ) );
 		// Cvar_Set("com_errorMessage", CL_TranslateStringBuf( PROTOCOL_MISMATCH_ERROR_LONG ) );
-		Com_Error( ERR_DROP, CL_TranslateStringBuf( PROTOCOL_MISMATCH_ERROR_LONG ) );
+		Com_Error( ERR_DROP, "%s", CL_TranslateStringBuf( PROTOCOL_MISMATCH_ERROR_LONG ) );
 	} else if ( !Q_stricmpn( s, "[err_update]", 12 ) )       {
 		Q_strncpyz( clc.serverMessage, s + 12, sizeof( clc.serverMessage ) );
-		Com_Error( ERR_AUTOUPDATE, clc.serverMessage );
+		Com_Error( ERR_AUTOUPDATE, "%s", clc.serverMessage );
 	} else if ( !Q_stricmpn( s, "ET://", 5 ) )       { // fretn
 		Q_strncpyz( clc.serverMessage, s, sizeof( clc.serverMessage ) );
 		Cvar_Set( "com_errorMessage", clc.serverMessage );
-		Com_Error( ERR_DROP, clc.serverMessage );
+		Com_Error( ERR_DROP, "%s", clc.serverMessage );
 	} else {
 		Q_strncpyz( clc.serverMessage, s, sizeof( clc.serverMessage ) );
 	}
@@ -2613,7 +2625,7 @@ void CL_WWWDownload( void ) {
 			const char *error = va( "Download failure while getting '%s'\n", cls.downloadName ); // get the msg before clearing structs
 			cls.bWWWDlDisconnected = qfalse; // need clearing structs before ERR_DROP, or it goes into endless reload
 			CL_ClearStaticDownload();
-			Com_Error( ERR_DROP, error );
+			Com_Error( ERR_DROP, "%s", error );
 		} else {
 			// see CL_ParseDownload, same abort strategy
 			Com_Printf( "Download failure while getting '%s'\n", cls.downloadName );
@@ -4193,7 +4205,7 @@ void CL_GlobalServers_f( void ) {
 		buffptr += sprintf( buffptr, " demo" );
 	}
 
-	NET_OutOfBandPrint( NS_SERVER, to, command );
+	NET_OutOfBandPrint( NS_SERVER, to, "%s", command );
 }
 
 
@@ -5289,7 +5301,7 @@ CL_OpenURLForCvar
 */
 void CL_OpenURL( const char *url ) {
 	if ( !url || !strlen( url ) ) {
-		Com_Printf( CL_TranslateStringBuf( "invalid/empty URL\n" ) );
+		Com_Printf( "%s", CL_TranslateStringBuf( "invalid/empty URL\n" ) );
 		return;
 	}
 	Sys_OpenURL( url, qtrue );

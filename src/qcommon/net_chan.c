@@ -327,7 +327,7 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 		}
 
 		// copy the fragment to the fragment buffer
-		if ( fragmentLength < 0 || msg->readcount + fragmentLength > msg->cursize ||
+		if ( fragmentLength < 0 || fragmentLength > msg->cursize - msg->readcount ||
 			 chan->fragmentLength + fragmentLength > sizeof( chan->fragmentBuffer ) ) {
 			if ( showdrop->integer || showpackets->integer ) {
 				Com_Printf( "%s:illegal fragment length\n"
@@ -346,8 +346,9 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 			return qfalse;
 		}
 
-		if ( chan->fragmentLength > msg->maxsize ) {
-			Com_Printf( "%s:fragmentLength %i > msg->maxsize\n"
+		// the sequence number is written in front of the reassembled message
+		if ( chan->fragmentLength > msg->maxsize - 4 ) {
+			Com_Printf( "%s:fragmentLength %i > msg->maxsize - 4\n"
 						, NET_AdrToString( chan->remoteAddress ),
 						chan->fragmentLength );
 			return qfalse;
