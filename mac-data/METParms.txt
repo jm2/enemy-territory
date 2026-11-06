@@ -1,0 +1,4 @@
++set r_fullscreen 0
++set net_noudp 1
++set com_introplayed 1
++exec bringup.cfg

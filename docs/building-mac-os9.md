@@ -40,3 +40,27 @@ works too, with `tools/Retro68-src/Console` and
   Nothing checks the SIZE against the link yet.
 - **One patch to the mod.** `MAX_ANIMSCRIPT_MODELS` is 8, not 32, which saves 54 MB.
   `scripts/sync_legacy.sh` applies it.
+
+## Packaging
+
+```sh
+./build_mac.sh package             # images that start the game normally
+./build_mac.sh package --bringup   # with the stage 1 files of docs/target-run.md
+```
+
+This needs `genisoimage` or `mkisofs`, and the game data in `$ET_DATA_DIR`, which holds `etmain/`
+and `legacy/` and defaults to `~/et-data/run/base`. The data is never committed. Each file must
+match `mac-data/game-data.sha256`, so a demo pak or another mod release is refused before the
+build starts. The paks are at `https://mirror.etlegacy.com/etmain/`, and the mod pk3 is in the
+ET: Legacy v2.86.2 release.
+
+`release_mac/` is rebuilt from nothing each time, and both images are read back: the application
+must match `ET.pef`, and the data must match the checksums. `docs/target-run.md` lists the
+output. A plain build needs no game data.
+
+Every build also writes `build-mac/ET.manifest.txt` with the PEF's SHA-256 and the toolchain,
+and `cmake/mac_partition.py` fails it if the SIZE minimum cannot hold the linked image and the
+engine's fixed demand with headroom. `retro68_commit` reads `unknown` when `tools/Retro68-src`
+has no git checkout, as it does here, and `retro68_pinned` is then `no`.
+
+`tests/package/run.sh` checks the refusals and the partition arithmetic.

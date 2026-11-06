@@ -1,3 +1,4 @@
 /tools/
 /build*/
 *.pk3
+/release_mac/
