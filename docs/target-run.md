@@ -14,10 +14,13 @@ covers MacsBug, crashes and logs in more detail.
 | `package.txt` | Commit, whether the tree was modified, and the images' SHA-256 |
 | `symbols/` | `ET.xcoff` and the manifest. Stays on the build machine for crash reports |
 
-Leave out `--bringup` for an image with no `METParms.txt`, which starts the game normally.
+Leave out `--bringup` for an image with no `METParms.txt`, which starts the game normally,
+without sound until `s_initsound` is set (stage 4).
 
-Decode the MacBinary file on the Mac, mount the image, and copy the `Enemy Territory` folder
-to a writable disk. The volume is locked, and the game writes `etkey`, its config and its logs
+Decode the MacBinary file with StuffIt Expander, mount the image with Disk Copy 6.5, as for
+Quake III's images, and copy the `Enemy Territory` folder to a writable disk. That route is not
+yet tried for ET. The test VM has no Disk Copy, and the image has only been mounted there as a
+CD, which shows the same locked volume. The volume is locked, and the game writes `etkey`, its config and its logs
 beside itself. The tree on disk is:
 
 ```text
@@ -46,7 +49,7 @@ As Quake III's, renamed: `etboot.log` and `etboot.prev.log` beside the applicati
 Copy them out before launching again.
 
 ```sh
-python3 mac_symbolize.py etboot.log build-mac/ET.xcoff
+python3 mac_symbolize.py etboot.log release_mac/symbols/ET.xcoff
 ```
 
 ## Stages

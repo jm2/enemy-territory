@@ -10,26 +10,26 @@ heap, and with virtual memory off CFM loads the code there too.
 
 The fixed demand, with the Mac defaults read from the sources:
 
-  hunk        com_hunkMegs (at least MIN_COMHUNKMEGS), one calloc of +31 bytes
+  hunk        com_hunkMegs (at least MIN_COMHUNKMEGS), one malloc of +31 bytes
   zone        com_zoneMegs (the Mac build has no 16 MiB floor)
   small zone  s_smallZoneTotal
-  sound       com_soundMegs * 1536 buffers of sizeof(sndBuffer), plus the
+  sound       com_soundMegs * 512 buffers of sizeof(sndBuffer), plus the
               4-chunk scratch buffer (SND_setup); sound may be turned on
   stack       the 'cfrg' application stack size
   image       the PEF's .text, .data and .bss, plus the static module
               snapshots (vm_static.c copies each module's .data)
 
   host   Fail unless the SIZE minimum covers the fixed demand from the
-         sources, IMAGE_ALLOWANCE_KB for the image and HEADROOM_KB. Runs in
-         the host regressions so a larger default or a smaller SIZE
-         fails before anything is built.
+         sources, IMAGE_ALLOWANCE_KB for the image and HEADROOM_KB.
+         tests/package/run.sh runs it, so that a larger default or a smaller
+         SIZE fails without a build.
   map    The same, with the image measured from a linker map (--map) and
          required to stay within IMAGE_ALLOWANCE_KB, so a larger image fails
          the Retro68 build until the allowance and the SIZE are raised.
 
 Both modes also check MAC_HUNK_RESERVE_KB, what Com_InitHunkMemory leaves
 beside the hunk when it clamps com_hunkMegs to MaxBlock(): it must hold the
-sound pool and HEADROOM_KB, and at the SIZE minimum the default hunk must
+sound pool and RESERVE_ITEMS_KB, and at the SIZE minimum the default hunk must
 still fit beside it, so the clamp never shrinks the default.
 """
 
@@ -40,6 +40,9 @@ import sys
 IMAGE_ALLOWANCE_KB = 119 * 1024
 # Left for AGL/OpenGL, the Sound Manager, InputSprocket and fragmentation.
 HEADROOM_KB = 8 * 1024
+# What MAC_HUNK_RESERVE_KB holds beside the sound pool, from its comment: the renderer's 24 MiB
+# block, 6.3 MiB of listen server clients, and 21 MiB of image buffers for the mod's largest texture.
+RESERVE_ITEMS_KB = 24 * 1024 + 6452 + 21 * 1024
 # What the Mac build defines (and does not) when it compiles the engine.
 MAC_DEFINES = {"__MACOS__"}
 
@@ -238,14 +241,14 @@ def main():
     # the minimum the hunk sees the minimum less them.
     reserve = hunk_reserve(args.root)
     sound = next(size for item, size in items if item.startswith("sound pool"))
-    print("%-52s %9d KiB (sound pool and headroom %d KiB)"
-          % ("hunk reserve (MAC_HUNK_RESERVE_KB)", reserve // 1024, (sound + 1023) // 1024 + HEADROOM_KB))
-    if reserve < sound + HEADROOM_KB * 1024:
+    print("%-52s %9d KiB (needs %d KiB)"
+          % ("hunk reserve (MAC_HUNK_RESERVE_KB)", reserve // 1024, (sound + 1023) // 1024 + RESERVE_ITEMS_KB))
+    if reserve < sound + RESERVE_ITEMS_KB * 1024:
         fail("MAC_HUNK_RESERVE_KB in src/qcommon/common.c (%d KiB) does not hold the sound pool and "
-             "the %d KiB headroom " % (reserve // 1024, HEADROOM_KB))
+             "the %d KiB it is reserved for" % (reserve // 1024, RESERVE_ITEMS_KB))
     if minimum - demand + sound < reserve:
         fail("at the SIZE minimum, MAC_HUNK_RESERVE_KB in src/qcommon/common.c (%d KiB) leaves no room "
-             "for the default hunk, which Com_InitHunkMemory would refuse " % (reserve // 1024))
+             "for the default hunk, which Com_InitHunkMemory would shrink" % (reserve // 1024))
 
 
 if __name__ == "__main__":

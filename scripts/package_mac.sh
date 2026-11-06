@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Stage the application and game data and make the images that go to the Mac. build_mac.sh runs
-# this after a build. --check only looks for what a package needs. --bringup adds the stage 1
-# METParms.txt and bringup.cfg of docs/target-run.md.
+# Stage the application and game data and make the images that go to the Mac. Run it through
+# ./build_mac.sh package, so that the build it packages is the commit it records. --check only
+# looks for what a package needs. --bringup adds the stage 1 METParms.txt and bringup.cfg of
+# docs/target-run.md.
 #
 # Game data is found locally and never committed: ET_DATA_DIR holds etmain/ and legacy/, and
 # defaults to ~/et-data/run/base. Every file must match mac-data/game-data.sha256, because a
@@ -33,11 +34,17 @@ A demo pak or another mod release will not work: a pure server checks these exac
 BRINGUP=0
 case "${1:-}" in
     --check) check; exit 0 ;;
+    --from-build) ;;
+    *) fail "run this through ./build_mac.sh package" ;;
+esac
+case "${2:-}" in
     --bringup) BRINGUP=1 ;;
     "") ;;
-    *) fail "unknown option $1" ;;
+    *) fail "unknown option $2" ;;
 esac
 check
+COMMIT=$(git rev-parse HEAD) || fail "a package records its commit, so it needs a git checkout"
+OPT=$(sed -n 's/^ET_OPT:[A-Z]*=//p' build-mac/CMakeCache.txt)
 
 for container in "$APP.pef" "$APP.bin" "$APP.ad" "build-mac/%ET.ad" "$APP.xcoff" "$APP.manifest.txt"; do
     [ -s "$container" ] || fail "$container is missing; build first"
@@ -92,7 +99,8 @@ with open(image, "rb") as stream:
     for _, _, name, _ in volume.file_records():
         names[name] = names.get(name, 0) + 1
     expected = [line.split()[1].rsplit("/", 1)[1] for line in open(sums)]
-    extra = ["METParms.txt", "bringup.cfg"] if bringup == "1" else []
+    bringup_files = ["METParms.txt", "bringup.cfg"]
+    extra = bringup_files if bringup == "1" else []
     for name in expected + extra:
         if names.get(name) != 1:
             sys.exit("package_mac: %s is not in the image once: %s" % (name, sorted(names)))
@@ -101,8 +109,8 @@ with open(image, "rb") as stream:
         data = volume.read_file(path.rsplit("/", 1)[1]).data
         if hashlib.sha256(data).hexdigest() != sum_:
             sys.exit("package_mac: %s changed in the image" % path)
-    if bringup != "1" and "METParms.txt" in names:
-        sys.exit("package_mac: a bring-up parameter file got into a plain package")
+    if bringup != "1" and any(name in names for name in bringup_files):
+        sys.exit("package_mac: a bring-up file got into a plain package")
 print("image data verified: %d files" % len(expected))
 P
 
@@ -114,9 +122,11 @@ rm -rf "$CONTENT" "$BIN_CONTENT" "$TEMP"
 # stays here: mac_symbolize.py needs the matching XCOFF for a crash report
 cp "$APP.xcoff" "$APP.pef" "$APP.manifest.txt" "$SYMBOLS/"
 {
-    echo "commit=$(git rev-parse HEAD)"
+    echo "commit=$COMMIT"
     if [ -n "$(git status --porcelain)" ]; then echo "tree=modified"; else echo "tree=clean"; fi
+    echo "opt=$OPT"
     echo "bringup=$BRINGUP"
+    sed -n 's/^pef_sha256=/&/p' "$APP.manifest.txt"
     (cd "$RELEASE" && sha256sum ET_Install.img.bin ET_Bin.img.bin)
 } > "$RELEASE/package.txt"
 cat "$RELEASE/package.txt"
