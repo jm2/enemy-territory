@@ -541,6 +541,7 @@ void CL_SystemInfoChanged( void ) {
 	const char      *s, *t;
 	char key[BIG_INFO_KEY];
 	char value[BIG_INFO_VALUE];
+	int flags;
 
 	systemInfo = cl.gameState.stringData + cl.gameState.stringOffsets[ CS_SYSTEMINFO ];
 	// NOTE TTimo:
@@ -584,6 +585,20 @@ void CL_SystemInfoChanged( void ) {
 		Info_NextPair( &s, key, value );
 		if ( !key[0] ) {
 			break;
+		}
+
+		// Cvar_Set is forced, past CVAR_ROM and CVAR_INIT, so without this a server
+		// could set any cvar on the client: cl_guid, fs_homepath, rconPassword
+		if ( !Q_stricmp( key, "fs_game" ) && value[0] && !FS_CheckGameDir( value ) ) {
+			Com_Printf( S_COLOR_YELLOW "WARNING: server sent an invalid fs_game\n" );
+			continue;
+		}
+		flags = Cvar_Flags( key );
+		if ( flags != -1 && !( flags & ( CVAR_SYSTEMINFO | CVAR_USER_CREATED ) ) &&
+			 Q_stricmp( key, "g_synchronousClients" ) && Q_stricmp( key, "pmove_fixed" ) &&
+			 Q_stricmp( key, "pmove_msec" ) ) {
+			Com_DPrintf( S_COLOR_YELLOW "WARNING: server is not allowed to set %s\n", key );
+			continue;
 		}
 
 		Cvar_Set( key, value );

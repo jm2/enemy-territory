@@ -616,6 +616,7 @@ void QDECL Com_FlightRecord( const char *fmt, ... ) Q_PRINTF_FORMAT( 1, 2 );
 void Com_DumpFlightRecord( const char *fileName );
 #endif
 
+int Cvar_Flags( const char *var_name );
 qboolean FS_Initialized();
 qboolean FS_CheckQPath( const char *qpath );
 qboolean FS_CheckGameDir( const char *dir );
