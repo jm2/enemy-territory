@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage the application and game data and make the images that go to the Mac. Run it through
+# Stage the application and game data and make the files that go to the Mac. Run it through
 # ./build_mac.sh package, so that the build it packages is the commit it records. --check only
 # looks for what a package needs. --bringup adds the stage 1 METParms.txt and bringup.cfg of
 # docs/target-run.md.
@@ -46,17 +46,16 @@ check
 COMMIT=$(git rev-parse HEAD) || fail "a package records its commit, so it needs a git checkout"
 OPT=$(sed -n 's/^ET_OPT:[A-Z]*=//p' build-mac/CMakeCache.txt)
 
-for container in "$APP.pef" "$APP.bin" "$APP.ad" "build-mac/%ET.ad" "$APP.xcoff" "$APP.manifest.txt"; do
+for container in "$APP.pef" "$APP.bin" "$APP.ad" "build-mac/%ET.ad" "$APP.xcoff" "$APP.manifest.txt" build-mac/ETInstaller.bin; do
     [ -s "$container" ] || fail "$container is missing; build first"
 done
 
 # staging trees are rebuilt each time, so nothing left by another configuration gets in
 CONTENT=$RELEASE/content
-BIN_CONTENT=$RELEASE/bin_content
 TEMP=$RELEASE/temp
 SYMBOLS=$RELEASE/symbols
 rm -rf "$RELEASE"
-mkdir -p "$CONTENT/Enemy Territory/etmain" "$CONTENT/Enemy Territory/legacy" "$BIN_CONTENT" "$TEMP" "$SYMBOLS"
+mkdir -p "$CONTENT/Enemy Territory/etmain" "$CONTENT/Enemy Territory/legacy" "$TEMP" "$SYMBOLS"
 
 while read -r sum file; do
     cp "$DATA/$file" "$CONTENT/Enemy Territory/$file"
@@ -69,8 +68,6 @@ fi
 # genisoimage -double merges %ET into ET's forks
 cp "$APP.ad" "$CONTENT/Enemy Territory/ET"
 cp "build-mac/%ET.ad" "$CONTENT/Enemy Territory/%ET"
-cp "$APP.ad" "$BIN_CONTENT/ET"
-cp "build-mac/%ET.ad" "$BIN_CONTENT/%ET"
 
 # EXTN XLate CREATOR TYPE Comment. Raw keeps the text files byte for byte what was tested.
 MAPPING=$TEMP/hfs_mapping.txt
@@ -85,7 +82,6 @@ image() { # volume, staging tree, output
     python3 mac_app.py verify --creator WfET --hfs-name ET --pef "$APP.pef" "$3"
 }
 image "Enemy Territory" "$CONTENT" "$RELEASE/ET_Install.img"
-image "ET Binaries" "$BIN_CONTENT" "$RELEASE/ET_Bin.img"
 
 # the application check says nothing of the data, so read it back out of the image too
 python3 -I -B - "$RELEASE/ET_Install.img" "$SUMS" "$BRINGUP" <<'P'
@@ -115,9 +111,19 @@ print("image data verified: %d files" % len(expected))
 P
 
 python3 macbinary_encode.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" "iso " "dCpy"
-python3 macbinary_encode.py "$RELEASE/ET_Bin.img" "$RELEASE/ET_Bin.img.bin" "iso " "dCpy"
-rm -f "$RELEASE/ET_Install.img" "$RELEASE/ET_Bin.img"
-rm -rf "$CONTENT" "$BIN_CONTENT" "$TEMP"
+rm -f "$RELEASE/ET_Install.img"
+
+# the one-file install, and the bare application for a redeploy
+EXTRA=()
+if [ "$BRINGUP" = 1 ]; then EXTRA=(METParms.txt etmain/bringup.cfg); fi
+FILES=()
+while read -r sum file; do FILES+=("$file"); done < "$SUMS"
+python3 scripts/installer_pack.py pack build-mac/ETInstaller.bin "$TEMP/ET Installer" "$TEMP/ET Installer.rsrc" \
+    "$CONTENT/Enemy Territory" "$APP.bin" "${FILES[@]}" "${EXTRA[@]}"
+python3 macbinary_encode.py "$TEMP/ET Installer" "$RELEASE/ET_Installer.bin" "APPL" "WfEI" "$TEMP/ET Installer.rsrc"
+python3 scripts/installer_pack.py verify "$RELEASE/ET_Installer.bin" "$SUMS" "$APP.bin" "${EXTRA[@]}"
+cp "$APP.bin" "$RELEASE/ET.bin"
+rm -rf "$CONTENT" "$TEMP"
 
 # stays here: mac_symbolize.py needs the matching XCOFF for a crash report
 cp "$APP.xcoff" "$APP.pef" "$APP.manifest.txt" "$SYMBOLS/"
@@ -127,7 +133,7 @@ cp "$APP.xcoff" "$APP.pef" "$APP.manifest.txt" "$SYMBOLS/"
     echo "opt=$OPT"
     echo "bringup=$BRINGUP"
     sed -n 's/^pef_sha256=/&/p' "$APP.manifest.txt"
-    (cd "$RELEASE" && sha256sum ET_Install.img.bin ET_Bin.img.bin)
+    (cd "$RELEASE" && sha256sum ET_Installer.bin ET.bin ET_Install.img.bin)
 } > "$RELEASE/package.txt"
 cat "$RELEASE/package.txt"
 ls -l "$RELEASE"

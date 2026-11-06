@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Classic application, and with "package" the disk images to install it.
+# Build the Classic application, and with "package" the files that install it.
 # See docs/building-mac-os9.md. Usage: ./build_mac.sh [package [--bringup]] [cmake options]
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,7 +23,7 @@ for option in "$@"; do
     esac
 done
 cmake -S . -B build-mac -DET_TARGET=mac -DCMAKE_TOOLCHAIN_FILE=cmake/Retro68.toolchain.cmake "$@" >/dev/null
-cmake --build build-mac -j"$(nproc)" --target ET_APPL
+cmake --build build-mac -j"$(nproc)" --target ET_APPL ET_INSTALLER_APPL
 head -c 8 build-mac/ET.pef | grep -aq 'Joy!peff' || { echo "ET.pef is not a PEF" >&2; exit 1; }
 python3 mac_app.py verify --creator WfET --pef build-mac/ET.pef build-mac/ET.bin build-mac/ET.dsk build-mac/%ET.ad
 # the manifest must describe the PEF that was just built
