@@ -34,6 +34,7 @@ If you have questions concerning this license or the applicable additional terms
 */
 
 #include "tr_local.h"
+#include "tr_image_cursor.h"
 
 /*
  * Include file for users of JPEG library.
@@ -47,9 +48,6 @@ If you have questions concerning this license or the applicable additional terms
 #include "../jpeg-6/jpeglib.h"
 
 
-static void LoadBMP( const char *name, byte **pic, int *width, int *height );
-static void LoadTGA( const char *name, byte **pic, int *width, int *height );
-static void LoadJPG( const char *name, byte **pic, int *width, int *height );
 
 static byte s_intensitytable[256];
 static unsigned char s_gammatable[256];
@@ -78,7 +76,7 @@ typedef enum {
 int imageBufferSize[BUFFER_MAX_TYPES] = {0,0,0};
 void        *imageBufferPtr[BUFFER_MAX_TYPES] = {NULL,NULL,NULL};
 
-void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
+static void *R_AllocImageBuffer( int size, bufferMemType_t bufferType ) {
 	if ( imageBufferSize[bufferType] < R_IMAGE_BUFFER_SIZE && size <= imageBufferSize[bufferType] ) {
 		if ( imageBufferPtr[bufferType] ) {
 			free( imageBufferPtr[bufferType] );
@@ -88,7 +86,7 @@ void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
 //DAJ TEST		imageBufferPtr[bufferType] = Z_Malloc( imageBufferSize[bufferType] );
 		if ( !imageBufferPtr[bufferType] ) {
 			imageBufferSize[bufferType] = 0;
-			ri.Error( ERR_DROP, "R_GetImageBuffer: out of memory for %i bytes", R_IMAGE_BUFFER_SIZE );
+			return NULL;
 		}
 	}
 	if ( size > imageBufferSize[bufferType] ) {   // it needs to grow
@@ -99,16 +97,29 @@ void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
 		imageBufferSize[bufferType] = size;
 		imageBufferPtr[bufferType] = malloc( imageBufferSize[bufferType] );
 //DAJ TEST		imageBufferPtr[bufferType] = Z_Malloc( imageBufferSize[bufferType] );
-		// a large texture in the mod's pk3 can exceed the heap of a Mac partition,
-		// and the callers write through this at once: at address 0 on Classic Mac OS,
-		// over the system's low memory with nothing to report it
 		if ( !imageBufferPtr[bufferType] ) {
 			imageBufferSize[bufferType] = 0;
-			ri.Error( ERR_DROP, "R_GetImageBuffer: out of memory for %i bytes", size );
+			return NULL;
 		}
 	}
 
 	return imageBufferPtr[bufferType];
+}
+
+// a large texture in the mod's pk3 can exceed the heap of a Mac partition, and callers of this
+// write through the result at once: at address 0 on Classic Mac OS, over the system's low
+// memory with nothing to report it
+void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
+	void *buffer = R_AllocImageBuffer( size, bufferType );
+
+	if ( !buffer ) {
+		ri.Error( ERR_DROP, "R_GetImageBuffer: out of memory for %i bytes", size );
+	}
+	return buffer;
+}
+
+void *R_TryImageBuffer( int size ) {
+	return R_AllocImageBuffer( size, BUFFER_IMAGE );
 }
 
 void R_FreeImageBuffer( void ) {
@@ -744,6 +755,13 @@ static void Upload32(   unsigned *data,
 		scaled_width >>= 1;
 		scaled_height >>= 1;
 	}
+	// a 4096x1 file reached zero here, and the mip loop below waits forever for height to reach it
+	if ( scaled_width < 1 ) {
+		scaled_width = 1;
+	}
+	if ( scaled_height < 1 ) {
+		scaled_height = 1;
+	}
 
 	//scaledBuffer = ri.Hunk_AllocateTempMemory( sizeof( unsigned ) * scaled_width * scaled_height );
 	scaledBuffer = R_GetImageBuffer( sizeof( unsigned ) * scaled_width * scaled_height, BUFFER_SCALED );
@@ -1007,713 +1025,6 @@ image_t *R_CreateImage( const char *name, const byte *pic, int width, int height
 	return image;
 }
 
-/*
-=========================================================
-
-BMP LOADING
-
-=========================================================
-*/
-typedef struct
-{
-	char id[2];
-	unsigned long fileSize;
-	unsigned long reserved0;
-	unsigned long bitmapDataOffset;
-	unsigned long bitmapHeaderSize;
-	unsigned long width;
-	unsigned long height;
-	unsigned short planes;
-	unsigned short bitsPerPixel;
-	unsigned long compression;
-	unsigned long bitmapDataSize;
-	unsigned long hRes;
-	unsigned long vRes;
-	unsigned long colors;
-	unsigned long importantColors;
-	unsigned char palette[256][4];
-} BMPHeader_t;
-
-static void LoadBMP( const char *name, byte **pic, int *width, int *height ) {
-	int columns, rows, numPixels;
-	byte    *pixbuf;
-	int row, column;
-	byte    *buf_p;
-	byte    *buffer;
-	int length;
-	BMPHeader_t bmpHeader;
-	byte        *bmpRGBA;
-
-	*pic = NULL;
-
-	//
-	// load the file
-	//
-	length = ri.FS_ReadFile( ( char * ) name, (void **)&buffer );
-	if ( !buffer ) {
-		return;
-	}
-
-	buf_p = buffer;
-
-	bmpHeader.id[0] = *buf_p++;
-	bmpHeader.id[1] = *buf_p++;
-	bmpHeader.fileSize = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.reserved0 = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.bitmapDataOffset = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.bitmapHeaderSize = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.width = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.height = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.planes = LittleShort( *( short * ) buf_p );
-	buf_p += 2;
-	bmpHeader.bitsPerPixel = LittleShort( *( short * ) buf_p );
-	buf_p += 2;
-	bmpHeader.compression = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.bitmapDataSize = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.hRes = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.vRes = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.colors = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-	bmpHeader.importantColors = LittleLong( *( long * ) buf_p );
-	buf_p += 4;
-
-	memcpy( bmpHeader.palette, buf_p, sizeof( bmpHeader.palette ) );
-
-	if ( bmpHeader.bitsPerPixel == 8 ) {
-		buf_p += 1024;
-	}
-
-	if ( bmpHeader.id[0] != 'B' && bmpHeader.id[1] != 'M' ) {
-		ri.Error( ERR_DROP, "LoadBMP: only Windows-style BMP files supported (%s)\n", name );
-	}
-	if ( bmpHeader.fileSize != length ) {
-		ri.Error( ERR_DROP, "LoadBMP: header size does not match file size (%lu vs. %d) (%s)\n", (unsigned long)bmpHeader.fileSize, length, name );
-	}
-	if ( bmpHeader.compression != 0 ) {
-		ri.Error( ERR_DROP, "LoadBMP: only uncompressed BMP files supported (%s)\n", name );
-	}
-	if ( bmpHeader.bitsPerPixel < 8 ) {
-		ri.Error( ERR_DROP, "LoadBMP: monochrome and 4-bit BMP files not supported (%s)\n", name );
-	}
-
-	columns = bmpHeader.width;
-	rows = bmpHeader.height;
-	if ( rows < 0 ) {
-		rows = -rows;
-	}
-	numPixels = columns * rows;
-
-	if ( width ) {
-		*width = columns;
-	}
-	if ( height ) {
-		*height = rows;
-	}
-
-	bmpRGBA = R_GetImageBuffer( numPixels * 4, BUFFER_IMAGE );
-
-	*pic = bmpRGBA;
-
-
-	for ( row = rows - 1; row >= 0; row-- )
-	{
-		pixbuf = bmpRGBA + row * columns * 4;
-
-		for ( column = 0; column < columns; column++ )
-		{
-			unsigned char red, green, blue, alpha;
-			int palIndex;
-			unsigned short shortPixel;
-
-			switch ( bmpHeader.bitsPerPixel )
-			{
-			case 8:
-				palIndex = *buf_p++;
-				*pixbuf++ = bmpHeader.palette[palIndex][2];
-				*pixbuf++ = bmpHeader.palette[palIndex][1];
-				*pixbuf++ = bmpHeader.palette[palIndex][0];
-				*pixbuf++ = 0xff;
-				break;
-			case 16:
-				shortPixel = *( unsigned short * ) pixbuf;
-				pixbuf += 2;
-				*pixbuf++ = ( shortPixel & ( 31 << 10 ) ) >> 7;
-				*pixbuf++ = ( shortPixel & ( 31 << 5 ) ) >> 2;
-				*pixbuf++ = ( shortPixel & ( 31 ) ) << 3;
-				*pixbuf++ = 0xff;
-				break;
-
-			case 24:
-				blue = *buf_p++;
-				green = *buf_p++;
-				red = *buf_p++;
-				*pixbuf++ = red;
-				*pixbuf++ = green;
-				*pixbuf++ = blue;
-				*pixbuf++ = 255;
-				break;
-			case 32:
-				blue = *buf_p++;
-				green = *buf_p++;
-				red = *buf_p++;
-				alpha = *buf_p++;
-				*pixbuf++ = red;
-				*pixbuf++ = green;
-				*pixbuf++ = blue;
-				*pixbuf++ = alpha;
-				break;
-			default:
-				ri.Error( ERR_DROP, "LoadBMP: illegal pixel_size '%d' in file '%s'\n", bmpHeader.bitsPerPixel, name );
-				break;
-			}
-		}
-	}
-
-	ri.FS_FreeFile( buffer );
-
-}
-
-
-/*
-=================================================================
-
-PCX LOADING
-
-=================================================================
-*/
-
-
-/*
-==============
-LoadPCX
-==============
-*/
-#define DECODEPCX( b, d, r ) d = *b++; if ( ( d & 0xC0 ) == 0xC0 ) {r = d & 0x3F; d = *b++;} else {r = 1;}
-
-static void LoadPCX( const char *filename, byte **pic, byte **palette, int *width, int *height ) {
-	byte    *raw;
-	pcx_t   *pcx;
-	int x, y, lsize;
-	int len;
-	int dataByte, runLength;
-	byte    *out, *pix;
-	int xmax, ymax;
-
-	*pic = NULL;
-	*palette = NULL;
-	runLength = 0;
-
-	//
-	// load the file
-	//
-	len = ri.FS_ReadFile( ( char * ) filename, (void **)&raw );
-	if ( !raw ) {
-		return;
-	}
-
-	//
-	// parse the PCX file
-	//
-	pcx = (pcx_t *)raw;
-	raw = &pcx->data;
-
-	xmax = LittleShort( pcx->xmax );
-	ymax = LittleShort( pcx->ymax );
-
-	if ( pcx->manufacturer != 0x0a
-		 || pcx->version != 5
-		 || pcx->encoding != 1
-		 || pcx->bits_per_pixel != 8
-		 || xmax >= 1024
-		 || ymax >= 1024 ) {
-		ri.Printf( PRINT_ALL, "Bad pcx file %s (%i x %i) (%i x %i)\n", filename, xmax + 1, ymax + 1, pcx->xmax, pcx->ymax );
-		return;
-	}
-
-	out = R_GetImageBuffer( ( ymax + 1 ) * ( xmax + 1 ), BUFFER_IMAGE );
-
-	*pic = out;
-
-	pix = out;
-
-	if ( palette ) {
-		*palette = ri.Z_Malloc( 768 );
-		memcpy( *palette, (byte *)pcx + len - 768, 768 );
-	}
-
-	if ( width ) {
-		*width = xmax + 1;
-	}
-	if ( height ) {
-		*height = ymax + 1;
-	}
-// FIXME: use bytes_per_line here?
-
-	// Arnout: this doesn't work for all pcx files
-	/*for (y=0 ; y<=ymax ; y++, pix += xmax+1)
-	{
-		for (x=0 ; x<=xmax ; )
-		{
-			dataByte = *raw++;
-
-			if((dataByte & 0xC0) == 0xC0)
-			{
-				runLength = dataByte & 0x3F;
-				dataByte = *raw++;
-			}
-			else
-				runLength = 1;
-
-			while(runLength-- > 0)
-				pix[x++] = dataByte;
-		}
-
-	}*/
-
-	lsize = pcx->color_planes * pcx->bytes_per_line;
-
-	// go scanline by scanline
-	for ( y = 0; y <= pcx->ymax; y++, pix += pcx->xmax + 1 )
-	{
-		// do a scanline
-		for ( x = 0; x <= pcx->xmax; )
-		{
-			DECODEPCX( raw, dataByte, runLength );
-			while ( runLength-- > 0 )
-				pix[ x++ ] = dataByte;
-		}
-
-		// discard any other data
-		while ( x < lsize )
-		{
-			DECODEPCX( raw, dataByte, runLength );
-			x++;
-		}
-		while ( runLength-- > 0 )
-			x++;
-	}
-
-	if ( raw - (byte *)pcx > len ) {
-		ri.Printf( PRINT_DEVELOPER, "PCX file %s was malformed", filename );
-		ri.Free( *pic );
-		*pic = NULL;
-	}
-
-	ri.FS_FreeFile( pcx );
-}
-
-
-/*
-==============
-LoadPCX32
-==============
-*/
-static void LoadPCX32( const char *filename, byte **pic, int *width, int *height ) {
-	byte    *palette;
-	byte    *pic8;
-	int i, c, p;
-	byte    *pic32;
-
-	LoadPCX( filename, &pic8, &palette, width, height );
-	if ( !pic8 ) {
-		*pic = NULL;
-		return;
-	}
-
-	c = ( *width ) * ( *height );
-	pic32 = *pic = R_GetImageBuffer( 4 * c, BUFFER_IMAGE );
-	for ( i = 0 ; i < c ; i++ ) {
-		p = pic8[i];
-		pic32[0] = palette[p * 3];
-		pic32[1] = palette[p * 3 + 1];
-		pic32[2] = palette[p * 3 + 2];
-		pic32[3] = 255;
-		pic32 += 4;
-	}
-
-	ri.Free( pic8 );
-	ri.Free( palette );
-}
-
-/*
-=========================================================
-
-TARGA LOADING
-
-=========================================================
-*/
-
-/*
-=============
-LoadTGA
-=============
-*/
-void LoadTGA( const char *name, byte **pic, int *width, int *height ) {
-	int columns, rows, numPixels;
-	byte    *pixbuf;
-	int row, column;
-	byte    *buf_p;
-	byte    *buffer;
-	TargaHeader targa_header;
-	byte        *targa_rgba;
-
-	*pic = NULL;
-
-	//
-	// load the file
-	//
-	ri.FS_ReadFile( ( char * ) name, (void **)&buffer );
-	if ( !buffer ) {
-		return;
-	}
-
-	buf_p = buffer;
-
-	targa_header.id_length = *buf_p++;
-	targa_header.colormap_type = *buf_p++;
-	targa_header.image_type = *buf_p++;
-
-	targa_header.colormap_index = LittleShort( *(short *)buf_p );
-	buf_p += 2;
-	targa_header.colormap_length = LittleShort( *(short *)buf_p );
-	buf_p += 2;
-	targa_header.colormap_size = *buf_p++;
-	targa_header.x_origin = LittleShort( *(short *)buf_p );
-	buf_p += 2;
-	targa_header.y_origin = LittleShort( *(short *)buf_p );
-	buf_p += 2;
-	targa_header.width = LittleShort( *(short *)buf_p );
-	buf_p += 2;
-	targa_header.height = LittleShort( *(short *)buf_p );
-	buf_p += 2;
-	targa_header.pixel_size = *buf_p++;
-	targa_header.attributes = *buf_p++;
-
-	if ( targa_header.image_type != 2
-		 && targa_header.image_type != 10
-		 && targa_header.image_type != 3 ) {
-		ri.Error( ERR_DROP, "LoadTGA: Only type 2 (RGB), 3 (gray), and 10 (RGB) TGA images supported\n" );
-	}
-
-	if ( targa_header.colormap_type != 0 ) {
-		ri.Error( ERR_DROP, "LoadTGA: colormaps not supported\n" );
-	}
-
-	if ( ( targa_header.pixel_size != 32 && targa_header.pixel_size != 24 ) && targa_header.image_type != 3 ) {
-		ri.Error( ERR_DROP, "LoadTGA: Only 32 or 24 bit images supported (no colormaps)\n" );
-	}
-
-	columns = targa_header.width;
-	rows = targa_header.height;
-	numPixels = columns * rows;
-
-	if ( width ) {
-		*width = columns;
-	}
-	if ( height ) {
-		*height = rows;
-	}
-
-	targa_rgba = R_GetImageBuffer( numPixels * 4, BUFFER_IMAGE );
-	*pic = targa_rgba;
-
-	if ( targa_header.id_length != 0 ) {
-		buf_p += targa_header.id_length;  // skip TARGA image comment
-
-	}
-	if ( targa_header.image_type == 2 || targa_header.image_type == 3 ) {
-		// Uncompressed RGB or gray scale image
-		for ( row = rows - 1; row >= 0; row-- )
-		{
-			pixbuf = targa_rgba + row * columns * 4;
-			for ( column = 0; column < columns; column++ )
-			{
-				unsigned char red,green,blue,alphabyte;
-				switch ( targa_header.pixel_size )
-				{
-
-				case 8:
-					blue = *buf_p++;
-					green = blue;
-					red = blue;
-					*pixbuf++ = red;
-					*pixbuf++ = green;
-					*pixbuf++ = blue;
-					*pixbuf++ = 255;
-					break;
-
-				case 24:
-					blue = *buf_p++;
-					green = *buf_p++;
-					red = *buf_p++;
-					*pixbuf++ = red;
-					*pixbuf++ = green;
-					*pixbuf++ = blue;
-					*pixbuf++ = 255;
-					break;
-				case 32:
-					blue = *buf_p++;
-					green = *buf_p++;
-					red = *buf_p++;
-					alphabyte = *buf_p++;
-					*pixbuf++ = red;
-					*pixbuf++ = green;
-					*pixbuf++ = blue;
-					*pixbuf++ = alphabyte;
-					break;
-				default:
-					ri.Error( ERR_DROP, "LoadTGA: illegal pixel_size '%d' in file '%s'\n", targa_header.pixel_size, name );
-					break;
-				}
-			}
-		}
-	} else if ( targa_header.image_type == 10 )       { // Runlength encoded RGB images
-		unsigned char red,green,blue,alphabyte,packetHeader,packetSize,j;
-
-		red = 0;
-		green = 0;
-		blue = 0;
-		alphabyte = 0xff;
-
-		for ( row = rows - 1; row >= 0; row-- ) {
-			pixbuf = targa_rgba + row * columns * 4;
-			for ( column = 0; column < columns; ) {
-				packetHeader = *buf_p++;
-				packetSize = 1 + ( packetHeader & 0x7f );
-				if ( packetHeader & 0x80 ) {        // run-length packet
-					switch ( targa_header.pixel_size ) {
-					case 24:
-						blue = *buf_p++;
-						green = *buf_p++;
-						red = *buf_p++;
-						alphabyte = 255;
-						break;
-					case 32:
-						blue = *buf_p++;
-						green = *buf_p++;
-						red = *buf_p++;
-						alphabyte = *buf_p++;
-						break;
-					default:
-						ri.Error( ERR_DROP, "LoadTGA: illegal pixel_size '%d' in file '%s'\n", targa_header.pixel_size, name );
-						break;
-					}
-
-					for ( j = 0; j < packetSize; j++ ) {
-						*pixbuf++ = red;
-						*pixbuf++ = green;
-						*pixbuf++ = blue;
-						*pixbuf++ = alphabyte;
-						column++;
-						if ( column == columns ) { // run spans across rows
-							column = 0;
-							if ( row > 0 ) {
-								row--;
-							} else {
-								goto breakOut;
-							}
-							pixbuf = targa_rgba + row * columns * 4;
-						}
-					}
-				} else {                            // non run-length packet
-					for ( j = 0; j < packetSize; j++ ) {
-						switch ( targa_header.pixel_size ) {
-						case 24:
-							blue = *buf_p++;
-							green = *buf_p++;
-							red = *buf_p++;
-							*pixbuf++ = red;
-							*pixbuf++ = green;
-							*pixbuf++ = blue;
-							*pixbuf++ = 255;
-							break;
-						case 32:
-							blue = *buf_p++;
-							green = *buf_p++;
-							red = *buf_p++;
-							alphabyte = *buf_p++;
-							*pixbuf++ = red;
-							*pixbuf++ = green;
-							*pixbuf++ = blue;
-							*pixbuf++ = alphabyte;
-							break;
-						default:
-							ri.Error( ERR_DROP, "LoadTGA: illegal pixel_size '%d' in file '%s'\n", targa_header.pixel_size, name );
-							break;
-						}
-						column++;
-						if ( column == columns ) { // pixel packet run spans across rows
-							column = 0;
-							if ( row > 0 ) {
-								row--;
-							} else {
-								goto breakOut;
-							}
-							pixbuf = targa_rgba + row * columns * 4;
-						}
-					}
-				}
-			}
-breakOut:;
-		}
-	}
-
-	ri.FS_FreeFile( buffer );
-}
-
-static void LoadJPG( const char *filename, unsigned char **pic, int *width, int *height ) {
-	/* This struct contains the JPEG decompression parameters and pointers to
-	 * working space (which is allocated as needed by the JPEG library).
-	 */
-	struct jpeg_decompress_struct cinfo;
-	/* We use our private extension JPEG error handler.
-	 * Note that this struct must live as long as the main JPEG parameter
-	 * struct, to avoid dangling-pointer problems.
-	 */
-	/* This struct represents a JPEG error handler.  It is declared separately
-	 * because applications often want to supply a specialized error handler
-	 * (see the second half of this file for an example).  But here we just
-	 * take the easy way out and use the standard error handler, which will
-	 * print a message on stderr and call exit() if compression fails.
-	 * Note that this struct must live as long as the main JPEG parameter
-	 * struct, to avoid dangling-pointer problems.
-	 */
-	struct jpeg_error_mgr jerr;
-	/* More stuff */
-	JSAMPARRAY buffer;      /* Output row buffer */
-	int row_stride;     /* physical row width in output buffer */
-	unsigned char *out;
-	byte  *fbuffer;
-	byte  *bbuf;
-
-	/* In this example we want to open the input file before doing anything else,
-	 * so that the setjmp() error recovery below can assume the file is open.
-	 * VERY IMPORTANT: use "b" option to fopen() if you are on a machine that
-	 * requires it in order to read binary files.
-	 */
-
-	ri.FS_ReadFile( ( char * ) filename, (void **)&fbuffer );
-	if ( !fbuffer ) {
-		return;
-	}
-
-	/* Step 1: allocate and initialize JPEG decompression object */
-
-	/* We have to set up the error handler first, in case the initialization
-	 * step fails.  (Unlikely, but it could happen if you are out of memory.)
-	 * This routine fills in the contents of struct jerr, and returns jerr's
-	 * address which we place into the link field in cinfo.
-	 */
-	cinfo.err = jpeg_std_error( &jerr );
-
-	/* Now we can initialize the JPEG decompression object. */
-	jpeg_create_decompress( &cinfo );
-
-	/* Step 2: specify data source (eg, a file) */
-
-	jpeg_stdio_src( &cinfo, fbuffer );
-
-	/* Step 3: read file parameters with jpeg_read_header() */
-
-	(void) jpeg_read_header( &cinfo, TRUE );
-	/* We can ignore the return value from jpeg_read_header since
-	 *   (a) suspension is not possible with the stdio data source, and
-	 *   (b) we passed TRUE to reject a tables-only JPEG file as an error.
-	 * See libjpeg.doc for more info.
-	 */
-
-	/* Step 4: set parameters for decompression */
-
-	/* In this example, we don't need to change any of the defaults set by
-	 * jpeg_read_header(), so we do nothing here.
-	 */
-
-	/* Step 5: Start decompressor */
-
-	(void) jpeg_start_decompress( &cinfo );
-	/* We can ignore the return value since suspension is not possible
-	 * with the stdio data source.
-	 */
-
-	/* We may need to do some setup of our own at this point before reading
-	 * the data.  After jpeg_start_decompress() we have the correct scaled
-	 * output image dimensions available, as well as the output colormap
-	 * if we asked for color quantization.
-	 * In this example, we need to make an output work buffer of the right size.
-	 */
-	/* JSAMPLEs per row in output buffer */
-	row_stride = cinfo.output_width * cinfo.output_components;
-
-	out = R_GetImageBuffer( cinfo.output_width * cinfo.output_height * cinfo.output_components, BUFFER_IMAGE );
-
-	*pic = out;
-	*width = cinfo.output_width;
-	*height = cinfo.output_height;
-
-	/* Step 6: while (scan lines remain to be read) */
-	/*           jpeg_read_scanlines(...); */
-
-	/* Here we use the library's state variable cinfo.output_scanline as the
-	 * loop counter, so that we don't have to keep track ourselves.
-	 */
-	while ( cinfo.output_scanline < cinfo.output_height ) {
-		/* jpeg_read_scanlines expects an array of pointers to scanlines.
-		 * Here the array is only one element long, but you could ask for
-		 * more than one scanline at a time if that's more convenient.
-		 */
-		bbuf = ( ( out + ( row_stride * cinfo.output_scanline ) ) );
-		buffer = &bbuf;
-		(void) jpeg_read_scanlines( &cinfo, buffer, 1 );
-	}
-
-	// clear all the alphas to 255
-	{
-		int i, j;
-		byte    *buf;
-
-		buf = *pic;
-
-		j = cinfo.output_width * cinfo.output_height * 4;
-		for ( i = 3 ; i < j ; i += 4 ) {
-			buf[i] = 255;
-		}
-	}
-
-	/* Step 7: Finish decompression */
-
-	(void) jpeg_finish_decompress( &cinfo );
-	/* We can ignore the return value since suspension is not possible
-	 * with the stdio data source.
-	 */
-
-	/* Step 8: Release JPEG decompression object */
-
-	/* This is an important step since it will release a good deal of memory. */
-	jpeg_destroy_decompress( &cinfo );
-
-	/* After finish_decompress, we can close the input file.
-	 * Here we postpone it until after no more JPEG errors are possible,
-	 * so as to simplify the setjmp error logic above.  (Actually, I don't
-	 * think that jpeg_destroy can do an error exit, but why assume anything...)
-	 */
-	ri.FS_FreeFile( fbuffer );
-
-	/* At this point you may want to check to see whether any corrupt-data
-	 * warnings occurred (test whether jerr.pub.num_warnings is nonzero).
-	 */
-
-	/* And we're done! */
-}
 
 
 /* Expanded data destination object for stdio output */
@@ -2034,12 +1345,12 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height ) {
 	*height = 0;
 
 	len = strlen( name );
-	if ( len < 5 ) {
+	if ( len < 5 || len >= MAX_QPATH ) {
 		return;
 	}
 
 	if ( !Q_stricmp( name + len - 4, ".tga" ) ) {
-		LoadTGA( name, pic, width, height );        // try tga first
+		R_LoadTGA( name, pic, width, height );      // try tga first
 		if ( !*pic ) {
 			char altname[MAX_QPATH];                // try jpg in place of tga
 			strcpy( altname, name );
@@ -2047,14 +1358,14 @@ void R_LoadImage( const char *name, byte **pic, int *width, int *height ) {
 			altname[len - 3] = 'j';
 			altname[len - 2] = 'p';
 			altname[len - 1] = 'g';
-			LoadJPG( altname, pic, width, height );
+			R_LoadJPG( altname, pic, width, height );
 		}
 	} else if ( !Q_stricmp( name + len - 4, ".pcx" ) ) {
-		LoadPCX32( name, pic, width, height );
+		R_LoadPCX( name, pic, width, height );
 	} else if ( !Q_stricmp( name + len - 4, ".bmp" ) ) {
-		LoadBMP( name, pic, width, height );
+		R_LoadBMP( name, pic, width, height );
 	} else if ( !Q_stricmp( name + len - 4, ".jpg" ) ) {
-		LoadJPG( name, pic, width, height );
+		R_LoadJPG( name, pic, width, height );
 	}
 }
 
@@ -2129,8 +1440,12 @@ image_t *R_FindImageFile( const char *name, qboolean mipmap, qboolean allowPicmi
 #if !defined( _WIN32 )
 		char altname[MAX_QPATH];                              // copy the name
 		int len;                                              //
-		strcpy( altname, name );                              //
-		len = strlen( altname );                              //
+		len = strlen( name );                                 //
+		// a shader's map token reaches here at any length, with R_LoadImage having refused it
+		if ( len < 3 || len >= MAX_QPATH ) {                  //
+			return NULL;                                      //
+		}                                                     //
+		Q_strncpyz( altname, name, sizeof( altname ) );       //
 		altname[len - 3] = toupper( altname[len - 3] );             // and try upper case extension for unix systems
 		altname[len - 2] = toupper( altname[len - 2] );             //
 		altname[len - 1] = toupper( altname[len - 1] );             //

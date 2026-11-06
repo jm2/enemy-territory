@@ -184,7 +184,10 @@ decompress_onepass( j_decompress_ptr cinfo, JSAMPIMAGE output_buf ) {
 				inverse_DCT = cinfo->idct->inverse_DCT[compptr->component_index];
 				useful_width = ( MCU_col_num < last_MCU_col ) ? compptr->MCU_width
 							   : compptr->last_col_width;
-				output_ptr = output_buf[ci] + yoffset * compptr->DCT_scaled_size;
+				/* ci is the order in this scan, and the planes are in frame order. A file
+				 * that reorders its scan sent a larger plane's rows into a subsampled one
+				 * and wrote past the end, with data of its choosing. */
+				output_ptr = output_buf[compptr->component_index] + yoffset * compptr->DCT_scaled_size;
 				start_col = MCU_col_num * compptr->MCU_sample_width;
 				for ( yindex = 0; yindex < compptr->MCU_height; yindex++ ) {
 					if ( cinfo->input_iMCU_row < last_iMCU_row ||

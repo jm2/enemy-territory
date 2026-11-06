@@ -76,7 +76,7 @@ typedef huff_entropy_decoder * huff_entropy_ptr;
 METHODDEF void
 start_pass_huff_decoder( j_decompress_ptr cinfo ) {
 	huff_entropy_ptr entropy = (huff_entropy_ptr) cinfo->entropy;
-	int ci, dctbl, actbl;
+	int ci, dctbl, actbl, i, count;
 	jpeg_component_info * compptr;
 
 	/* Check that the scan parameters Ss, Se, Ah/Al are OK for sequential JPEG.
@@ -100,6 +100,18 @@ start_pass_huff_decoder( j_decompress_ptr cinfo ) {
 		if ( actbl < 0 || actbl >= NUM_HUFF_TBLS ||
 			 cinfo->ac_huff_tbl_ptrs[actbl] == NULL ) {
 			ERREXIT1( cinfo, JERR_NO_HUFF_TABLE, actbl );
+		}
+		/* From libjpeg 6b: a DC symbol is a bit count that indexes extend_test[] */
+		for ( i = 0, count = 0; i < 16; i++ ) {
+			count += cinfo->dc_huff_tbl_ptrs[dctbl]->bits[i + 1];
+		}
+		if ( count > 256 ) {
+			ERREXIT( cinfo, JERR_BAD_HUFF_TABLE );
+		}
+		for ( i = 0; i < count; i++ ) {
+			if ( cinfo->dc_huff_tbl_ptrs[dctbl]->huffval[i] > 15 ) {
+				ERREXIT( cinfo, JERR_BAD_HUFF_TABLE );
+			}
 		}
 		/* Compute derived values for Huffman tables */
 		/* We may do this more than once for a table, but it's not expensive */
@@ -150,6 +162,10 @@ jpeg_make_d_derived_tbl( j_decompress_ptr cinfo, JHUFF_TBL * htbl,
 
 	p = 0;
 	for ( l = 1; l <= 16; l++ ) {
+		/* From libjpeg 6b: the marker reader bounds this, but a table can also come from elsewhere */
+		if ( (int) htbl->bits[l] > 256 - p ) {
+			ERREXIT( cinfo, JERR_BAD_HUFF_TABLE );
+		}
 		for ( i = 1; i <= (int) htbl->bits[l]; i++ )
 			huffsize[p++] = (char) l;
 	}
@@ -165,6 +181,10 @@ jpeg_make_d_derived_tbl( j_decompress_ptr cinfo, JHUFF_TBL * htbl,
 		while ( ( (int) huffsize[p] ) == si ) {
 			huffcode[p++] = code;
 			code++;
+		}
+		/* From libjpeg 6b: codes too long for their length would index past the lookahead tables */
+		if ( ( (INT32) code ) >= ( ( (INT32) 1 ) << si ) ) {
+			ERREXIT( cinfo, JERR_BAD_HUFF_TABLE );
 		}
 		code <<= 1;
 		si++;

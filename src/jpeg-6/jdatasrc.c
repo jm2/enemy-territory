@@ -26,7 +26,8 @@
 typedef struct {
 	struct jpeg_source_mgr pub; /* public fields */
 
-	unsigned char *infile;      /* source stream */
+	const unsigned char *infile; /* source bytes */
+	size_t remaining;           /* bytes left in them */
 	JOCTET * buffer;    /* start of buffer */
 	boolean start_of_file;  /* have we gotten any data yet? */
 } my_source_mgr;
@@ -90,12 +91,26 @@ METHODDEF boolean
 fill_input_buffer( j_decompress_ptr cinfo ) {
 	my_src_ptr src = (my_src_ptr) cinfo->src;
 
-	memcpy( src->buffer, src->infile, INPUT_BUF_SIZE );
+	size_t count = src->remaining < INPUT_BUF_SIZE ? src->remaining : INPUT_BUF_SIZE;
 
-	src->infile += INPUT_BUF_SIZE;
+	if ( count == 0 ) {
+		/* id copied a block past the end of the file on every refill */
+		if ( src->start_of_file ) {
+			ERREXIT( cinfo, JERR_INPUT_EMPTY );
+		}
+		WARNMS( cinfo, JWRN_JPEG_EOF );
+		/* Insert a fake EOI marker */
+		src->buffer[0] = (JOCTET) 0xFF;
+		src->buffer[1] = (JOCTET) JPEG_EOI;
+		count = 2;
+	} else {
+		memcpy( src->buffer, src->infile, count );
+		src->infile += count;
+		src->remaining -= count;
+	}
 
 	src->pub.next_input_byte = src->buffer;
-	src->pub.bytes_in_buffer = INPUT_BUF_SIZE;
+	src->pub.bytes_in_buffer = count;
 	src->start_of_file = FALSE;
 
 	return TRUE;
@@ -167,11 +182,11 @@ term_source( j_decompress_ptr cinfo ) {
  */
 
 GLOBAL void
-jpeg_stdio_src( j_decompress_ptr cinfo, unsigned char *infile ) {
+jpeg_mem_src( j_decompress_ptr cinfo, const unsigned char *infile, size_t length ) {
 	my_src_ptr src;
 
 	/* The source object and input buffer are made permanent so that a series
-	 * of JPEG images can be read from the same file by calling jpeg_stdio_src
+	 * of JPEG images can be read from the same file by calling jpeg_mem_src
 	 * only before the first one.  (If we discarded the buffer at the end of
 	 * one image, we'd likely lose the start of the next one.)
 	 * This makes it unsafe to use this manager and a different source
@@ -194,6 +209,7 @@ jpeg_stdio_src( j_decompress_ptr cinfo, unsigned char *infile ) {
 	src->pub.resync_to_restart = jpeg_resync_to_restart; /* use default method */
 	src->pub.term_source = term_source;
 	src->infile = infile;
+	src->remaining = length;
 	src->pub.bytes_in_buffer = 0; /* forces fill_input_buffer on first read */
 	src->pub.next_input_byte = NULL; /* until buffer loaded */
 }
