@@ -47,7 +47,7 @@ All are client-side and none changes the wire format.
 | --- | --- | --- | --- |
 | E1 | **`cl_guid` from an `etkey` file**: port `CL_GenerateETKey`, `CL_UpdateGUID`, `Com_MD5FileETCompat` from ETL `cl_main.c` and `md5.c` | Required. `src/` has no `cl_guid` code (PunkBuster set it in retail), and `g_guidCheck` defaults to 1 in `legacy.cfg`. Without this, default servers refuse the client. | **Done, verified.** Same scheme and file format as ETL's own client |
 | E2 | **Pure checksums for static modules** | Required on pure servers. `SV_VerifyPaks_f` wants the checksum of the pk3 holding `cgame` and `ui`. `FS_ReferencedPakPureChecksums` only gets them from `FS_CGAME_REF`/`FS_UI_REF`, set when the DLL is opened from a pk3. A static client opens nothing, so `Sys_LoadDll` opens and closes `cgame.mp.i386.so` and `ui.mp.i386.so` by name. The release pk3 has every platform's DLLs; the server checks its own, in the same pk3. | **Done, verified:** without it the server logs `nChkSum1 0 == ...` and rejects the client as unpure |
-| E3 | **Refuse mismatched mod versions** | A static cgame only matches one release. `CG_Init` compares `GAME_VERSION` only, so a `legacy_v2.86.1.pk3` server would load and could desync. The client checks `fs_game` and `sv_referencedPakNames` at connect. | **Done, verified** against a server with the pk3 renamed |
+| E3 | **Refuse mismatched mod versions** | A static cgame only matches one release. `CG_Init` compares `GAME_VERSION` only, so a `legacy_v2.86.1.pk3` server would load and could desync. The client checks `fs_game` and `sv_referencedPakNames` at connect. | **Done, verified** against a server with the pk3 renamed. Known limits: a server holding two legacy pk3s passes, and one with the pk3 in `etmain/` is refused. Neither is a standard install |
 | E4 | **Raise `MAX_RELIABLE_COMMANDS` to 256** | ETL servers keep 256, 2.60 clients 64. More than 64 unacknowledged commands would hit 2.60's "rotated out" `ERR_DROP`. The netchan key uses the same string either way. | Inferred, not seen in the runs |
 | E5 | **Follow `cm_optimizePatchPlanes`** | ETL servers default to 0 and publish it in systeminfo; 2.60 always behaves as 1. Prediction could differ on curved surfaces. | Inferred, not seen in the runs. Measure before porting |
 
@@ -79,7 +79,8 @@ machine, not a 64-bit binary. The engine passes pointers through `int` in the VM
 syscall path, and the target is 32-bit, so 64-bit cleanup buys nothing the Mac needs.
 All host runs use a no-op GL, so rendering is only proven by the retail runs above.
 
-**Memory:** static data is about 67 MB in cgame, 65 MB in qagame and 8.5 MB in ui,
+**Memory:** static data is about 67 MB in cgame, 65 MB in qagame and 12.7 MB in ui
+(its pool doubles off x86, so 8.5 MB is the x86 figure),
 mostly `cgs`, `level`, `cg_polyBuffers` and the qagame pool. All of it comes out of
 the Mac's fixed partition, on top of the hunk.
 
@@ -140,7 +141,7 @@ Platform functions the ET engine uses that Q3A `code/mac` does not provide, to
 stub or write: `Sys_Chmod`, `Sys_Cwd`, `Sys_GetCurrentUser`, `Sys_GetDLLName`,
 `Sys_GetProcessorId`, `Sys_GetCPUSpeed`, `Sys_GetHighQualityCPU`,
 `Sys_ProcessorCount`, `Sys_IsNumLockDown`, `Sys_OpenURL`, `Sys_StartProcess`,
-`Sys_In_Restart_f`, `Sys_SetErrorText`, `Sys_DisplaySystemConsole`,
+`Sys_In_Restart_f`, `Sys_RandomBytes`, `Sys_SetErrorText`, `Sys_DisplaySystemConsole`,
 `Sys_ConcatenateFileLists`, `Sys_CountFileList`, `Sys_EndProfiling`, the
 critical-section trio, `Sys_ShowIP` and `DL_*`. `Sys_GetBotLibAPI`,
 `Sys_GetCGameAPI` and `Sys_Unload*` turn up in old code and may be unused.
