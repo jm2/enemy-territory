@@ -35,15 +35,19 @@ resource 'SIZE' (-1) {
 	reserved,
 	
 	/* Preferred and minimum partition. At the minimum the fixed demand is about
-	   333 MiB: the image (6.4 MiB of text, 0.6 of data and 166 of bss, of which
-	   146 is the modules'; CFM loads it into the partition when virtual memory is
-	   off), the 80 MiB hunk, the 16.5 MiB of zones, the 2 MiB stack, and the
+	   263 MiB: the image (6.4 MiB of text, 0.6 of data and 112 of bss, of which
+	   92 is the modules'; CFM loads it into the partition when virtual memory is
+	   off), the 72 MiB hunk, the 10.5 MiB of zones, the 2 MiB stack, and the
 	   60 MiB MAC_HUNK_RESERVE_KB holds back for the sound pool, AGL/OpenGL and
-	   the image buffers. A 2048x2048 texture in the mod's pk3 needs 17 MiB in one
-	   block, and was the first thing to run out at 355 MiB with 16 MiB of zones
-	   and no such reserve. */
-	410000 * 1024,
-	342000 * 1024
+	   the image buffers.
+
+	   Bigger is not better. Apple's OpenGL keeps its copy of every texture in
+	   temporary memory, outside this partition, and fails without a report when
+	   that runs out. At a 417 MiB partition on a 512 MB Mac, temporary memory fell
+	   to under 200 KB during a map load and the machine froze with 78 MB free in
+	   the application heap. So this should stay as small as the game can use. */
+	300000 * 1024,
+	270000 * 1024
 };
 
 /* Sys_Error's Stop alert (mac_main.c), as retail's ALRT 128: ParamText

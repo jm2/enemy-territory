@@ -52,12 +52,12 @@ If you have questions concerning this license or the applicable additional terms
 #define MIN_DEDICATED_COMHUNKMEGS 1
 #define MIN_COMHUNKMEGS 42 // JPW NERVE changed this to 42 for MP, was 56 for team arena and 75 for wolfSP
 #ifdef __MACOS__
-#define DEF_COMHUNKMEGS "80"    // the stock maps peak near 64 MB with legacy
+#define DEF_COMHUNKMEGS "72"    // the stock maps peak near 64 MB with legacy
 #else
 #define DEF_COMHUNKMEGS "56" // RF, increased this, some maps are exceeding 56mb // JPW NERVE changed this for multiplayer back to 42, 56 for depot/mp_cpdepot, 42 for everything else
 #endif
 #ifdef __MACOS__
-#define DEF_COMZONEMEGS "16"    // the stock maps use about 2 MB with no bots
+#define DEF_COMZONEMEGS "10"    // the stock maps use about 2 MB with no bots
 #else
 #define DEF_COMZONEMEGS "24" // RF, increased this from 16, to account for botlib/AAS
 #endif

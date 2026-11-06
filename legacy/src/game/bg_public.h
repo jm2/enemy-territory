@@ -2206,7 +2206,7 @@ typedef enum
 //==================================================================
 // New Animation Scripting Defines
 
-#define MAX_ANIMSCRIPT_MODELS               32
+#define MAX_ANIMSCRIPT_MODELS               8
 #define MAX_ANIMSCRIPT_ITEMS_PER_MODEL      2048
 #define MAX_MODEL_ANIMATIONS                512    ///< animations per model
 #define MAX_ANIMSCRIPT_ANIMCOMMANDS         8
