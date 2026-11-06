@@ -52,20 +52,22 @@ If you have questions concerning this license or the applicable additional terms
 #define MIN_DEDICATED_COMHUNKMEGS 1
 #define MIN_COMHUNKMEGS 42 // JPW NERVE changed this to 42 for MP, was 56 for team arena and 75 for wolfSP
 #ifdef __MACOS__
-#define DEF_COMHUNKMEGS "80"    // the stock maps peak near 64 MB with legacy
+#define DEF_COMHUNKMEGS "72"    // the stock maps peak near 64 MB with legacy
 #else
 #define DEF_COMHUNKMEGS "56" // RF, increased this, some maps are exceeding 56mb // JPW NERVE changed this for multiplayer back to 42, 56 for depot/mp_cpdepot, 42 for everything else
 #endif
 #ifdef __MACOS__
-#define DEF_COMZONEMEGS "16"    // the stock maps use about 2 MB with no bots
+#define DEF_COMZONEMEGS "10"    // the stock maps use about 2 MB with no bots
 #else
 #define DEF_COMZONEMEGS "24" // RF, increased this from 16, to account for botlib/AAS
 #endif
 #ifdef __MACOS__
 // What the hunk leaves free in the application heap for allocations made after
-// it: the sound pool and 8 MB for AGL/OpenGL, the Sound Manager, InputSprocket
-// and fragmentation. The zones come first, so MaxBlock() already excludes them.
-#define MAC_HUNK_RESERVE_KB ( 24750 + 8 * 1024 )
+// it: the 8.2 MB sound pool at com_soundMegs 8 (it is 512 buffers a meg here, not
+// Quake III's 1536) and room for AGL/OpenGL and the image buffers, where one
+// 2048x2048 texture in the mod's pk3 needs 17 MB in one block, twice over. The
+// zones come first, so MaxBlock() already excludes them.
+#define MAC_HUNK_RESERVE_KB ( 8240 + 52 * 1024 )
 #endif
 
 int com_argc;

@@ -24,4 +24,11 @@ mkdir -p "$OUT/src/qcommon/json" "$OUT/vendor/cjson"
 cp "$SRC"/src/qcommon/json/json.[ch] "$OUT/src/qcommon/json/"
 LIBS_COMMIT=$(git -C "$SRC" ls-tree HEAD libs | awk '{print $3}')
 for f in cJSON.c cJSON.h LICENSE; do git -C "$LIBS" show "$LIBS_COMMIT:cjson/$f" > "$OUT/vendor/cjson/$f"; done
+# The one local change to the mod. Each slot is 1.1 MB in both cgame and qagame, a
+# Mac has a fixed partition and needs its RAM for GL's texture copies, and every
+# stock character shares a single slot. Too few is a clean error, and it is local
+# to each module, never on the wire.
+sed -i 's/^#define MAX_ANIMSCRIPT_MODELS               32$/#define MAX_ANIMSCRIPT_MODELS               8/' "$OUT/src/game/bg_public.h"
+grep -q 'MAX_ANIMSCRIPT_MODELS               8$' "$OUT/src/game/bg_public.h"
+
 printf 'tag=%s\ncommit=%s\nlibs=%s\n' "$TAG" "$(git -C "$SRC" rev-parse HEAD)" "$LIBS_COMMIT" > "$OUT/VERSION.vendored"

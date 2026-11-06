@@ -19,8 +19,8 @@ Enemy Territory:
         legacy_v2.86.2.pk3
 ```
 
-- Get Info needs at least 300 MB (340 MB preferred). The large partition is mostly the
-  modules' static data; with virtual memory off, it all has to be real RAM.
+- Get Info needs at least 264 MB (293 MB preferred). Leave it there: OpenGL keeps its
+  texture copies in RAM outside the partition, and a bigger partition starves it.
 - The paks are from `https://mirror.etlegacy.com/etmain/`, the mod pk3 from the
   v2.86.2 release. `etmain:etkey` is created on the first launch.
 - Thousands of colors for the windowed stages.
@@ -63,7 +63,9 @@ echo ==== stage: quit
 quit
 ```
 
-Pass: `==== stage: quit` in `etboot.log`, then a clean quit.
+Pass: `has joined the Allied team`, a second `CL_InitCGame` from the `vid_restart`,
+`Sys_ShutdownNetworking();` at the end of `etboot.log`, and a return to the Finder. The
+`echo` lines in `bringup.cfg` do not reach the log.
 
 ### 2. Fullscreen
 

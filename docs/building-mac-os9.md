@@ -34,6 +34,9 @@ works too, with `tools/Retro68-src/Console` and
   `q_platform.h` that do not know Classic Mac OS, so that file stays as released.
 - **Warnings.** Engine and platform code build with no warnings. The vendored modules
   build with `-w`.
-- **Partition.** The SIZE resource in `src/mac9/mac_resources.r` is 300 MB minimum and
-  340 MB preferred. Module bss is 146 MB of that, half of it two copies of
-  `animScriptData_t`. Nothing checks it against the link yet.
+- **Partition.** The SIZE resource in `src/mac9/mac_resources.r` is 264 MiB minimum and
+  293 MiB preferred. Do not raise it casually: OpenGL's texture copies live in
+  temporary memory outside the partition, and a Mac needs RAM left for them.
+  Nothing checks the SIZE against the link yet.
+- **One patch to the mod.** `MAX_ANIMSCRIPT_MODELS` is 8, not 32, which saves 54 MB.
+  `scripts/sync_legacy.sh` applies it.
