@@ -417,6 +417,7 @@ char *Sys_DefaultHomePath( void ) {
 //============================================
 
 void GetClockTicks( double *t ) {
+#if defined( __i386__ )
 	unsigned long lo, hi;
 
 	__asm__ __volatile__ (
@@ -426,6 +427,9 @@ void GetClockTicks( double *t ) {
 		: : "m" ( lo ), "m" ( hi ) );
 
 	*t = (double) lo + (double) 0xFFFFFFFF * hi ;
+#else
+	*t = 0;
+#endif
 }
 
 float Sys_GetCPUSpeed( void ) {

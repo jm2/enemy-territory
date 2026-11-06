@@ -4,8 +4,7 @@ Last updated: 2026-11-05. Target mod: `legacy` v2.86.2 (ET: Legacy tag `v2.86.2`
 `fdb40f87`). Engine base: id's 2.60 GPL release in `src/`. Platform base: the
 Quake III Arena Mac OS 9 port (`~/Quake-III-Arena`, `master` at `72dfd69f`).
 
-"Verified" below means run on this host. Nothing here has run on Mac OS 9, and
-the `legacy` mod has not been run on big-endian yet.
+"Verified" below means run on this host. Nothing here has run on Mac OS 9.
 
 ## Does `legacy` v2.86.2 run on a 2.60b engine?
 
@@ -46,9 +45,9 @@ All are client-side and none changes the wire format.
 
 | # | Addition | Why | Status |
 | --- | --- | --- | --- |
-| E1 | **`cl_guid` from an `etkey` file**: port `CL_GenerateETKey`, `CL_UpdateGUID`, `Com_MD5FileETCompat` from ETL `cl_main.c` and `md5.c` | Required. `src/` has no `cl_guid` code (PunkBuster set it in retail), and `g_guidCheck` defaults to 1 in `legacy.cfg`. Without this, default servers refuse the client. | Requirement verified (runs A, C). Same scheme as ETL's own client: per-install random key, MD5 as GUID |
-| E2 | **Pure checksums for static modules** | Required on pure servers. `SV_VerifyPaks_f` wants the checksum of the pk3 holding `cgame` and `ui`. `FS_ReferencedPakPureChecksums` only gets them from `FS_CGAME_REF`/`FS_UI_REF`, set when the DLL is opened from a pk3. A static client opens nothing. Fix: open and close `cgame.mp.i386.so` and `ui.mp.i386.so` by name from the pk3 at each `CL_InitCGame`/`CL_InitUI`, and make `SYS_DLLNAME_*` match them on the Mac. The release pk3 has every platform's DLLs; the server checks its own, in the same pk3. | Inferred from source, tested in phase 1 |
-| E3 | **Refuse mismatched mod versions** | A static cgame only matches one release. `CG_Init` compares `GAME_VERSION` only, so a `legacy_v2.86.1.pk3` server would load and could desync. Check `sv_referencedPakNames` at connect and print a clear error. | Proposed |
+| E1 | **`cl_guid` from an `etkey` file**: port `CL_GenerateETKey`, `CL_UpdateGUID`, `Com_MD5FileETCompat` from ETL `cl_main.c` and `md5.c` | Required. `src/` has no `cl_guid` code (PunkBuster set it in retail), and `g_guidCheck` defaults to 1 in `legacy.cfg`. Without this, default servers refuse the client. | **Done, verified.** Same scheme and file format as ETL's own client |
+| E2 | **Pure checksums for static modules** | Required on pure servers. `SV_VerifyPaks_f` wants the checksum of the pk3 holding `cgame` and `ui`. `FS_ReferencedPakPureChecksums` only gets them from `FS_CGAME_REF`/`FS_UI_REF`, set when the DLL is opened from a pk3. A static client opens nothing, so `Sys_LoadDll` opens and closes `cgame.mp.i386.so` and `ui.mp.i386.so` by name. The release pk3 has every platform's DLLs; the server checks its own, in the same pk3. | **Done, verified:** without it the server logs `nChkSum1 0 == ...` and rejects the client as unpure |
+| E3 | **Refuse mismatched mod versions** | A static cgame only matches one release. `CG_Init` compares `GAME_VERSION` only, so a `legacy_v2.86.1.pk3` server would load and could desync. The client checks `fs_game` and `sv_referencedPakNames` at connect. | **Done, verified** against a server with the pk3 renamed |
 | E4 | **Raise `MAX_RELIABLE_COMMANDS` to 256** | ETL servers keep 256, 2.60 clients 64. More than 64 unacknowledged commands would hit 2.60's "rotated out" `ERR_DROP`. The netchan key uses the same string either way. | Inferred, not seen in the runs |
 | E5 | **Follow `cm_optimizePatchPlanes`** | ETL servers default to 0 and publish it in systeminfo; 2.60 always behaves as 1. Prediction could differ on curved surfaces. | Inferred, not seen in the runs. Measure before porting |
 
@@ -56,6 +55,33 @@ Expected and left alone: `OLD_CLIENT` shows a "SECURITY INFORMATION: You are
 running old software" label and an `UPGRADE NOW` button, since `etLegacyClient` is
 0. Removing them means changing the mod's menus or setting `etVersion`, which turns
 on code paths that assume an ETL engine. Decide after the security pass.
+
+Found while building, and also done:
+
+- `GAME_INIT` passes `qtrue` and the release number, the two extra arguments ETL's
+  engine passes. Without them the legacy qagame stops with `does not support server
+  version`. They are read only by that check, and its extension traps are optional.
+- `fs_game` defaults to `legacy`, as on ETL, because the linked-in ui needs its menus.
+
+## Phase 1 results
+
+| Run | Result |
+| --- | --- |
+| i386 host (`-m32`), local `oasis` with the static modules, `team`, `vid_restart`, disconnect, quit | Passes, exit 0 |
+| i386 static client to the release x86-64 v2.86.2 `etlded`, default `g_guidCheck 1`, `sv_pure 1`, no `.so` on disk | Joins Allies, exit 0 |
+| PPC32 big-endian under qemu-user, local `oasis` as above | Passes, exit 0 |
+| PPC32 big-endian client to the release x86-64 `etlded`, as above | Joins Allies, exit 0 |
+| PPC32 client to our own PPC32 `etded_host` | Joins Allies, exit 0 |
+| PPC32 client to a server with `legacy_v2.86.1.pk3` | Refused with a message, exit 0 |
+
+**Deviation from the phase 1 exit:** the host build is 32-bit x86 on the x86-64
+machine, not a 64-bit binary. The engine passes pointers through `int` in the VM
+syscall path, and the target is 32-bit, so 64-bit cleanup buys nothing the Mac needs.
+All host runs use a no-op GL, so rendering is only proven by the retail runs above.
+
+**Memory:** static data is about 67 MB in cgame, 65 MB in qagame and 8.5 MB in ui,
+mostly `cgs`, `level`, `cg_polyBuffers` and the qagame pool. All of it comes out of
+the Mac's fixed partition, on top of the hunk.
 
 ## Facts that shape the build
 
@@ -71,8 +97,11 @@ on code paths that assume an ETL engine. Decide after the security pass.
   against its own headers with `MODLIB`, never the engine's. ETL sources are
   vendored by tag so they can be rebuilt per release.
 - Module arguments are `intptr_t`, which is `int` on 32-bit PPC.
-- The mod has big-endian defines in `q_platform.h` but no recent big-endian use
-  that we know of. Assume bugs. Host big-endian runs under qemu-user come first.
+- Each module's globals are renamed by `legacy/static/rename_<module>.h`, which
+  `scripts/gen_static_renames.py` generates from `nm`, so the modules and engine can
+  share one binary. Macros work the same for ELF and XCOFF.
+- Module data and bss must be fully bracketed for the reset. On Linux PPC that takes
+  `-msdata=none -G0`, or small globals land in `.sdata` and survive a reload.
 
 ## Inventory of `src/`
 
@@ -123,8 +152,12 @@ critical-section trio, `Sys_ShowIP` and `DL_*`. `Sys_GetBotLibAPI`,
 - Hunk and partition size for a map like `oasis`. Runs here used `com_hunkMegs 128`,
   not yet a measured minimum.
 
-## Next
+## Rebuilding for a new ET: Legacy release
 
-1. E1 and E2 on a host build of this tree, then repeat run C with `g_guidCheck 1`
-   from that build.
-2. Phase 1: static `legacy` modules on Linux x86-64 and 32-bit big-endian PPC.
+```sh
+scripts/sync_legacy.sh ~/etlegacy <tag>
+python3 scripts/gen_static_renames.py
+```
+
+Then update `legacy/static/version_generated.h` and the `ET_LEGACY_*` defines in
+`src/qcommon/qcommon.h`, and rerun `tests/compat` and `tests/host/ppc_connect.sh`.

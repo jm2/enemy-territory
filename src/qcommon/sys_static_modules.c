@@ -73,14 +73,10 @@ Nothing opens them here, so open the release pk3's library by name.
 */
 static void Sys_ReferenceStaticModule( const char *name ) {
 	fileHandle_t	f;
-	int				len;
 
-	len = FS_FOpenFileRead( Sys_GetDLLName( name ), &f, qfalse );
+	FS_FOpenFileRead( Sys_GetDLLName( name ), &f, qfalse );
 	if ( f ) {
 		FS_FCloseFile( f );
-	}
-	if ( len < 0 && Cvar_VariableIntegerValue( "sv_pure" ) && !com_sv_running->integer ) {
-		Com_DPrintf( "no %s library in any pk3\n", name );
 	}
 }
 #endif

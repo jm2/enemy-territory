@@ -1,7 +1,4 @@
 # Headless host build: real Unix platform and sockets, no-op GL, fake sound ring.
-set(ET_HOST_FLAGS -g -O1 -fno-pie)
-add_compile_options(${ET_HOST_FLAGS})
-add_link_options(-no-pie)
 
 # ELF brackets for vm_static.c: <name>_mod merged, then its .data and .bss given
 # section names the linker publishes as __start_/__stop_ symbols.

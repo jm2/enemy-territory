@@ -15,6 +15,11 @@ include(cmake/EtSources.cmake)
 set(ET_C_FLAGS -std=gnu99 -fgnu89-inline -fsigned-char -fcommon -fno-strict-aliasing)
 set(ET_MOD_FLAGS -std=gnu11 -fgnu89-inline -fsigned-char -fno-common -fno-strict-aliasing)
 
+if(ET_TARGET STREQUAL "host")
+    add_compile_options(-g -O1 -fno-pie)
+    add_link_options(-no-pie)
+endif()
+
 # ---- legacy modules, each global renamed by legacy/static/rename_<module>.h
 function(et_module name)
     file(STRINGS ${ET_LEGACY}/static/${name}.sources list)

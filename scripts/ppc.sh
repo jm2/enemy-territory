@@ -4,5 +4,5 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 mkdir -p "$ROOT/build-ppc"
-exec podman run --rm --network=none -v "$ROOT:/src:Z" -v "${ET_DATA:-$HOME/et-data}:/data:ro,z" -v /usr/include/GL:/hostinc/GL:ro -v /usr/include/KHR:/hostinc/KHR:ro \
+exec podman run --rm --network=none -v "$ROOT:/src:Z" -v "${ET_DATA:-$HOME/et-data}:/data:ro,z" -v /usr/include/GL:/hostinc/GL:ro -v /usr/include/KHR:/hostinc/KHR:ro -v /usr/include/X11:/hostinc/X11:ro \
     -w /src et-ppc "$@"
