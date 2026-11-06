@@ -83,6 +83,11 @@ def pack(installer, out_data, out_rsrc, root, app, files):
         payload.append(os.path.join(root, name))
     if len(entries) > MAX_ENTRIES:
         sys.exit("too many files for the installer")
+    if len(set(files)) != len(files):
+        sys.exit("a file is named twice")
+    total = sum(len(part) if isinstance(part, bytes) else os.path.getsize(part) for part in payload)
+    if total >= 1 << 31:
+        sys.exit("the Mac installer holds under 2 GiB")
     header = b"ETIN" + struct.pack(">II", 1, len(entries)) + b"".join(entries)
     with open(out_data, "wb") as out:
         out.write(pef)
@@ -113,7 +118,9 @@ def verify(installer, sums, app, extra):
         header = at(header_at, header_len)
         if zlib.crc32(header) != header_crc or header[:4] != b"ETIN":
             sys.exit("installer_pack: bad header")
-        count = struct.unpack(">I", header[8:12])[0]
+        version, count = struct.unpack(">II", header[4:12])
+        if version != 1 or not 0 < count <= MAX_ENTRIES or header_len != 12 + count * 64:
+            sys.exit("installer_pack: the Mac would refuse this header")
         names, where = [], header_at + header_len
         files = {}
         for i in range(count):

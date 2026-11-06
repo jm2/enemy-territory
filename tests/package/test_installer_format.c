@@ -81,11 +81,38 @@ static void Refused( const char *what, const unsigned char *b, int n ) {
 	}
 }
 
-int main( void ) {
+// a data fork from scripts/installer_pack.py
+static void ReadPacked( const char *path, int expected ) {
+	etEntry_t entries[ET_MAX_ENTRIES];
+	unsigned char *data;
+	FILE *f = fopen( path, "rb" );
+	long n;
+
+	if ( !f || fseek( f, 0, SEEK_END ) || ( n = ftell( f ) ) <= 0 ) {
+		fprintf( stderr, "FAIL: cannot read %s\n", path ); exit( 1 );
+	}
+	rewind( f );
+	data = malloc( n );
+	if ( fread( data, 1, n, f ) != (size_t)n ) {
+		fprintf( stderr, "FAIL: short read\n" ); exit( 1 );
+	}
+	fclose( f );
+	if ( Parse( data, n, entries ) != expected ) {
+		fprintf( stderr, "FAIL: the parser refused the packer's output\n" ); exit( 1 );
+	}
+	free( data );
+}
+
+int main( int argc, char **argv ) {
 	static unsigned char b[1024], m[1024];
 	etEntry_t entries[ET_MAX_ENTRIES];
 	int n = Make( b ), i, r, k, header = ET_HEADER_BYTES + ENTRIES * ET_ENTRY_BYTES;
 
+	if ( argc == 3 ) {
+		ReadPacked( argv[1], atoi( argv[2] ) );
+		printf( "parser reads the packer's output\n" );
+		return 0;
+	}
 	if ( ET_Crc( 0, (const unsigned char *)"123456789", 9 ) != 0xcbf43926ul ) {
 		fprintf( stderr, "FAIL: CRC\n" ); return 1;
 	}

@@ -32,5 +32,7 @@ fi
 gcc -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wno-unused-function -I "$ROOT/src/mac9" \
     "$ROOT/tests/package/test_installer_format.c" -o "$T/format" && "$T/format" || { echo "FAIL: installer format"; fails=1; }
 python3 -I -B "$ROOT/tests/package/test_installer_pack.py" "$ROOT" "$T" || { echo "FAIL: installer pack"; fails=1; }
+# the Mac's parser must read what the packer really writes, header after the PEF
+"$T/format" "$T/pack/out" 4 || { echo "FAIL: parser against packer"; fails=1; }
 [ "$fails" = 0 ] && echo "package checks passed"
 exit "$fails"

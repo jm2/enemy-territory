@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage the application and game data and make the images that go to the Mac. Run it through
+# Stage the application and game data and make the files that go to the Mac. Run it through
 # ./build_mac.sh package, so that the build it packages is the commit it records. --check only
 # looks for what a package needs. --bringup adds the stage 1 METParms.txt and bringup.cfg of
 # docs/target-run.md.

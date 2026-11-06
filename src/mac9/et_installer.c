@@ -77,6 +77,10 @@ static void Finish( const char *title, const char *message ) {
 	Pascal( t, title );
 	Pascal( m, message );
 	ParamText( t, m, m, m );
+	if ( sourceRef ) {
+		FSClose( sourceRef );   // the message may say to delete this file
+		sourceRef = 0;
+	}
 	Alert( 128, NULL );
 	ExitToShell();
 }
@@ -85,29 +89,37 @@ static long ParentOf( int i ) {
 	return entries[i].parent < 0 ? workDir : dirIds[entries[i].parent];
 }
 
-static void CleanUp( void ) {
+// true when nothing of this run is left on the disk
+static Boolean CleanUp( void ) {
+	Boolean clean = true;
 	int i;
 
 	if ( !workDir ) {
-		return;
+		return true;
 	}
 	for ( i = created - 1; i >= 0; i-- ) {
-		HDelete( volume, ParentOf( i ), entries[i].name );
+		if ( HDelete( volume, ParentOf( i ), entries[i].name ) != noErr ) {
+			clean = false;
+		}
 	}
-	HDelete( volume, parentDir, WORK_NAME );
+	if ( HDelete( volume, parentDir, WORK_NAME ) != noErr ) {
+		clean = false;
+	}
+	return clean;
 }
 
 static void Fail( const char *what, OSErr err ) {
-	char text[200];
+	char text[240];
+	const char *left = CleanUp() ? "Nothing was installed."
+					   : "The folder ET being unpacked could not be removed. Delete it by hand.";
 
-	CleanUp();
 	if ( err == BAD_CRC ) {
 		snprintf( text, sizeof( text ), "%s failed its checksum, so this copy of the installer is damaged. "
-				  "Transfer ET_Installer.bin again in binary mode. Nothing was installed.", what );
+				  "Transfer ET_Installer.bin again in binary mode. %s", what, left );
 	} else if ( err == dskFulErr ) {
-		snprintf( text, sizeof( text ), "The disk is full. Nothing was installed." );
+		snprintf( text, sizeof( text ), "The disk is full. %s", left );
 	} else {
-		snprintf( text, sizeof( text ), "%s failed with Mac OS error %d. Nothing was installed.", what, (int)err );
+		snprintf( text, sizeof( text ), "%s failed with Mac OS error %d. %s", what, (int)err, left );
 	}
 	Finish( "Enemy Territory was not installed.", text );
 }
@@ -201,9 +213,13 @@ static void InstallFile( int i ) {
 // any name already taken stops the install before anything is written
 static void RefuseIfPresent( const unsigned char *name, const char *text ) {
 	FSSpec spec;
+	OSErr err = FSMakeFSSpec( volume, parentDir, name, &spec );
 
-	if ( FSMakeFSSpec( volume, parentDir, name, &spec ) != fnfErr ) {
+	if ( err == noErr ) {
 		Finish( "Enemy Territory was not installed.", text );
+	}
+	if ( err != fnfErr ) {
+		Fail( "Looking at the disk", err );
 	}
 }
 
@@ -242,9 +258,9 @@ int main( void ) {
 	}
 	volume = self.vRefNum;
 	parentDir = self.parID;
-	RefuseIfPresent( FINAL_NAME, "A folder called Enemy Territory is already beside this installer. "
+	RefuseIfPresent( FINAL_NAME, "Something called Enemy Territory is already beside this installer. "
 					 "Move it somewhere else, or move the installer, and run it again." );
-	RefuseIfPresent( WORK_NAME, "A folder called ET being unpacked is already beside this installer, "
+	RefuseIfPresent( WORK_NAME, "Something called ET being unpacked is already beside this installer, "
 					 "left by a run that was stopped. Delete it and run the installer again." );
 
 	if ( ( err = GetEOF( sourceRef, &length ) ) != noErr ) {
@@ -286,10 +302,19 @@ int main( void ) {
 			InstallFile( i );
 		}
 	}
+	// on disk before the name is, because HFS has no journal to put a crash right
+	if ( ( err = FlushVol( NULL, volume ) ) != noErr ) {
+		Fail( "Saving to the disk", err );
+	}
 	if ( ( err = HRename( volume, parentDir, WORK_NAME, FINAL_NAME ) ) != noErr ) {
 		Fail( "Renaming the folder", err );
 	}
-	FlushVol( NULL, volume );
+	// Fail would delete the finished install now, so this only says so
+	if ( FlushVol( NULL, volume ) != noErr ) {
+		Finish( "Enemy Territory is installed, but the disk reported an error.",
+				"All files passed their checksums, but the last save to the disk failed. "
+				"Check the disk, and run the installer again if the game does not start." );
+	}
 	Finish( "Enemy Territory is installed.", "All files passed their checksums. "
 			"The Enemy Territory folder is beside this installer, which you can now delete." );
 	return 0;

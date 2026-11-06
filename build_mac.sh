@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Classic application, and with "package" the disk images to install it.
+# Build the Classic application, and with "package" the files that install it.
 # See docs/building-mac-os9.md. Usage: ./build_mac.sh [package [--bringup]] [cmake options]
 set -euo pipefail
 cd "$(dirname "$0")"
