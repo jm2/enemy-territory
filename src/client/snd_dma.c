@@ -440,6 +440,10 @@ void S_DefaultSound( sfx_t *sfx ) {
 	}
 
 	sfx->soundData = SND_malloc();
+	if ( !sfx->soundData ) {
+		sfx->soundLength = 0;   // the mixer walks the buffers for this long
+		return;
+	}
 	sfx->soundData->next = NULL;
 
 	if ( s_defaultsound->integer ) {
@@ -2023,6 +2027,13 @@ int FGetLittleShort( const fileHandle_t f ) {
 }
 
 // returns the length of the data in the chunk, or 0 if not found
+// the sample count divides by the frame size, S_RawSamples plays only 8 and 16 bit mono and
+// stereo at a positive rate, and the streaming code multiplies the rate by up to a buffer
+qboolean S_WavFormatPlayable( const wavinfo_t *info ) {
+	return info->width >= 1 && info->width <= 2 && info->channels >= 1 && info->channels <= 2
+		   && info->rate > 0 && info->rate <= 0x7fffffff / MAX_RAW_SAMPLES;
+}
+
 int S_FindWavChunk( const fileHandle_t f, const char *chunk ) {
 	char name[5];
 	int len;
@@ -2179,7 +2190,7 @@ void S_StartBackgroundTrack( const char *intro, const char *loop, int fadeupTime
 	FGetLittleShort( fh );
 	ss->info.width = FGetLittleShort( fh ) / 8;
 
-	if ( ss->info.format != WAV_FORMAT_PCM ) {
+	if ( ss->info.format != WAV_FORMAT_PCM || !S_WavFormatPlayable( &ss->info ) ) {
 		FS_FCloseFile( fh );
 		Com_Printf( "Not a microsoft PCM format wav: %s\n", ss->name );
 		Sys_LeaveCriticalSection( crit );
@@ -2463,7 +2474,7 @@ float S_StartStreamingSound( const char *intro, const char *loop, int entnum, in
 	FGetLittleShort(  fh );
 	ss->info.width = FGetLittleShort( fh ) / 8;
 
-	if ( ss->info.format != WAV_FORMAT_PCM ) {
+	if ( ss->info.format != WAV_FORMAT_PCM || !S_WavFormatPlayable( &ss->info ) ) {
 		FS_FCloseFile( fh );
 		Com_Printf( "Not a microsoft PCM format wav: %s\n", ss->name );
 		Sys_LeaveCriticalSection( crit );
@@ -2745,7 +2756,7 @@ void S_UpdateStreamingSounds( void ) {
 							FGetLittleShort( ss->file );
 							ss->info.width = FGetLittleShort( ss->file ) / 8;
 							ss->samples = ss->info.samples;
-							if ( ( S_FindWavChunk( ss->file, "data" ) ) == 0 ) {
+							if ( !S_WavFormatPlayable( &ss->info ) || ( S_FindWavChunk( ss->file, "data" ) ) == 0 ) {
 								ss->kill = 1;
 							}
 							if ( s_debugMusic->integer ) {
@@ -2779,9 +2790,11 @@ void S_UpdateStreamingSounds( void ) {
 /*
 ======================
 S_FreeOldestSound
+
+Returns qfalse if no sound is left in memory to free
 ======================
 */
-void S_FreeOldestSound( void ) {
+qboolean S_FreeOldestSound( void ) {
 	int i, oldest, used;
 	sfx_t   *sfx;
 	sndBuffer   *buffer, *nbuffer;
@@ -2799,6 +2812,18 @@ void S_FreeOldestSound( void ) {
 
 	sfx = &s_knownSfx[used];
 
+	if ( !sfx->inMemory ) {
+		// the default sound is not in memory, and may be the sound being loaded, whose
+		// buffers must stay. A sound in memory that was used too recently to free yet
+		// can be freed once the clock moves on
+		for ( i = 1 ; i < snd.s_numSfx ; i++ ) {
+			if ( s_knownSfx[i].inMemory ) {
+				return qtrue;
+			}
+		}
+		return qfalse;
+	}
+
 	Com_DPrintf( "S_FreeOldestSound: freeing sound %s\n", sfx->soundName );
 
 	buffer = sfx->soundData;
@@ -2809,6 +2834,7 @@ void S_FreeOldestSound( void ) {
 	}
 	sfx->inMemory = qfalse;
 	sfx->soundData = NULL;
+	return qtrue;
 }
 
 // START	xkan, 9/23/2002
