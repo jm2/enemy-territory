@@ -2,6 +2,12 @@
 
 # ELF brackets for vm_static.c: <name>_mod merged, then its .data and .bss given
 # section names the linker publishes as __start_/__stop_ symbols.
+# ET_ARCH_FLAGS repeats any architecture flag for the merge step, which must link
+# for the same target as the objects. It defaults to what CMAKE_C_FLAGS selects.
+if(NOT DEFINED ET_ARCH_FLAGS AND CMAKE_C_FLAGS MATCHES "-m32")
+    set(ET_ARCH_FLAGS -m32)
+endif()
+
 function(et_bracket name)
     set(obj ${CMAKE_BINARY_DIR}/${name}_bracketed.o)
     add_custom_command(OUTPUT ${obj}
