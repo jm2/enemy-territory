@@ -48,7 +48,8 @@ setup the download, return once we have a connection
 */
 int DL_BeginDownload( const char *localName, const char *remoteName, int debug ) {
 
-	return 1;
+	// no transfer happens: failing here takes the "wwwdl fail" path to UDP
+	return 0;
 }
 
 // (maybe this should be CL_DL_DownloadLoop)

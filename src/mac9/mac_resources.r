@@ -35,17 +35,25 @@ resource 'SIZE' (-1) {
 	reserved,
 	
 	/* Preferred and minimum partition. At the minimum the fixed demand is about
-	   291 MB: the image (5.8 MB of text and data, 146 MB of module bss, which
-	   CFM loads into the partition when virtual memory is off), the 80 MB
-	   hunk, the 16 MB zone, 0.5 MB of small zone, the 2 MB stack, the sound
-	   pool (24.7 MB at com_soundMegs 8) and 16 MB for AGL/OpenGL, the Sound
-	   Manager and fragmentation. */
-	340000 * 1024,
-	300000 * 1024
+	   258 MiB: the image (113.5 MiB, of which module bss is 88; CFM loads it into
+	   the partition when virtual memory is off), the 72 MiB hunk, the 10.5 MiB
+	   of zones, the 2 MiB stack, and the 60 MiB MAC_HUNK_RESERVE_KB holds back for
+	   the sound pool, the renderer's 24 MiB block, a listen server's clients,
+	   AGL/OpenGL and the image buffers. Above the minimum is what r_picmip 0
+	   needs: the 2048x2048 texture in the mod's pk3 takes 32 MiB there, and
+	   the preferred size leaves room for it.
+
+	   Bigger is not better. Apple's OpenGL keeps its copy of every texture in
+	   temporary memory, outside this partition, and fails without a report when
+	   that runs out. At a 417 MiB partition on a 512 MB Mac, temporary memory fell
+	   to under 200 KB during a map load and the machine froze with 78 MB free in
+	   the application heap. So this should stay as small as the game can use. */
+	300000 * 1024,
+	270000 * 1024
 };
 
 /* Sys_Error's Stop alert (mac_main.c), as retail's ALRT 128: ParamText
-   puts "Quake 3 Error:" in ^0 and the message in ^1. */
+   puts "Enemy Territory Error:" in ^0 and the message in ^1. */
 resource 'ALRT' (128, purgeable) {
 	{0, 0, 180, 420},
 	128,

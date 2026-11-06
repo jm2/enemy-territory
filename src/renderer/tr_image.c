@@ -80,9 +80,16 @@ void        *imageBufferPtr[BUFFER_MAX_TYPES] = {NULL,NULL,NULL};
 
 void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
 	if ( imageBufferSize[bufferType] < R_IMAGE_BUFFER_SIZE && size <= imageBufferSize[bufferType] ) {
+		if ( imageBufferPtr[bufferType] ) {
+			free( imageBufferPtr[bufferType] );
+		}
 		imageBufferSize[bufferType] = R_IMAGE_BUFFER_SIZE;
 		imageBufferPtr[bufferType] = malloc( imageBufferSize[bufferType] );
 //DAJ TEST		imageBufferPtr[bufferType] = Z_Malloc( imageBufferSize[bufferType] );
+		if ( !imageBufferPtr[bufferType] ) {
+			imageBufferSize[bufferType] = 0;
+			ri.Error( ERR_DROP, "R_GetImageBuffer: out of memory for %i bytes", R_IMAGE_BUFFER_SIZE );
+		}
 	}
 	if ( size > imageBufferSize[bufferType] ) {   // it needs to grow
 		if ( imageBufferPtr[bufferType] ) {
@@ -92,6 +99,13 @@ void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
 		imageBufferSize[bufferType] = size;
 		imageBufferPtr[bufferType] = malloc( imageBufferSize[bufferType] );
 //DAJ TEST		imageBufferPtr[bufferType] = Z_Malloc( imageBufferSize[bufferType] );
+		// a large texture in the mod's pk3 can exceed the heap of a Mac partition,
+		// and the callers write through this at once: at address 0 on Classic Mac OS,
+		// over the system's low memory with nothing to report it
+		if ( !imageBufferPtr[bufferType] ) {
+			imageBufferSize[bufferType] = 0;
+			ri.Error( ERR_DROP, "R_GetImageBuffer: out of memory for %i bytes", size );
+		}
 	}
 
 	return imageBufferPtr[bufferType];
@@ -101,7 +115,7 @@ void R_FreeImageBuffer( void ) {
 	int bufferType;
 	for ( bufferType = 0; bufferType < BUFFER_MAX_TYPES; bufferType++ ) {
 		if ( !imageBufferPtr[bufferType] ) {
-			return;
+			continue;
 		}
 		free( imageBufferPtr[bufferType] );
 //DAJ TEST		Z_Free( imageBufferPtr[bufferType] );
@@ -3085,7 +3099,15 @@ R_CacheImageAlloc
 void *R_CacheImageAlloc( int size ) {
 	if ( r_cache->integer && r_cacheShaders->integer ) {
 //		return ri.Z_Malloc( size );
-		return malloc( size );  // ri.Z_Malloc causes load times about twice as long?... Gordon
+		{
+			// ri.Z_Malloc causes load times about twice as long?... Gordon
+			void *p = malloc( size );
+
+			if ( !p ) {
+				ri.Error( ERR_DROP, "R_CacheImageAlloc: out of memory for %i bytes", size );
+			}
+			return p;
+		}
 //DAJ TEST		return ri.Z_Malloc( size );	//DAJ was CO
 	} else {
 		return ri.Hunk_Alloc( size, h_low );

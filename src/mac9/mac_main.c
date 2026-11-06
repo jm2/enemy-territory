@@ -1404,7 +1404,7 @@ static void Sys_StartBootLog( const char *commandLine ) {
 		return;
 	}
 	if ( !Sys_BootLogOpen( Sys_GetCwd() ) ) {
-		Sys_LogPrintf( "main: no boot log this run, so q3boot.log is an older run's\n" );
+		Sys_LogPrintf( "main: no boot log this run, so etboot.log is an older run's\n" );
 		return;
 	}
 	retroLogBuffer[retroLogHead] = 0;	// the ring has not wrapped this early

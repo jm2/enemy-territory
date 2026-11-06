@@ -1042,7 +1042,11 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	// send a disconnect message to the server
 	// send it a few times in case one is dropped
 	if ( cls.state >= CA_CONNECTED ) {
-		CL_AddReliableCommand( "disconnect" );
+		// no room after a command overflow, which is how an ERR_DROP gets here:
+		// a second overflow would be fatal, and the server times us out instead
+		if ( clc.reliableSequence - clc.reliableAcknowledge <= MAX_RELIABLE_COMMANDS ) {
+			CL_AddReliableCommand( "disconnect" );
+		}
 		CL_WritePacket();
 		CL_WritePacket();
 		CL_WritePacket();
@@ -3471,7 +3475,13 @@ void CL_Init( void ) {
 	cl_showMouseRate = Cvar_Get( "cl_showmouserate", "0", 0 );
 
 	cl_allowDownload = Cvar_Get( "cl_allowDownload", "1", CVAR_ARCHIVE );
+#ifdef ET_STATIC_MODULES
+	// no HTTP here (dl_main_stubs.c): the server must use the slow UDP path
+	cl_wwwDownload = Cvar_Get( "cl_wwwDownload", "0", CVAR_USERINFO | CVAR_ROM );
+	Cvar_Set( "cl_wwwDownload", "0" );  // Cvar_Get keeps a value from an older config
+#else
 	cl_wwwDownload = Cvar_Get( "cl_wwwDownload", "1", CVAR_USERINFO | CVAR_ARCHIVE );
+#endif
 
 	cl_profile = Cvar_Get( "cl_profile", "", CVAR_ROM );
 	cl_defaultProfile = Cvar_Get( "cl_defaultProfile", "", CVAR_ROM );
