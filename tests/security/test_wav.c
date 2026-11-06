@@ -47,6 +47,7 @@ int main( void ) {
 	wavinfo_t info;
 	int n, i, r, k;
 
+	Swap_Init();
 	n = MakeWav( b, 22050, 2, 100 );
 	info = Parse( b, n );
 	if ( info.samples != 100 || info.width != 2 || info.channels != 1 || info.rate != 22050 || info.dataofs != 44 ) {
@@ -76,6 +77,8 @@ int main( void ) {
 		raw[0] = canary;
 		S_ByteSwapRawSamples( 0, 2, 2, raw );
 		if ( raw[0] != canary ) { fprintf( stderr, "FAIL: swapped nothing\n" ); return 1; }
+		S_ByteSwapRawSamples( 1, 2, 1, raw );
+		if ( raw[0] != LittleShort( canary ) || raw[1] ) { fprintf( stderr, "FAIL: swapped one\n" ); return 1; }
 	}
 	printf( "wav tests passed\n" );
 	return 0;

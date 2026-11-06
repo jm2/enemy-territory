@@ -643,6 +643,10 @@ void S_PaintChannelFromADPCM( channel_t *ch, sfx_t *sc, int count, int sampleOff
 	while ( sampleOffset >= ( SND_CHUNK_SIZE * 4 ) ) {
 		chunk = chunk->next;
 		sampleOffset -= ( SND_CHUNK_SIZE * 4 );
+		// doppler scales this past the end of the sound
+		if ( !chunk ) {
+			chunk = sc->soundData;
+		}
 		i++;
 	}
 
