@@ -21,7 +21,7 @@ without sound until `s_initsound` is set (stage 4).
 **First install.** Transfer `ET_Installer.bin` in binary mode and decode it with StuffIt Expander.
 Put `ET Installer` on a writable disk and double-click it. It checks a CRC-32 of every file, and
 only when all have passed does it name the result `Enemy Territory`, beside itself. A failed run
-removes what it wrote and says so if it cannot. A force quit, crash or power cut leaves a folder
+removes what it wrote, and says so if it cannot. A force quit, crash or power cut leaves a folder
 called `ET being unpacked`: delete it and run the installer again. If you switch away while it
 runs, its result waits behind the Finder until you switch back. It refuses to run beside an existing `Enemy Territory`
 folder, so move that first; it never changes one. It needs about 270 MB of free disk beyond the

@@ -85,10 +85,10 @@ def pack(installer, out_data, out_rsrc, root, app, files):
         sys.exit("too many files for the installer")
     if len(set(files)) != len(files):
         sys.exit("a file is named twice")
-    total = sum(len(part) if isinstance(part, bytes) else os.path.getsize(part) for part in payload)
-    if total >= 1 << 31:
-        sys.exit("the Mac installer holds under 2 GiB")
     header = b"ETIN" + struct.pack(">II", 1, len(entries)) + b"".join(entries)
+    total = sum(len(part) if isinstance(part, bytes) else os.path.getsize(part) for part in payload)
+    if len(pef) + len(header) + total + 16 >= 1 << 31:
+        sys.exit("the Mac installer holds under 2 GiB")
     with open(out_data, "wb") as out:
         out.write(pef)
         out.write(header)

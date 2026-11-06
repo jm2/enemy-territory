@@ -231,7 +231,7 @@ int main( void ) {
 	etTrailer_t trailer;
 	Rect bounds;
 	Ptr header;
-	long length, count;
+	long length, count, id;
 	int i, entryCount;
 	OSErr err;
 
@@ -289,9 +289,11 @@ int main( void ) {
 		totalBytes += (long long)entries[i].dataLength + entries[i].rsrcLength;
 	}
 
-	if ( ( err = DirCreate( volume, parentDir, WORK_NAME, &workDir ) ) != noErr ) {
+	// not into workDir itself: it says a folder exists to clean up, and a call that fails may write here
+	if ( ( err = DirCreate( volume, parentDir, WORK_NAME, &id ) ) != noErr ) {
 		Fail( "Making the folder", err );
 	}
+	workDir = id;
 	for ( i = 0; i < entryCount; i++ ) {
 		if ( entries[i].type == ET_FOLDER_TYPE ) {
 			if ( ( err = DirCreate( volume, ParentOf( i ), entries[i].name, &dirIds[i] ) ) != noErr ) {
