@@ -293,7 +293,7 @@ void R_ImageList_f( void ) {
 
 		texels += image->uploadWidth * image->uploadHeight;
 		ri.Printf( PRINT_ALL,  "%4i: %4i %4i  %s   %d   %5d ",
-				   i, image->uploadWidth, image->uploadHeight, yesno[image->mipmap], image->TMU, image->texnum );
+				   i, image->uploadWidth, image->uploadHeight, yesno[image->mipmap], image->TMU, (int)image->texnum );
 		switch ( image->internalFormat ) {
 		case 1:
 			ri.Printf( PRINT_ALL, "I    " );
@@ -1097,7 +1097,7 @@ static void LoadBMP( const char *name, byte **pic, int *width, int *height ) {
 		ri.Error( ERR_DROP, "LoadBMP: only Windows-style BMP files supported (%s)\n", name );
 	}
 	if ( bmpHeader.fileSize != length ) {
-		ri.Error( ERR_DROP, "LoadBMP: header size does not match file size (%d vs. %d) (%s)\n", bmpHeader.fileSize, length, name );
+		ri.Error( ERR_DROP, "LoadBMP: header size does not match file size (%lu vs. %d) (%s)\n", (unsigned long)bmpHeader.fileSize, length, name );
 	}
 	if ( bmpHeader.compression != 0 ) {
 		ri.Error( ERR_DROP, "LoadBMP: only uncompressed BMP files supported (%s)\n", name );

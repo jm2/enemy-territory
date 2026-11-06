@@ -882,6 +882,11 @@ fileHandle_t FS_FOpenFileWrite( const char *filename ) {
 		Com_Error( ERR_FATAL, "Filesystem call made without initialization\n" );
 	}
 
+	if ( !FS_CheckQPath( filename ) ) {
+		Com_Printf( "WARNING: refusing to write illegal qpath \"%s\"\n", filename );
+		return 0;
+	}
+
 	f = FS_HandleForFile();
 	fsh[f].zipFile = qfalse;
 
@@ -921,6 +926,11 @@ fileHandle_t FS_FOpenFileAppend( const char *filename ) {
 
 	if ( !fs_searchpaths ) {
 		Com_Error( ERR_FATAL, "Filesystem call made without initialization\n" );
+	}
+
+	if ( !FS_CheckQPath( filename ) ) {
+		Com_Printf( "WARNING: refusing to append to illegal qpath \"%s\"\n", filename );
+		return 0;
 	}
 
 	f = FS_HandleForFile();
@@ -1111,7 +1121,7 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 	// make absolutely sure that it can't back up the path.
 	// The searchpaths do guarantee that something will always
 	// be prepended, so we don't need to worry about "c:" or "//limbo"
-	if ( strstr( filename, ".." ) || strstr( filename, "::" ) ) {
+	if ( !FS_CheckQPath( filename ) ) {
 		*file = 0;
 		return -1;
 	}
@@ -1848,7 +1858,7 @@ int FS_FileIsInPAK( const char *filename, int *pChecksum ) {
 	// make absolutely sure that it can't back up the path.
 	// The searchpaths do guarantee that something will always
 	// be prepended, so we don't need to worry about "c:" or "//limbo"
-	if ( strstr( filename, ".." ) || strstr( filename, "::" ) ) {
+	if ( !FS_CheckQPath( filename ) ) {
 		return -1;
 	}
 
@@ -2995,6 +3005,8 @@ typedef struct {
 	qboolean ok;
 } officialpak_t;
 
+#define MAX_OFFICIAL_PAKS 64
+
 /*
 ================
 FS_VerifyOfficialPaks
@@ -3005,14 +3017,15 @@ qboolean FS_VerifyOfficialPaks( void ) {
 	searchpath_t    *sp;
 	int numOfficialPaksOnServer = 0;
 	int numOfficialPaksLocal = 0;
-	officialpak_t officialpaks[64];
+	officialpak_t officialpaks[MAX_OFFICIAL_PAKS];
 
 	if ( !fs_numServerPaks ) {
 		return qtrue;
 	}
 
-	for ( i = 0; i < fs_numServerPaks; i++ ) {
-		if ( FS_idPak( fs_serverPakNames[i], BASEGAME ) ) {
+	// the names and their count are the server's, and may not match the checksums
+	for ( i = 0; i < fs_numServerPaks && numOfficialPaksOnServer < MAX_OFFICIAL_PAKS; i++ ) {
+		if ( fs_serverPakNames[i] && FS_idPak( fs_serverPakNames[i], BASEGAME ) ) {
 			Q_strncpyz( officialpaks[numOfficialPaksOnServer].pakname, fs_serverPakNames[i], sizeof( officialpaks[0].pakname ) );
 			officialpaks[numOfficialPaksOnServer].ok = qfalse;
 			numOfficialPaksOnServer++;
@@ -4018,7 +4031,7 @@ void FS_PureServerSetLoadedPaks( const char *pakSums, const char *pakNames ) {
 		}
 	}
 
-	for ( i = 0 ; i < c ; i++ ) {
+	for ( i = 0 ; i < MAX_SEARCH_PATHS ; i++ ) {
 		if ( fs_serverPakNames[i] ) {
 			Z_Free( fs_serverPakNames[i] );
 		}
@@ -4048,7 +4061,7 @@ checksums to see if any pk3 files need to be auto-downloaded.
 =====================
 */
 void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames ) {
-	int i, c, d;
+	int i, c, d, kept;
 
 	Cmd_TokenizeString( pakSums );
 
@@ -4063,7 +4076,7 @@ void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames )
 		fs_serverReferencedPaks[i] = atoi( Cmd_Argv( i ) );
 	}
 
-	for ( i = 0 ; i < c ; i++ ) {
+	for ( i = 0 ; i < MAX_SEARCH_PATHS ; i++ ) {
 		if ( fs_serverReferencedPakNames[i] ) {
 			Z_Free( fs_serverReferencedPakNames[i] );
 		}
@@ -4073,13 +4086,25 @@ void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames )
 		Cmd_TokenizeString( pakNames );
 
 		d = Cmd_Argc();
-		if ( d > MAX_SEARCH_PATHS ) {
-			d = MAX_SEARCH_PATHS;
+		if ( d > c ) {
+			d = c;
 		}
 
-		for ( i = 0 ; i < d ; i++ ) {
-			fs_serverReferencedPakNames[i] = CopyString( Cmd_Argv( i ) );
+		// these become paths in the home directory when a pak is downloaded, so an
+		// unsafe one is dropped here, with its checksum so the two lists stay paired
+		for ( i = 0, kept = 0 ; i < d ; i++ ) {
+			if ( FS_CheckPakName( Cmd_Argv( i ) ) ) {
+				fs_serverReferencedPaks[kept] = fs_serverReferencedPaks[i];
+				fs_serverReferencedPakNames[kept] = CopyString( Cmd_Argv( i ) );
+				kept++;
+			} else {
+				Com_Printf( "WARNING: ignoring unsafe pak name from the server\n" );
+			}
 		}
+		fs_numServerReferencedPaks = kept;
+	} else {
+		// FS_ComparePaks needs a name for every checksum
+		fs_numServerReferencedPaks = 0;
 	}
 }
 

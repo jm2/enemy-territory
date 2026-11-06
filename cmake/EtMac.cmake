@@ -26,7 +26,9 @@ target_compile_options(et_splines PRIVATE -w "$<$<COMPILE_LANGUAGE:C>:-std=gnu99
 
 add_executable(ET ${ET_SERVER} ${ET_QCOMMON} ${ET_SHARED} ${ET_BOTLIB} ${ET_JPEG} ${ET_RENDERER} ${ET_CLIENT}
     ${ET_SRC}/qcommon/dl_main_stubs.c ${ET_MAC_SOURCES} ${ET_SRC}/mac9/mac_et.c)
-target_compile_options(ET PRIVATE "$<$<COMPILE_LANGUAGE:C>:${ET_C_FLAGS}>")
+# A format string a peer can influence must never reach printf: these make any
+# such call, and any argument that does not match its format, a build failure.
+target_compile_options(ET PRIVATE "$<$<COMPILE_LANGUAGE:C>:${ET_C_FLAGS};-Wformat=2;-Wno-format-nonliteral;-Werror=format;-Werror=format-security;-Wno-error=format-overflow;-Wno-error=format-truncation>")
 target_include_directories(ET PRIVATE ${ET_SRC} ${ET_SRC}/game ${ET_SRC}/cgame ${ET_SRC}/client ${ET_SRC}/server
     ${ET_SRC}/renderer ${ET_SRC}/qcommon ${ET_SRC}/botlib ${ET_MAC})
 target_link_libraries(ET PUBLIC

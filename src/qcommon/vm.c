@@ -826,7 +826,7 @@ void VM_LogSyscalls( int *args ) {
 		f = fopen( "syscalls.log", "w" );
 	}
 	callnum++;
-	fprintf( f, "%i: %i (%i) = %i %i %i %i\n", callnum, args - (int *)currentVM->dataBase,
+	fprintf( f, "%i: %i (%i) = %i %i %i %i\n", callnum, (int)( args - (int *)currentVM->dataBase ),
 			 args[0], args[1], args[2], args[3], args[4] );
 }
 

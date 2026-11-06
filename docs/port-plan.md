@@ -28,7 +28,7 @@ Static checks agree with the runs:
 
 - `entityStateFields` and `playerStateFields` in `msg.c` are identical in both
   trees, as are `playerState_t` and `entityState_t` layouts and all compared limits
-  except `MAX_RELIABLE_COMMANDS` (below).
+  including `MAX_RELIABLE_COMMANDS`, which the GPL source already has at 256.
 - `cgame` and `ui` imports only gain entries at the end, and the mod reaches them
   through `trap_GetValue`, which it finds through a cvar probe and skips when the
   engine has none.
@@ -48,7 +48,7 @@ All are client-side and none changes the wire format.
 | E1 | **`cl_guid` from an `etkey` file**: port `CL_GenerateETKey`, `CL_UpdateGUID`, `Com_MD5FileETCompat` from ETL `cl_main.c` and `md5.c` | Required. `src/` has no `cl_guid` code (PunkBuster set it in retail), and `g_guidCheck` defaults to 1 in `legacy.cfg`. Without this, default servers refuse the client. | **Done, verified.** Same scheme and file format as ETL's own client |
 | E2 | **Pure checksums for static modules** | Required on pure servers. `SV_VerifyPaks_f` wants the checksum of the pk3 holding `cgame` and `ui`. `FS_ReferencedPakPureChecksums` only gets them from `FS_CGAME_REF`/`FS_UI_REF`, set when the DLL is opened from a pk3. A static client opens nothing, so `Sys_LoadDll` opens and closes `cgame.mp.i386.so` and `ui.mp.i386.so` by name. The release pk3 has every platform's DLLs; the server checks its own, in the same pk3. | **Done, verified:** without it the server logs `nChkSum1 0 == ...` and rejects the client as unpure |
 | E3 | **Refuse mismatched mod versions** | A static cgame only matches one release. `CG_Init` compares `GAME_VERSION` only, so a `legacy_v2.86.1.pk3` server would load and could desync. The client checks `fs_game` and `sv_referencedPakNames` at connect. | **Done, verified** against a server with the pk3 renamed. Known limits: a server holding two legacy pk3s passes, and one with the pk3 in `etmain/` is refused. Neither is a standard install |
-| E4 | **Raise `MAX_RELIABLE_COMMANDS` to 256** | ETL servers keep 256, 2.60 clients 64. More than 64 unacknowledged commands would hit 2.60's "rotated out" `ERR_DROP`. The netchan key uses the same string either way. | Inferred, not seen in the runs |
+| E4 | ~~Raise `MAX_RELIABLE_COMMANDS` to 256~~ | Not needed. The GPL source is already 256; the first audit read the wrong header. | Closed |
 | E5 | **Follow `cm_optimizePatchPlanes`** | ETL servers default to 0 and publish it in systeminfo; 2.60 always behaves as 1. Prediction could differ on curved surfaces. | Inferred, not seen in the runs. Measure before porting |
 
 Expected and left alone: `OLD_CLIENT` shows a "SECURITY INFORMATION: You are

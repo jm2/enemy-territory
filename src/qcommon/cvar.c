@@ -111,6 +111,19 @@ static cvar_t *Cvar_FindVar( const char *var_name ) {
 
 /*
 ============
+Cvar_Flags
+
+The flags of a cvar, or -1 if it does not exist
+============
+*/
+int Cvar_Flags( const char *var_name ) {
+	cvar_t *var = Cvar_FindVar( var_name );
+
+	return var ? var->flags : -1;
+}
+
+/*
+============
 Cvar_VariableValue
 ============
 */
@@ -385,7 +398,7 @@ cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
 #ifdef DEDICATED
 			Com_Printf( FOREIGN_MSG );
 #else
-			Com_Printf( CL_TranslateStringBuf( FOREIGN_MSG ) );
+			Com_Printf( "%s", CL_TranslateStringBuf( FOREIGN_MSG ) );
 #endif
 			Com_Printf( "Using %s instead of %s\n", cleaned, value );
 			return Cvar_Set2( var_name, cleaned, force );
@@ -1013,8 +1026,8 @@ void    Cvar_Update( vmCvar_t *vmCvar ) {
 	if ( strlen( cv->string ) + 1 > MAX_CVAR_VALUE_STRING ) {
 		Com_Error( ERR_DROP, "Cvar_Update: src %s length %d exceeds MAX_CVAR_VALUE_STRING(%d)",
 				   cv->string,
-				   strlen( cv->string ),
-				   sizeof( vmCvar->string ) );
+				   (int)strlen( cv->string ),
+				   (int)sizeof( vmCvar->string ) );
 	}
 	// bk001212 - Q_strncpyz guarantees zero padding and dest[MAX_CVAR_VALUE_STRING-1]==0
 	// bk001129 - paranoia. Never trust the destination string.

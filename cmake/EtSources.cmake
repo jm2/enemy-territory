@@ -9,7 +9,7 @@ endfunction()
 
 et_prefix(ET_SERVER server sv_bot.c sv_ccmds.c sv_client.c sv_game.c sv_init.c sv_main.c sv_net_chan.c sv_snapshot.c sv_world.c)
 et_prefix(ET_QCOMMON qcommon cm_load.c cm_patch.c cm_polylib.c cm_test.c cm_trace.c cmd.c common.c cvar.c files.c huffman.c
-    md4.c md5.c msg.c net_chan.c unzip.c vm.c vm_interpreted.c vm_static.c sys_static_modules.c)
+    fs_path.c md4.c md5.c msg.c net_chan.c unzip.c vm.c vm_interpreted.c vm_static.c sys_static_modules.c)
 et_prefix(ET_SHARED game q_shared.c q_math.c)
 et_prefix(ET_BOTLIB botlib be_aas_bspq3.c be_aas_cluster.c be_aas_debug.c be_aas_entity.c be_aas_file.c be_aas_main.c
     be_aas_move.c be_aas_optimize.c be_aas_reach.c be_aas_route.c be_aas_routealt.c be_aas_routetable.c be_aas_sample.c

@@ -113,6 +113,9 @@ void SND_setup() {
 
 	scs = cv->integer * 512;
 
+	// a snd_restart comes back here, and a fixed partition cannot lose the old pool
+	free( buffer );
+	free( sfxScratchBuffer );
 	buffer = malloc( scs * sizeof( sndBuffer ) );
 	// allocate the stack based hunk allocator
 	sfxScratchBuffer = malloc( SND_CHUNK_SIZE * sizeof( short ) * 4 );  //Hunk_Alloc(SND_CHUNK_SIZE * sizeof(short) * 4);

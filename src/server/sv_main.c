@@ -721,6 +721,59 @@ void SVC_RemoteCommand( netadr_t from, msg_t *msg ) {
 
 /*
 =================
+SV_RateLimited
+
+Query answers are larger than the requests, and UDP sources can be forged, so an
+unlimited server amplifies traffic at whoever is named as the source
+(CVE-2010-5077). Each slot of a fixed table gets a burst of 10, then one every
+100 msec, and addresses hash to slots, so sources in one slot share that budget.
+A flood from many forged sources can briefly refuse real clients; replies stay bounded.
+=================
+*/
+#define RATE_SLOTS  256
+#define RATE_BURST  10
+#define RATE_PERIOD 100
+
+static qboolean SV_RateLimited( netadr_t from ) {
+	static struct {
+		int tokens;
+		int last;
+		qboolean used;
+	} slots[RATE_SLOTS];
+	unsigned int ip, hash;
+	int refill;
+
+	if ( from.type != NA_IP ) {
+		return qfalse;
+	}
+	ip = ( (unsigned int)from.ip[0] << 24 ) | ( from.ip[1] << 16 ) | ( from.ip[2] << 8 ) | from.ip[3];
+	hash = ( ip * 2654435761u ) >> 24;
+
+	if ( !slots[hash].used ) {
+		slots[hash].used = qtrue;
+		slots[hash].tokens = RATE_BURST;
+		slots[hash].last = svs.time;
+	}
+	refill = ( svs.time - slots[hash].last ) / RATE_PERIOD;
+	if ( refill < 0 || refill > RATE_BURST ) {
+		refill = RATE_BURST;
+	}
+	if ( refill ) {
+		slots[hash].tokens += refill;
+		if ( slots[hash].tokens > RATE_BURST ) {
+			slots[hash].tokens = RATE_BURST;
+		}
+		slots[hash].last = svs.time;
+	}
+	if ( slots[hash].tokens <= 0 ) {
+		return qtrue;
+	}
+	slots[hash].tokens--;
+	return qfalse;
+}
+
+/*
+=================
 SV_ConnectionlessPacket
 
 A connectionless packet has four leading 0xff
@@ -748,11 +801,17 @@ void SV_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 	Com_DPrintf( "SV packet %s : %s\n", NET_AdrToString( from ), c );
 
 	if ( !Q_stricmp( c,"getstatus" ) ) {
-		SVC_Status( from  );
+		if ( !SV_RateLimited( from ) ) {
+			SVC_Status( from  );
+		}
 	} else if ( !Q_stricmp( c,"getinfo" ) ) {
-		SVC_Info( from );
+		if ( !SV_RateLimited( from ) ) {
+			SVC_Info( from );
+		}
 	} else if ( !Q_stricmp( c,"getchallenge" ) ) {
-		SV_GetChallenge( from );
+		if ( !SV_RateLimited( from ) ) {
+			SV_GetChallenge( from );
+		}
 	} else if ( !Q_stricmp( c,"connect" ) ) {
 		SV_DirectConnect( from );
 #ifdef AUTHORIZE_SUPPORT
