@@ -63,9 +63,11 @@ If you have questions concerning this license or the applicable additional terms
 #endif
 #ifdef __MACOS__
 // What the hunk leaves free in the application heap for allocations made after
-// it: the sound pool and 8 MB for AGL/OpenGL, the Sound Manager, InputSprocket
-// and fragmentation. The zones come first, so MaxBlock() already excludes them.
-#define MAC_HUNK_RESERVE_KB ( 24750 + 8 * 1024 )
+// it: the 8.2 MB sound pool at com_soundMegs 8 (it is 512 buffers a meg here, not
+// Quake III's 1536) and room for AGL/OpenGL and the image buffers, where one
+// 2048x2048 texture in the mod's pk3 needs 17 MB in one block, twice over. The
+// zones come first, so MaxBlock() already excludes them.
+#define MAC_HUNK_RESERVE_KB ( 8240 + 52 * 1024 )
 #endif
 
 int com_argc;

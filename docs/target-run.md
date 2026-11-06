@@ -19,7 +19,7 @@ Enemy Territory:
         legacy_v2.86.2.pk3
 ```
 
-- Get Info needs at least 300 MB (340 MB preferred). The large partition is mostly the
+- Get Info needs at least 334 MB (400 MB preferred). The large partition is mostly the
   modules' static data; with virtual memory off, it all has to be real RAM.
 - The paks are from `https://mirror.etlegacy.com/etmain/`, the mod pk3 from the
   v2.86.2 release. `etmain:etkey` is created on the first launch.

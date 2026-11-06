@@ -3423,7 +3423,12 @@ void CL_Init( void ) {
 	cl_showMouseRate = Cvar_Get( "cl_showmouserate", "0", 0 );
 
 	cl_allowDownload = Cvar_Get( "cl_allowDownload", "1", CVAR_ARCHIVE );
+#ifdef ET_STATIC_MODULES
+	// no HTTP here (dl_main_stubs.c): the server must use the slow UDP path
+	cl_wwwDownload = Cvar_Get( "cl_wwwDownload", "0", CVAR_USERINFO | CVAR_ROM );
+#else
 	cl_wwwDownload = Cvar_Get( "cl_wwwDownload", "1", CVAR_USERINFO | CVAR_ARCHIVE );
+#endif
 
 	cl_profile = Cvar_Get( "cl_profile", "", CVAR_ROM );
 	cl_defaultProfile = Cvar_Get( "cl_defaultProfile", "", CVAR_ROM );
