@@ -1689,7 +1689,7 @@ int FS_Read( void *buffer, int len, fileHandle_t f ) {
 		Com_Error( ERR_FATAL, "Filesystem call made without initialization\n" );
 	}
 
-	if ( !f ) {
+	if ( !f || len <= 0 ) {
 		return 0;
 	}
 
