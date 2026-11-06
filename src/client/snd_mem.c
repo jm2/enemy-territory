@@ -38,7 +38,12 @@ If you have questions concerning this license or the applicable additional terms
 
 #include "snd_local.h"
 
+#ifdef __MACOS__
+// the pool has to fit in the application partition; see MAC_HUNK_RESERVE_KB
+#define DEF_COMSOUNDMEGS "8"
+#else
 #define DEF_COMSOUNDMEGS "24"    // (SA) upped for GD
+#endif
 
 /*
 ===============================================================================

@@ -50,15 +50,12 @@ static vmStaticModule_t sys_staticModules[] = {
 =================
 Sys_InitStaticModules
 
-Before any module runs: their initial images are saved here.
+Before any module runs: their initial images are saved here. Returns NULL,
+or what is wrong.
 =================
 */
-void Sys_InitStaticModules( void ) {
-	const char *error = VM_InitStaticModules( sys_staticModules, NUM_STATIC_MODULES );
-
-	if ( error ) {
-		Sys_Error( "Sys_InitStaticModules: %s", error );
-	}
+const char *Sys_InitStaticModules( void ) {
+	return VM_InitStaticModules( sys_staticModules, NUM_STATIC_MODULES );
 }
 
 #ifndef DEDICATED

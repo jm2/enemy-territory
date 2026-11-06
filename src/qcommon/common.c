@@ -31,6 +31,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "../game/q_shared.h"
 #include "qcommon.h"
 #include <setjmp.h>
+#ifdef __MACOS__
+#include <MacMemory.h>
+#endif
 
 // htons
 #ifdef __linux__
@@ -48,8 +51,22 @@ If you have questions concerning this license or the applicable additional terms
 
 #define MIN_DEDICATED_COMHUNKMEGS 1
 #define MIN_COMHUNKMEGS 42 // JPW NERVE changed this to 42 for MP, was 56 for team arena and 75 for wolfSP
+#ifdef __MACOS__
+#define DEF_COMHUNKMEGS "80"    // the stock maps peak near 64 MB with legacy
+#else
 #define DEF_COMHUNKMEGS "56" // RF, increased this, some maps are exceeding 56mb // JPW NERVE changed this for multiplayer back to 42, 56 for depot/mp_cpdepot, 42 for everything else
+#endif
+#ifdef __MACOS__
+#define DEF_COMZONEMEGS "16"    // the stock maps use about 2 MB with no bots
+#else
 #define DEF_COMZONEMEGS "24" // RF, increased this from 16, to account for botlib/AAS
+#endif
+#ifdef __MACOS__
+// What the hunk leaves free in the application heap for allocations made after
+// it: the sound pool and 8 MB for AGL/OpenGL, the Sound Manager, InputSprocket
+// and fragmentation. The zones come first, so MaxBlock() already excludes them.
+#define MAC_HUNK_RESERVE_KB ( 24750 + 8 * 1024 )
+#endif
 
 int com_argc;
 char    *com_argv[MAX_NUM_ARGVS + 1];
@@ -120,6 +137,70 @@ qboolean com_errorEntered;
 qboolean com_fullyInitialized;
 
 char com_errorMessage[MAXPRINTMSG];
+
+// Flight Recorder
+#ifdef __MACOS__
+void Sys_BootLogWrite( const char *text );	// mac_bootlog.c
+#endif
+#define FLIGHT_RECORDER_SIZE (256 * 1024)
+static char flightRecorderBuffer[FLIGHT_RECORDER_SIZE];
+static int flightRecorderHead = 0;
+static int flightRecorderTotal = 0;
+
+// Append to the in-memory flight-recorder ring, and on the Mac to the boot log,
+// a disk write per line (mac_bootlog.c). The ring is flushed by
+// Com_DumpFlightRecord, which Sys_Error and the Cmd-D panic-key handler call.
+void QDECL Com_FlightRecord( const char *fmt, ... ) {
+    va_list argptr;
+    char text[1024];
+    int len;
+    int i;
+
+    va_start( argptr, fmt );
+    len = Q_vsnprintf( text, sizeof(text), fmt, argptr );
+    va_end( argptr );
+    text[sizeof(text) - 1] = '\0';
+
+    if ( len < 0 ) return;
+    if ( len > sizeof(text)-1 ) len = sizeof(text)-1;
+
+#ifdef __MACOS__
+    Sys_BootLogWrite( text );
+#endif
+
+    for ( i = 0; i < len; i++ ) {
+        flightRecorderBuffer[flightRecorderHead] = text[i];
+        flightRecorderHead = (flightRecorderHead + 1) % FLIGHT_RECORDER_SIZE;
+        if (flightRecorderTotal < FLIGHT_RECORDER_SIZE) flightRecorderTotal++;
+    }
+}
+
+void Com_DumpFlightRecord( const char *fileName ) {
+    FILE *fp;
+    int i, idx, count;
+
+    fp = fopen( fileName, "wb" );
+    if ( !fp ) {
+        Com_Printf( "Com_DumpFlightRecord: Failed to open %s\n", fileName );
+        return;
+    }
+
+    if (flightRecorderTotal < FLIGHT_RECORDER_SIZE) {
+        idx = 0;
+        count = flightRecorderTotal;
+    } else {
+        idx = flightRecorderHead;
+        count = FLIGHT_RECORDER_SIZE;
+    }
+
+    for ( i = 0; i < count; i++ ) {
+        fwrite( &flightRecorderBuffer[idx], 1, 1, fp );
+        idx = (idx + 1) % FLIGHT_RECORDER_SIZE;
+    }
+
+    fclose( fp );
+    Com_Printf( "Com_DumpFlightRecord: Dumped %d bytes to %s\n", count, fileName );
+}
 
 void Com_WriteConfig_f( void );
 void CIN_CloseAllVideos();
@@ -1599,6 +1680,39 @@ void Com_InitHunkMemory( void ) {
 		s_hunkTotal = cv->integer * 1024 * 1024;
 	}
 
+
+#ifdef __MACOS__
+	// The Finder gives the application one fixed partition, and Retro68's
+	// calloc is NewPtrClear in its heap.  A com_hunkMegs archived from a PC
+	// config (often 128) would fail to allocate, or leave too little for the
+	// sound pool and AGL, so take only what fits beside MAC_HUNK_RESERVE_KB.
+	// The cvar keeps the value the user set.
+	{
+		long	largest = MaxBlock() - 31;
+		long	reserve = MAC_HUNK_RESERVE_KB * 1024L;
+		int		requested = cv->integer < nMinAlloc ? nMinAlloc : cv->integer;
+		int		fits = largest > reserve ? ( largest - reserve ) / ( 1024 * 1024 ) : 0;
+
+		if ( requested > fits ) {
+			if ( largest < (long)nMinAlloc * 1024 * 1024 ) {
+				Sys_Error( "Not enough memory for the %i MB hunk (the largest free block is %li KB).\n"
+					"Give Enemy Territory at least %li KB more memory in the Finder's Get Info window.",
+					nMinAlloc, ( largest + 31 ) / 1024,
+					( (long)nMinAlloc * 1024 * 1024 + reserve - largest + 1023 ) / 1024 );
+			}
+			if ( fits < nMinAlloc ) {
+				fits = nMinAlloc;
+				Com_Printf( "WARNING: the minimum %i MB hunk leaves less than %i KB for sound and OpenGL; "
+					"give Enemy Territory more memory in the Finder's Get Info window.\n", nMinAlloc, MAC_HUNK_RESERVE_KB );
+			}
+			if ( requested > fits ) {
+				Com_Printf( "com_hunkMegs %i does not fit in this memory partition, allocating %i megs. "
+					"Give Enemy Territory more memory in the Finder's Get Info window to use more.\n", requested, fits );
+			}
+			s_hunkTotal = fits * 1024 * 1024;
+		}
+	}
+#endif
 
 	s_hunkData = malloc( s_hunkTotal + 31 );
 	if ( !s_hunkData ) {
