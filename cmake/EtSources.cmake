@@ -20,7 +20,7 @@ et_prefix(ET_JPEG jpeg-6 jcapimin.c jchuff.c jcinit.c jccoefct.c jccolor.c jfdct
     jdhuff.c jdinput.c jdmainct.c jdmarker.c jdmaster.c jdpostct.c jdsample.c jdtrans.c jerror.c jidctflt.c jmemmgr.c
     jmemnobs.c jutils.c)
 et_prefix(ET_RENDERER renderer tr_animation_mdm.c tr_animation_mds.c tr_backend.c tr_bsp.c tr_cmds.c tr_cmesh.c tr_curve.c
-    tr_decals.c tr_flares.c tr_font.c tr_image.c tr_init.c tr_light.c tr_main.c tr_marks.c tr_mesh.c tr_model.c tr_noise.c
+    tr_decals.c tr_flares.c tr_font.c tr_image.c tr_image_bmp.c tr_image_jpeg.c tr_image_pcx.c tr_image_tga.c tr_init.c tr_light.c tr_main.c tr_marks.c tr_mesh.c tr_model.c tr_noise.c
     tr_scene.c tr_shade.c tr_shade_calc.c tr_shader.c tr_shadows.c tr_sky.c tr_surface.c tr_world.c)
 et_prefix(ET_CLIENT client cl_cgame.c cl_cin.c cl_console.c cl_input.c cl_keys.c cl_main.c cl_net_chan.c cl_parse.c cl_scrn.c
     cl_ui.c snd_adpcm.c snd_dma.c snd_mem.c snd_mix.c snd_wavelet.c)

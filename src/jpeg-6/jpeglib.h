@@ -819,7 +819,7 @@ typedef JMETHOD ( boolean, jpeg_marker_parser_method, ( j_decompress_ptr cinfo )
 #define jpeg_destroy_compress   jDestCompress
 #define jpeg_destroy_decompress jDestDecompress
 #define jpeg_stdio_dest     jStdDest
-#define jpeg_stdio_src      jStdSrc
+#define jpeg_mem_src        jMemSrc
 #define jpeg_set_defaults   jSetDefaults
 #define jpeg_set_colorspace jSetColorspace
 #define jpeg_default_colorspace jDefColorspace
@@ -874,7 +874,7 @@ EXTERN void jpeg_destroy_decompress JPP( (j_decompress_ptr cinfo) );
 /* Standard data source and destination managers: stdio streams. */
 /* Caller is responsible for opening the file before and closing after. */
 EXTERN void jpeg_stdio_dest JPP( ( j_compress_ptr cinfo, FILE * outfile ) );
-EXTERN void jpeg_stdio_src JPP( ( j_decompress_ptr cinfo, unsigned char *infile ) );
+EXTERN void jpeg_mem_src JPP( ( j_decompress_ptr cinfo, const unsigned char *infile, size_t length ) );
 
 /* Default parameter setup for compression */
 EXTERN void jpeg_set_defaults JPP( (j_compress_ptr cinfo) );

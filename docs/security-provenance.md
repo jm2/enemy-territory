@@ -20,6 +20,12 @@ it, and what has not been done. A cross-build proves only that code compiles.
 | Server overwriting registered client cvars through systeminfo | ETL `cl_parse.c` | Code review, and a real server still connects. No hostile-server test. A server can still seed a cvar not yet registered, which ETL closes with `CVAR_SERVER_CREATED` |
 | Amplification through `getstatus`, `getinfo`, `getchallenge` | CVE-2010-5077; simpler than Q3A's buckets. rcon keeps its existing global limit | Code review |
 | `FS_VerifyOfficialPaks`: stack overflow from repeated names, NULL from a short name list | Local review; ETL has the same code | `tests/security/test_official.c` extracts the function and runs it under ASan |
+| BMP, PCX, TGA and JPEG loaders: reads past the file, size overflow, RLE and palette writes | Q3A (`731b6de3`, `ad93870f`, `c1373bb4`, `13b74609`, with its retail tolerance follow-ups `570315ad`, `e88683af`); JPEG decode written for this tree | `tests/security/test_images.c`: truncation at every length and 320,000 mutated files under ASan and UBSan. All 1,666 images in pak0-2 and the `legacy` pk3 decode to the same size and pixels as the old loaders |
+| Grayscale JPEG heap overflow: id filled one byte a pixel, then wrote alpha through four | Local, found reading the code. RGB_PIXELSIZE is 4 in this libjpeg, unlike Q3A's | Same test, `gray jpg` |
+| libjpeg: scan names a component twice | CVE-2013-6629, from libjpeg-turbo. Found by the mutation test as a NULL row store | `duplicate jpeg component` |
+| libjpeg: Huffman table's stack garbage copied out | CVE-2013-6630, from libjpeg-turbo | Code review |
+| libjpeg: DC symbol past `extend_test`, codes too long for the lookahead table | libjpeg 6b. The first was found by the mutation test | `bad DC symbol` |
+| libjpeg error exits were `ERR_FATAL`, so one bad file quit the game | Q3A `a1fd4795` | Mutation test: a bad file loads as no image |
 | `SV_WriteDownloadToClient` checks | CVE-2006-2082 | Already in the 2.60 GPL source |
 | Unchecked allocations a Mac reaches (`R_GetImageBuffer`, `R_Hunk_Begin`, `SND_setup`) | Local | The first was found on the emulator (commit aa88b4d) |
 
@@ -29,9 +35,10 @@ it, and what has not been done. A cross-build proves only that code compiles.
   (`13f30fcb`) and `COM_ParseExt` (`22c68029`) are not reviewed against this tree yet.
 - `sv_userInfoFloodProtect` (`f5258c7d`) and the other server-side ETL fixes matter only for a
   listen server and are not ported.
-- Renderer, BSP, model, image and zip loaders take pk3 content from a server. Q3A has a long
-  validation series (`docs/review-*` there). None is ported. **A malicious server's pk3
-  remains the largest open risk**, and `sv_pure` does not defend a client against it.
+- BSP, model, sound, shader, cinematic and zip loaders take pk3 content from a server, and only
+  the image loaders are hardened so far. Q3A has a long validation series (`docs/review-*`
+  there). **A malicious server's pk3 remains the largest open risk**, and `sv_pure` does not
+  defend a client against it.
 - `cm_optimizePatchPlanes` is not followed (E5). When it is, read it from `systemInfo`: the
   cvar keeps the first server's value.
 

@@ -308,6 +308,13 @@ get_sos( j_decompress_ptr cinfo ) {
 
 id_found:
 
+		/* CVE-2013-6629: a component named twice leaves another with no data and no rows */
+		for ( ci = 0; ci < i; ci++ ) {
+			if ( cinfo->cur_comp_info[ci] == compptr ) {
+				ERREXIT1( cinfo, JERR_BAD_COMPONENT_ID, cc );
+			}
+		}
+
 		cinfo->cur_comp_info[i] = compptr;
 		compptr->dc_tbl_no = ( c >> 4 ) & 15;
 		compptr->ac_tbl_no = ( c     ) & 15;
@@ -524,20 +531,23 @@ get_dht( j_decompress_ptr cinfo ) {
 			ERREXIT( cinfo, JERR_DHT_COUNTS );
 		}
 
+		/* CVE-2013-6630: the whole array is copied below, and this used to be stack garbage */
+		MEMZERO( huffval, SIZEOF( huffval ) );
+
 		for ( i = 0; i < count; i++ )
 			INPUT_BYTE( cinfo, huffval[i], return FALSE );
 
 		length -= count;
 
-		if ( index & 0x10 ) { /* AC table definition */
-			index -= 0x10;
-			htblptr = &cinfo->ac_huff_tbl_ptrs[index];
-		} else {        /* DC table definition */
-			htblptr = &cinfo->dc_huff_tbl_ptrs[index];
+		/* id formed the pointer from an unchecked index, then checked it */
+		if ( ( index & ~0x10 ) >= NUM_HUFF_TBLS ) {
+			ERREXIT1( cinfo, JERR_DHT_INDEX, index & ~0x10 );
 		}
 
-		if ( index < 0 || index >= NUM_HUFF_TBLS ) {
-			ERREXIT1( cinfo, JERR_DHT_INDEX, index );
+		if ( index & 0x10 ) { /* AC table definition */
+			htblptr = &cinfo->ac_huff_tbl_ptrs[index - 0x10];
+		} else {        /* DC table definition */
+			htblptr = &cinfo->dc_huff_tbl_ptrs[index];
 		}
 
 		if ( *htblptr == NULL ) {
