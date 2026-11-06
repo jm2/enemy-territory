@@ -108,6 +108,9 @@ void S_AdpcmEncodeSound( sfx_t *sfx, short *samples ) {
 
 	inOffset = 0;
 	count = sfx->soundLength;
+	if ( count <= 0 ) {
+		return;     // an empty sound has no first sample
+	}
 	state.index = 0;
 	state.sample = samples[0];
 
@@ -119,6 +122,16 @@ void S_AdpcmEncodeSound( sfx_t *sfx, short *samples ) {
 		}
 
 		newchunk = SND_malloc();
+		if ( newchunk == NULL ) {
+			// no other sound is left to free: release what this one holds, which
+			// S_LoadSound sees as a sound length with no data
+			for ( chunk = sfx->soundData ; chunk ; chunk = newchunk ) {
+				newchunk = chunk->next;
+				SND_free( chunk );
+			}
+			sfx->soundData = NULL;
+			return;
+		}
 		if ( sfx->soundData == NULL ) {
 			sfx->soundData = newchunk;
 		} else {

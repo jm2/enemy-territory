@@ -643,6 +643,10 @@ void S_PaintChannelFromADPCM( channel_t *ch, sfx_t *sc, int count, int sampleOff
 	while ( sampleOffset >= ( SND_CHUNK_SIZE * 4 ) ) {
 		chunk = chunk->next;
 		sampleOffset -= ( SND_CHUNK_SIZE * 4 );
+		// doppler scales this past the end of the sound
+		if ( !chunk ) {
+			chunk = sc->soundData;
+		}
 		i++;
 	}
 
@@ -853,7 +857,8 @@ void S_PaintChannels( int endtime ) {
 				count = sc->soundLength - sampleOffset;
 			}
 
-			if ( count > 0 ) {
+			// a sound that could not be paged back in has no data to paint
+			if ( count > 0 && sc->soundData ) {
 #ifdef TALKANIM
 				// Ridah, talking animations
 				// TODO: check that this entity has talking animations enabled!

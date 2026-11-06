@@ -59,6 +59,7 @@ static int inUse = 0;
 static int totalInUse = 0;
 static int totalAllocated = 0;
 
+static int numBuffers;
 short *sfxScratchBuffer = NULL;
 const sfx_t *sfxScratchPointer = NULL;
 int sfxScratchIndex = 0;
@@ -80,13 +81,17 @@ void SND_free( sndBuffer *v ) {
 /*
 ================
 SND_malloc
+
+Returns NULL when no sound is left in memory to free for it
 ================
 */
 sndBuffer*  SND_malloc() {
 	sndBuffer *v;
 
 	while ( freelist == NULL ) {
-		S_FreeOldestSound();
+		if ( !S_FreeOldestSound() ) {
+			return NULL;
+		}
 	}
 
 	inUse -= sizeof( sndBuffer );
@@ -112,6 +117,7 @@ void SND_setup() {
 	cv = Cvar_Get( "com_soundMegs", DEF_COMSOUNDMEGS, CVAR_LATCH | CVAR_ARCHIVE );
 
 	scs = cv->integer * 512;
+	numBuffers = scs;
 
 	// a snd_restart comes back here, and a fixed partition cannot lose the old pool
 	free( buffer );
@@ -175,7 +181,7 @@ static int GetLittleLong( void ) {
 	val = *data_p;
 	val = val + ( *( data_p + 1 ) << 8 );
 	val = val + ( *( data_p + 2 ) << 16 );
-	val = val + ( *( data_p + 3 ) << 24 );
+	val = val + (int)( (unsigned int)*( data_p + 3 ) << 24 );
 	data_p += 4;
 	return val;
 }
@@ -190,7 +196,8 @@ static void FindNextChunk( char *name ) {
 	{
 		data_p = last_chunk;
 
-		if ( data_p >= iff_end ) { // didn't find the chunk
+		// didn't find the chunk, or only part of a chunk header is left
+		if ( iff_end - data_p < 8 ) {
 			data_p = NULL;
 			return;
 		}
@@ -201,8 +208,16 @@ static void FindNextChunk( char *name ) {
 			data_p = NULL;
 			return;
 		}
+		// a chunk that runs past the end of the file ends with the file
+		if ( iff_chunk_len > iff_end - data_p ) {
+			iff_chunk_len = (int)( iff_end - data_p );
+		}
 		data_p -= 8;
-		last_chunk = data_p + 8 + ( ( iff_chunk_len + 1 ) & ~1 );
+		last_chunk = data_p + 8 + iff_chunk_len;
+		// skip the pad byte after an odd-sized chunk
+		if ( ( iff_chunk_len & 1 ) && last_chunk < iff_end ) {
+			last_chunk++;
+		}
 		if ( !strncmp( (char *)data_p, name, 4 ) ) {
 			return;
 		}
@@ -299,7 +314,7 @@ static wavinfo_t GetWavinfo( char *name, byte *wav, int wavlength ) {
 
 // find "RIFF" chunk
 	FindChunk( "RIFF" );
-	if ( !( data_p && !strncmp( (char *)data_p + 8, "WAVE", 4 ) ) ) {
+	if ( !( data_p && iff_end - data_p >= 12 && !strncmp( (char *)data_p + 8, "WAVE", 4 ) ) ) {
 		Com_Printf( "Missing RIFF/WAVE chunks\n" );
 		return info;
 	}
@@ -309,7 +324,8 @@ static wavinfo_t GetWavinfo( char *name, byte *wav, int wavlength ) {
 // DumpChunks ();
 
 	FindChunk( "fmt " );
-	if ( !data_p ) {
+	// the 16 bytes of format fields read below must be in the file
+	if ( !data_p || iff_end - data_p < 8 + 16 ) {
 		Com_Printf( "Missing fmt chunk\n" );
 		return info;
 	}
@@ -326,6 +342,12 @@ static wavinfo_t GetWavinfo( char *name, byte *wav, int wavlength ) {
 		return info;
 	}
 
+	// the sample count divides by the width
+	if ( info.width < 1 ) {
+		Com_Printf( "Less than 8 bit sound is not supported\n" );
+		return info;
+	}
+
 // find data chunk
 	FindChunk( "data" );
 	if ( !data_p ) {
@@ -333,8 +355,9 @@ static wavinfo_t GetWavinfo( char *name, byte *wav, int wavlength ) {
 		return info;
 	}
 
-	data_p += 4;
-	info.samples = GetLittleLong() / info.width;
+	// iff_chunk_len is the data length bounded by the end of the file
+	data_p += 8;
+	info.samples = iff_chunk_len / info.width;
 	info.dataofs = data_p - wav;
 
 	return info;
@@ -345,9 +368,10 @@ static wavinfo_t GetWavinfo( char *name, byte *wav, int wavlength ) {
 ResampleSfx
 
 resample / decimate to the current source rate
+returns qfalse, holding no sound buffers, if the sound does not fit in them
 ================
 */
-static void ResampleSfx( sfx_t *sfx, int inrate, int inwidth, byte *data, qboolean compressed ) {
+static qboolean ResampleSfx( sfx_t *sfx, int inrate, int inwidth, byte *data, qboolean compressed ) {
 	int outcount;
 	int srcsample;
 	float stepscale;
@@ -357,6 +381,13 @@ static void ResampleSfx( sfx_t *sfx, int inrate, int inwidth, byte *data, qboole
 	sndBuffer   *chunk;
 
 	stepscale = (float)inrate / dma.speed;  // this is usually 0.5, 1, or 2
+
+	// a sound longer than the whole buffer pool can never be paged in, and a tiny
+	// rate stretches even a short file past it, or past an int
+	if ( sfx->soundLength / stepscale > (float)numBuffers * SND_CHUNK_SIZE ) {
+		sfx->soundLength = 0;
+		return qfalse;
+	}
 
 	outcount = sfx->soundLength / stepscale;
 	sfx->soundLength = outcount;
@@ -374,12 +405,22 @@ static void ResampleSfx( sfx_t *sfx, int inrate, int inwidth, byte *data, qboole
 			if ( inwidth == 2 ) {
 				sample = ( (short *)data )[srcsample];
 			} else {
-				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) << 8;
+				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) * 256;
 			}
 			part  = ( i & ( SND_CHUNK_SIZE - 1 ) );
 			if ( part == 0 ) {
 				sndBuffer   *newchunk;
 				newchunk = SND_malloc();
+				if ( newchunk == NULL ) {
+					// no other sound is left to free: release what this one holds
+					for ( chunk = sfx->soundData ; chunk ; chunk = newchunk ) {
+						newchunk = chunk->next;
+						SND_free( chunk );
+					}
+					sfx->soundData = NULL;
+					sfx->soundLength = 0;
+					return qfalse;
+				}
 				if ( chunk == NULL ) {
 					sfx->soundData = newchunk;
 				} else {
@@ -398,12 +439,22 @@ static void ResampleSfx( sfx_t *sfx, int inrate, int inwidth, byte *data, qboole
 			if ( inwidth == 2 ) {
 				sample = LittleShort( ( (short *)data )[srcsample] );
 			} else {
-				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) << 8;
+				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) * 256;
 			}
 			part  = ( i & ( SND_CHUNK_SIZE - 1 ) );
 			if ( part == 0 ) {
 				sndBuffer   *newchunk;
 				newchunk = SND_malloc();
+				if ( newchunk == NULL ) {
+					// no other sound is left to free: release what this one holds
+					for ( chunk = sfx->soundData ; chunk ; chunk = newchunk ) {
+						newchunk = chunk->next;
+						SND_free( chunk );
+					}
+					sfx->soundData = NULL;
+					sfx->soundLength = 0;
+					return qfalse;
+				}
 				if ( chunk == NULL ) {
 					sfx->soundData = newchunk;
 				} else {
@@ -415,6 +466,7 @@ static void ResampleSfx( sfx_t *sfx, int inrate, int inwidth, byte *data, qboole
 			chunk->sndChunk[part] = sample;
 		}
 	}
+	return qtrue;
 }
 
 /*
@@ -447,7 +499,7 @@ static int ResampleSfxRaw( short *sfx, int inrate, int inwidth, int samples, byt
 			if ( inwidth == 2 ) {
 				sample = ( (short *)data )[srcsample];
 			} else {
-				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) << 8;
+				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) * 256;
 			}
 			sfx[i] = sample;
 		}
@@ -459,7 +511,7 @@ static int ResampleSfxRaw( short *sfx, int inrate, int inwidth, int samples, byt
 			if ( inwidth == 2 ) {
 				sample = LittleShort( ( (short *)data )[srcsample] );
 			} else {
-				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) << 8;
+				sample = (int)( ( unsigned char )( data[srcsample] ) - 128 ) * 256;
 			}
 			sfx[i] = sample;
 		}
@@ -483,6 +535,7 @@ qboolean S_LoadSound( sfx_t *sfx ) {
 	short   *samples;
 	wavinfo_t info;
 	int size;
+	qboolean loaded = qtrue;
 
 	// player specific sounds are never directly loaded
 	if ( sfx->soundName[0] == '*' ) {
@@ -498,6 +551,14 @@ qboolean S_LoadSound( sfx_t *sfx ) {
 	info = GetWavinfo( sfx->soundName, data, size );
 	if ( info.channels != 1 ) {
 		Com_Printf( "%s is a stereo wav file\n", sfx->soundName );
+		FS_FreeFile( data );
+		return qfalse;
+	}
+
+	// the resamplers cannot step at a rate of 0 or below, and their source position,
+	// an int with an 8 bit fraction, overflows at 2^23 samples
+	if ( info.rate <= 0 || info.samples >= ( 1 << 23 ) ) {
+		Com_Printf( "%s has an unsupported rate or length\n", sfx->soundName );
 		FS_FreeFile( data );
 		return qfalse;
 	}
@@ -526,12 +587,18 @@ qboolean S_LoadSound( sfx_t *sfx ) {
 		sfx->soundCompressionMethod = 0;
 		sfx->soundLength = info.samples;
 		sfx->soundData = NULL;
-		ResampleSfx( sfx, info.rate, info.width, data + info.dataofs, qfalse );
-	} else if ( sfx->soundCompressed == qtrue )     {
+		loaded = ResampleSfx( sfx, info.rate, info.width, data + info.dataofs, qfalse );
+	// ResampleSfxRaw fills the temp buffer, which holds 2x upsampling, so a sound the
+	// mixer stretches further stays uncompressed, which does not use it
+	} else if ( sfx->soundCompressed == qtrue && info.rate >= ( dma.speed + 1 ) / 2 )     {
 		sfx->soundCompressionMethod = 1;
 		sfx->soundData = NULL;
 		sfx->soundLength = ResampleSfxRaw( samples, info.rate, info.width, info.samples, ( data + info.dataofs ) );
 		S_AdpcmEncodeSound( sfx, samples );
+		if ( sfx->soundLength && !sfx->soundData ) {
+			sfx->soundLength = 0;
+			loaded = qfalse;
+		}
 #ifdef COMPRESSION
 	} else if ( info.samples > ( SND_CHUNK_SIZE * 16 ) && info.width > 1 ) {
 		sfx->soundCompressionMethod = 3;
@@ -548,12 +615,16 @@ qboolean S_LoadSound( sfx_t *sfx ) {
 		sfx->soundCompressionMethod = 0;
 		sfx->soundLength = info.samples;
 		sfx->soundData = NULL;
-		ResampleSfx( sfx, info.rate, info.width, data + info.dataofs, qfalse );
+		loaded = ResampleSfx( sfx, info.rate, info.width, data + info.dataofs, qfalse );
 	}
+	if ( !loaded ) {
+		Com_Printf( "%s does not fit in sound memory\n", sfx->soundName );
+	}
+
 	Hunk_FreeTempMemory( samples );
 	FS_FreeFile( data );
 
-	return qtrue;
+	return loaded;
 }
 
 /*
