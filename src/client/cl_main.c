@@ -43,6 +43,7 @@ cvar_t  *cl_autoupdate;         // DHM - Nerve
 
 cvar_t  *rcon_client_password;
 cvar_t  *rconAddress;
+static netadr_t cl_rconTarget;  // who may answer with print, besides the server
 
 cvar_t  *cl_timeout;
 cvar_t  *cl_maxpackets;
@@ -1466,6 +1467,7 @@ void CL_Rcon_f( void ) {
 		}
 	}
 
+	cl_rconTarget = to;
 	NET_SendPacket( NS_CLIENT, strlen( message ) + 1, message, to );
 }
 
@@ -2159,7 +2161,11 @@ void CL_PrintPacket( netadr_t from, msg_t *msg ) {
 		Com_Error( ERR_DROP, "%s", CL_TranslateStringBuf( PROTOCOL_MISMATCH_ERROR_LONG ) );
 	} else if ( !Q_stricmpn( s, "[err_update]", 12 ) )       {
 		Q_strncpyz( clc.serverMessage, s + 12, sizeof( clc.serverMessage ) );
+#ifdef ET_STATIC_MODULES
+		Com_Error( ERR_DROP, "%s", clc.serverMessage );
+#else
 		Com_Error( ERR_AUTOUPDATE, "%s", clc.serverMessage );
+#endif
 	} else if ( !Q_stricmpn( s, "ET://", 5 ) )       { // fretn
 		Q_strncpyz( clc.serverMessage, s, sizeof( clc.serverMessage ) );
 		Cvar_Set( "com_errorMessage", clc.serverMessage );
@@ -2318,6 +2324,13 @@ CL_ConnectionlessPacket
 Responses to broadcasts, etc
 =================
 */
+static qboolean CL_PacketFromServer( netadr_t from ) {
+	if ( cls.state >= CA_CONNECTING && NET_CompareAdr( from, clc.serverAddress ) ) {
+		return qtrue;
+	}
+	return NET_CompareAdr( from, cl_rconTarget );
+}
+
 void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 	char    *s;
 	char    *c;
@@ -2337,6 +2350,9 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 	if ( !Q_stricmp( c, "challengeResponse" ) ) {
 		if ( cls.state != CA_CONNECTING ) {
 			Com_Printf( "Unwanted challenge response received.  Ignored.\n" );
+		} else if ( !NET_CompareBaseAdr( from, clc.serverAddress ) ) {
+			// a spoofed one would move the connection to the sender
+			Com_Printf( "challengeResponse from a different address.  Ignored.\n" );
 		} else {
 			// start sending challenge repsonse instead of challenge request packets
 			clc.challenge = atoi( Cmd_Argv( 1 ) );
@@ -2409,7 +2425,9 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 
 	// echo request from server
 	if ( !Q_stricmp( c, "echo" ) ) {
-		NET_OutOfBandPrint( NS_CLIENT, from, "%s", Cmd_Argv( 1 ) );
+		if ( CL_PacketFromServer( from ) ) {
+			NET_OutOfBandPrint( NS_CLIENT, from, "%s", Cmd_Argv( 1 ) );
+		}
 		return;
 	}
 
@@ -2427,7 +2445,10 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 
 	// echo request from server
 	if ( !Q_stricmp( c, "print" ) ) {
-		CL_PrintPacket( from, msg );
+		// "[err_dialog]" text drops the connection, so a spoofed one is an attack
+		if ( CL_PacketFromServer( from ) ) {
+			CL_PrintPacket( from, msg );
+		}
 		return;
 	}
 
@@ -2990,6 +3011,12 @@ void CL_StartHunkUsers( void ) {
 
 // DHM - Nerve
 void CL_CheckAutoUpdate( void ) {
+#ifdef ET_STATIC_MODULES
+	// updates a client that cannot run another process, from a server that no
+	// longer exists, and replaces what is linked in
+	autoupdateChecked = qtrue;
+	return;
+#endif
 #ifndef PRE_RELEASE_DEMO
 
 	if ( !cl_autoupdate->integer ) {
@@ -3084,6 +3111,10 @@ qboolean CL_NextUpdateServer( void ) {
 }
 
 void CL_GetAutoUpdate( void ) {
+
+#ifdef ET_STATIC_MODULES
+	return;
+#endif
 
 	// Don't try and get an update if we haven't checked for one
 	if ( !autoupdateChecked ) {
@@ -3395,7 +3426,12 @@ void CL_Init( void ) {
 	// register our variables
 	//
 	cl_noprint = Cvar_Get( "cl_noprint", "0", 0 );
+#ifdef ET_STATIC_MODULES
+	// its host is gone, and looking it up holds up every connect
+	cl_motd = Cvar_Get( "cl_motd", "0", 0 );
+#else
 	cl_motd = Cvar_Get( "cl_motd", "1", 0 );
+#endif
 	cl_autoupdate = Cvar_Get( "cl_autoupdate", "1", CVAR_ARCHIVE );
 
 	cl_timeout = Cvar_Get( "cl_timeout", "200", 0 );
@@ -3894,6 +3930,10 @@ CL_UpdateInfoPacket
 ===================
 */
 void CL_UpdateInfoPacket( netadr_t from ) {
+
+#ifdef ET_STATIC_MODULES
+	return;
+#endif
 
 	if ( cls.autoupdateServer.type == NA_BAD ) {
 		Com_DPrintf( "CL_UpdateInfoPacket:  Auto-Updater has bad address\n" );

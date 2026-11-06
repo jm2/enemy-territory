@@ -16,6 +16,14 @@ ${CLIENT:-./et.x86} +set fs_basepath /base +set fs_homepath /clhome/.etwolf +set
   +set cl_allowDownload ${DL:-0} +set pb_cl_enable 0 +set cl_guid ${CLGUID:-unknown} +set net_port 27970 +set logfile 2 +set developer ${DEV:-0} \
   +exec drive.cfg >/out/client.log 2>&1 </dev/null &
 CL=$!
+# A spoofed print from another port must not drop a connected client.
+if [ -n "${SPOOF:-}" ]; then
+  ( sleep ${SPOOF}; python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.sendto(b'\xff\xff\xff\xffprint\n[err_dialog]spoofed\n', ('127.0.0.1', 27970))
+"; echo "spoof sent" >> /out/server.log ) &
+fi
 for i in $(seq 1 ${LIMIT:-240}); do kill -0 $CL 2>/dev/null || break; sleep 1; done
 if kill -0 $CL 2>/dev/null; then echo CLIENT_TIMEOUT >>/out/client.log; DISPLAY=:9 xwd -root -silent -out /out/timeout.xwd 2>/dev/null; kill $CL; fi
 wait $CL; echo "client exit $?" >>/out/client.log

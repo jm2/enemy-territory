@@ -280,6 +280,10 @@ You or the server may be running older versions of the game. Press the auto-upda
 #endif
 
 // NERVE - SMF - wolf multiplayer master servers
+#ifdef ET_STATIC_MODULES
+	// id's hosts are gone, and only legacy servers can be played here anyway
+	#define MASTER_SERVER_NAME      "master.etlegacy.com"
+#endif
 #ifndef MASTER_SERVER_NAME
 	#define MASTER_SERVER_NAME      "etmaster.idsoftware.com"
 #endif
