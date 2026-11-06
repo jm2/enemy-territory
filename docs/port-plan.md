@@ -79,7 +79,7 @@ machine, not a 64-bit binary. The engine passes pointers through `int` in the VM
 syscall path, and the target is 32-bit, so 64-bit cleanup buys nothing the Mac needs.
 All host runs use a no-op GL, so rendering is only proven by the retail runs above.
 
-**Memory:** static data is about 67 MB in cgame, 65 MB in qagame and 12.7 MB in ui
+**Memory:** static data is about 41 MB in cgame, 39 MB in qagame and 12.7 MB in ui
 (its pool doubles off x86, so 8.5 MB is the x86 figure),
 mostly `cgs`, `level`, `cg_polyBuffers` and the qagame pool. All of it comes out of
 the Mac's fixed partition, on top of the hunk.
@@ -150,8 +150,6 @@ critical-section trio, `Sys_ShowIP` and `DL_*`. `Sys_GetBotLibAPI`,
 
 - Fixes for "Oversize packet from 0.0.0.0:0" and the 1024x768 windowed fallback.
 - Whether Q3A's `-O2` has been tried. ET's phase 5 waits on it.
-- Hunk and partition size for a map like `oasis`. Runs here used `com_hunkMegs 128`,
-  not yet a measured minimum.
 
 ## Rebuilding for a new ET: Legacy release
 

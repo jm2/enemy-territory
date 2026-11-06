@@ -116,6 +116,9 @@ void SND_setup() {
 	buffer = malloc( scs * sizeof( sndBuffer ) );
 	// allocate the stack based hunk allocator
 	sfxScratchBuffer = malloc( SND_CHUNK_SIZE * sizeof( short ) * 4 );  //Hunk_Alloc(SND_CHUNK_SIZE * sizeof(short) * 4);
+	if ( !buffer || !sfxScratchBuffer ) {
+		Com_Error( ERR_FATAL, "SND_setup: out of memory for com_soundMegs %i", cv->integer );
+	}
 	sfxScratchPointer = NULL;
 
 	inUse = scs * sizeof( sndBuffer );

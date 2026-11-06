@@ -25,6 +25,9 @@ Enemy Territory:
   v2.86.2 release. `etmain:etkey` is created on the first launch.
 - Thousands of colors for the windowed stages.
 
+An `etconfig.cfg` from an earlier build keeps its `com_hunkMegs` and `com_zoneMegs`.
+Delete it between builds if the memory defaults changed.
+
 ## Logs
 
 As Quake III's, renamed: `etboot.log` and `etboot.prev.log` beside the application.

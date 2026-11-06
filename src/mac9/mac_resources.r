@@ -35,11 +35,13 @@ resource 'SIZE' (-1) {
 	reserved,
 	
 	/* Preferred and minimum partition. At the minimum the fixed demand is about
-	   263 MiB: the image (6.4 MiB of text, 0.6 of data and 112 of bss, of which
-	   92 is the modules'; CFM loads it into the partition when virtual memory is
-	   off), the 72 MiB hunk, the 10.5 MiB of zones, the 2 MiB stack, and the
-	   60 MiB MAC_HUNK_RESERVE_KB holds back for the sound pool, AGL/OpenGL and
-	   the image buffers.
+	   258 MiB: the image (113.5 MiB, of which module bss is 88; CFM loads it into
+	   the partition when virtual memory is off), the 72 MiB hunk, the 10.5 MiB
+	   of zones, the 2 MiB stack, and the 60 MiB MAC_HUNK_RESERVE_KB holds back for
+	   the sound pool, the renderer's 24 MiB block, a listen server's clients,
+	   AGL/OpenGL and the image buffers. Above the minimum is what r_picmip 0
+	   needs: the 2048x2048 texture in the mod's pk3 takes 32 MiB there, and
+	   the preferred size leaves room for it.
 
 	   Bigger is not better. Apple's OpenGL keeps its copy of every texture in
 	   temporary memory, outside this partition, and fails without a report when
