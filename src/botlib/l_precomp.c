@@ -704,7 +704,7 @@ void PC_AddBuiltinDefines( source_t *source ) {
 int PC_ExpandBuiltinDefine( source_t *source, token_t *deftoken, define_t *define,
 							token_t **firsttoken, token_t **lasttoken ) {
 	token_t *token;
-	unsigned long t;    //	time_t t; //to prevent LCC warning
+	time_t t;
 	char *curtime;
 
 	token = PC_CopyToken( deftoken );
@@ -1001,7 +1001,7 @@ int PC_Directive_include( source_t *source ) {
 			if ( token.type == TT_PUNCTUATION && *token.string == '>' ) {
 				break;
 			}
-			strncat( path, token.string, _MAX_PATH );
+			strncat( path, token.string, _MAX_PATH - strlen( path ) - 1 );
 		} //end while
 		if ( *token.string != '>' ) {
 			SourceWarning( source, "#include missing trailing >" );

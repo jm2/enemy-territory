@@ -1438,7 +1438,13 @@ int main( int argc, char* argv[] ) {
 	memset( &sys_packetReceived[0], 0, MAX_MSGLEN * sizeof( byte ) );
 
 #ifdef ET_STATIC_MODULES
-	Sys_InitStaticModules();
+	{
+		const char *error = Sys_InitStaticModules();
+
+		if ( error ) {
+			Sys_Error( "%s", error );
+		}
+	}
 #endif
 	Com_Init( cmdline );
 	NET_Init();

@@ -53,7 +53,7 @@ If you have questions concerning this license or the applicable additional terms
 
 #elif defined( __MACOS__ )
 
-#include <OpenGL/gl.h>
+#include <gl.h>
 
 #elif defined( __linux__ )
 

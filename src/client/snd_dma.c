@@ -186,7 +186,12 @@ void S_Init( void ) {
 	s_numchannels = Cvar_Get( "s_channels", "2", CVAR_LATCH | CVAR_ARCHIVE );
 
 
+#ifdef __MACOS__
+	// opt-in until the Sound Manager backend has run on hardware for ET
+	cv = Cvar_Get( "s_initsound", "0", 0 );
+#else
 	cv = Cvar_Get( "s_initsound", "1", 0 );
+#endif
 	if ( !cv->integer ) {
 		Com_Printf( "not initializing.\n" );
 		Com_Printf( "------------------------------------\n" );

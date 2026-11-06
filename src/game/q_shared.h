@@ -234,9 +234,11 @@ static inline float idSqrt( float x ) {
 
 #define MAC_STATIC
 
-#define CPUSTRING   "OSX-universal"
+#define CPUSTRING   "macos-ppc"
 
-#define PATH_SEP '/'
+#define PATH_SEP ':'
+
+#define stricmp strcasecmp
 
 void Sys_PumpEvents( void );
 
@@ -264,6 +266,13 @@ void Sys_PumpEvents( void );
 
 //=============================================================
 
+
+// lets GCC check the arguments of a printf-style function
+#if defined( __GNUC__ ) && !defined( Q3_VM )
+#define Q_PRINTF_FORMAT( fmt, first ) __attribute__( ( format( printf, fmt, first ) ) )
+#else
+#define Q_PRINTF_FORMAT( fmt, first )
+#endif
 
 typedef unsigned char byte;
 

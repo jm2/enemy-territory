@@ -1,0 +1,33 @@
+# Pinned inputs of the Retro68 cross toolchain (issue #227).
+#
+# setup_retro68.sh and setup_retro68.ps1 read this file. A fresh setup clones
+# RETRO68_URL, checks out RETRO68_COMMIT and its submodules, and stops unless
+# every submodule is at the commit listed here. An existing tools/Retro68-src
+# at another commit stops setup before anything changes. The MPW and OpenGL
+# SDK archives are extracted only if their SHA-256 matches. CMake records the
+# toolchain's commit and whether it matches this file in
+# build_mac/<name>.manifest.txt.
+#
+# Retro68 83b9c8d2c5 builds GCC 12.2.0; every PPC build since 2026-09-23 used
+# it. The digests are those of the archives that toolchain's
+# InterfacesAndLibraries were extracted from. To move to another commit,
+# change RETRO68_COMMIT and every RETRO68_SUBMODULE line together
+# (`git submodule status --recursive` in the new checkout), then rebuild the
+# toolchain.
+#
+# One KEY=VALUE per line. Blank lines and lines starting with # are ignored.
+
+RETRO68_URL=https://github.com/autc04/Retro68.git
+RETRO68_COMMIT=83b9c8d2c58f8efb0925a305aca1e0edab2e6571
+# <path> <commit>, one line per submodule, nested ones included.
+RETRO68_SUBMODULE=multiversal 25b78f82807a967772797ab3b9d4b86c9137fcdf
+
+# MPW with Universal Interfaces 3.4 (Interfaces&Libraries).
+MPW_FILE=MPW_fully_updated.sit
+MPW_URL=https://download.macintoshgarden.org/apps/MPW_fully_updated.sit
+MPW_SHA256=6c7b69c8533ceb797cc306cf7ab20ccb3eb139c6a441d2d7d52fcc8bc326fbdf
+
+# OpenGL SDK 1.2 (Headers and Libraries).
+OPENGL_FILE=OpenGL_SDK_1.2.sit
+OPENGL_URL=https://download.macintoshgarden.org/apps/OpenGL_SDK_1.2.sit
+OPENGL_SHA256=5327d9253ca60f48d8f6e5d826f861ef463ba22c721539e17c8d4e89a7543216

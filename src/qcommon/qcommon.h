@@ -606,6 +606,11 @@ issues.
 #else
 	#define Q_rmdir rmdir
 #endif
+#ifdef __MACOS__
+int rmdir( const char *path );
+void QDECL Com_FlightRecord( const char *fmt, ... ) Q_PRINTF_FORMAT( 1, 2 );
+void Com_DumpFlightRecord( const char *fileName );
+#endif
 
 qboolean FS_Initialized();
 
@@ -1108,7 +1113,7 @@ void Sys_EnterCriticalSection( void *ptr );
 void Sys_LeaveCriticalSection( void *ptr );
 
 char* Sys_GetDLLName( const char *name );
-void Sys_InitStaticModules( void );
+const char *Sys_InitStaticModules( void );
 qboolean Sys_RandomBytes( void *bytes, int len );
 void Com_RandomBytes( void *bytes, int len );
 char *Com_MD5FileETCompat( const char *filename );
@@ -1275,9 +1280,10 @@ void Com_GetHunkInfo( int* hunkused, int* hunkexpected );
 #define SYS_DLLNAME_UI_SHIFT 5
 #define SYS_DLLNAME_UI "zndrud}=;3iqq"
 
-#elif defined( __linux__ )
+#elif defined( __linux__ ) || defined( ET_STATIC_MODULES )
 
 // qagame.mp.i386.so
+// the static client references the pk3 by these names on every platform
 #define SYS_DLLNAME_QAGAME_SHIFT 6
 #define SYS_DLLNAME_QAGAME "wgmgsk4sv4o9><4yu"
 
