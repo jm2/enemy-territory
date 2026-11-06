@@ -1228,10 +1228,11 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 					// in case the file was new
 					temp = zfi->file;
 					// set the file position in the zip file (also sets the current file info)
-					// callers take this size as an int and read that many bytes into a
-					// buffer of it: 0xffffffff is -1 here and an endless length to inflate
+					// callers take this size as an int and read that many bytes into a buffer
+					// of it: 0xffffffff is -1 here and an endless length to inflate, and
+					// sizes near 2 GB wrap the allocators' arithmetic. No real file is near
 					if ( unzSetCurrentFileInfoPosition( pak->handle, pakFile->pos ) != UNZ_OK
-						 || ( (unz_s *)pak->handle )->cur_file_info.uncompressed_size > (unsigned long)( INT_MAX - 1 ) ) {
+						 || ( (unz_s *)pak->handle )->cur_file_info.uncompressed_size > 0x3ffffffful ) {
 						Com_Printf( S_COLOR_YELLOW "WARNING: bad or oversized entry in %s: %s\n", pak->pakFilename, filename );
 						if ( uniqueFILE ) {
 							unzClose( fsh[*file].handleFiles.file.z );
@@ -1816,7 +1817,7 @@ int FS_Seek( fileHandle_t f, long offset, int origin ) {
 			// set the file position in the zip file (also sets the current file info)
 			unzSetCurrentFileInfoPosition( fsh[f].handleFiles.file.z, fsh[f].zipFilePos );
 			return unzOpenCurrentFile( fsh[f].handleFiles.file.z );
-		} else if ( offset > 0 && offset < 65536 ) {
+		} else if ( offset >= 0 && offset < 65536 ) {
 			// set the file position in the zip file (also sets the current file info)
 			unzSetCurrentFileInfoPosition( fsh[f].handleFiles.file.z, fsh[f].zipFilePos );
 			unzOpenCurrentFile( fsh[f].handleFiles.file.z );

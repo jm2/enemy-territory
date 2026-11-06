@@ -1939,6 +1939,11 @@ void *Hunk_AllocateTempMemory( int size ) {
 
 	Hunk_SwapBanks();
 
+	// checked before the arithmetic: a size near 2 GB wrapped this past the test below
+	if ( size < 0 || size > s_hunkTotal - hunk_temp->temp - hunk_permanent->permanent - (int)sizeof( hunkHeader_t ) - 3 ) {
+		Com_Error( ERR_DROP, "Hunk_AllocateTempMemory: failed on %i", size );
+	}
+
 	size = ( ( size + 3 ) & ~3 ) + sizeof( hunkHeader_t );
 
 	if ( hunk_temp->temp + hunk_permanent->permanent + size > s_hunkTotal ) {
@@ -1979,6 +1984,11 @@ Hunk_FreeTempMemory
 */
 void Hunk_FreeTempMemory( void *buf ) {
 	hunkHeader_t    *hdr;
+
+	// a read that came up short returns no buffer to callers that measured the file first
+	if ( !buf ) {
+		return;
+	}
 
 	// free with Z_Free if the hunk has not been initialized
 	// this allows the config and product id files ( journal files too ) to be loaded
