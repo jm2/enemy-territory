@@ -9,19 +9,29 @@ covers MacsBug, crashes and logs in more detail.
 
 | File | Use |
 | --- | --- |
-| `ET_Install.img.bin` | Application, game data, and the stage 1 `METParms.txt` and `bringup.cfg` |
-| `ET_Bin.img.bin` | Application only, for redeploying after a rebuild |
-| `package.txt` | Commit, whether the tree was modified, and the images' SHA-256 |
+| `ET_Installer.bin` | One-file install: application, game data, and the stage 1 `METParms.txt` and `bringup.cfg` |
+| `ET.bin` | The bare application, for redeploying after a rebuild |
+| `ET_Install.img.bin` | The same install as a disk image, kept as a fallback. Mounting it needs Toast |
+| `package.txt` | Commit, whether the tree was modified, and each file's SHA-256 |
 | `symbols/` | `ET.xcoff` and the manifest. Stays on the build machine for crash reports |
 
-Leave out `--bringup` for an image with no `METParms.txt`, which starts the game normally,
+Leave out `--bringup` for a package with no `METParms.txt`, which starts the game normally,
 without sound until `s_initsound` is set (stage 4).
 
-Decode the MacBinary file with StuffIt Expander, mount the image with Disk Copy 6.5, as for
-Quake III's images, and copy the `Enemy Territory` folder to a writable disk. That route is not
-yet tried for ET. The test VM has no Disk Copy, and the image has only been mounted there as a
-CD, which shows the same locked volume. The volume is locked, and the game writes `etkey`, its config and its logs
-beside itself. The tree on disk is:
+**First install.** Transfer `ET_Installer.bin` in binary mode and decode it with StuffIt Expander.
+Put `ET Installer` on a writable disk and double-click it. It checks a CRC-32 of every file, and
+only when all have passed does it name the result `Enemy Territory`, beside itself, so a failed
+or damaged run leaves nothing behind. It refuses to run beside an existing `Enemy Territory`
+folder, so move that first; it never changes one. It needs about 270 MB of free disk beyond the
+installer itself, and you can delete the installer afterwards.
+
+**After a rebuild.** Transfer `ET.bin`, decode it with StuffIt Expander, and replace `ET` in the
+folder. It is one file and keeps your `etkey`, config and logs.
+
+**Disk image.** Mounting `ET_Install.img.bin` needs Toast. Copy the folder off it to a writable
+disk: the volume is locked, and the game writes `etkey`, its config and its logs beside itself.
+
+The tree on disk is:
 
 ```text
 Enemy Territory:
