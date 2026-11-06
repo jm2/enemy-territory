@@ -576,7 +576,10 @@ void CL_SystemInfoChanged( void ) {
 	FS_PureServerSetReferencedPaks( s, t );
 
 	// scan through all the variables in the systeminfo and locally set cvars to match
-	s = systemInfo;
+	// A client of the server in this process shares its cvars, so there is nothing
+	// to copy, and a gamestate left from the last map would put old values back.
+	// SV_Frame then publishes them, and with an old sv_serverid no client enters.
+	s = clc.netchan.remoteAddress.type == NA_LOOPBACK ? NULL : systemInfo;
 	while ( s ) {
 		Info_NextPair( &s, key, value );
 		if ( !key[0] ) {
@@ -722,6 +725,10 @@ void CL_ParseDownload( msg_t *msg ) {
 			clc.downloadSize = MSG_ReadLong( msg );
 			clc.downloadFlags = MSG_ReadLong( msg );
 			if ( clc.downloadFlags & ( 1 << DL_FLAG_URL ) ) {
+#ifdef ET_STATIC_MODULES
+				// no browser here, so say why rather than quit without a word
+				Com_Error( ERR_DROP, "This server wants a pak fetched from %s", cls.downloadName );
+#endif
 				Sys_OpenURL( cls.downloadName, qtrue );
 				Cbuf_ExecuteText( EXEC_APPEND, "quit\n" );
 				CL_AddReliableCommand( "wwwdl bbl8r" ); // not sure if that's the right msg
@@ -750,6 +757,8 @@ void CL_ParseDownload( msg_t *msg ) {
 				CL_AddReliableCommand( "wwwdl fail" );
 				clc.bWWWDlAborting = qtrue;
 				Com_Printf( "Failed to initialize download for '%s'\n", cls.downloadName );
+				// bbl8r below would have the server drop us, with no UDP fallback
+				return;
 			}
 			// Check for a disconnected download
 			// we'll let the server disconnect us when it gets the bbl8r message

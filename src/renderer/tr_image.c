@@ -80,6 +80,9 @@ void        *imageBufferPtr[BUFFER_MAX_TYPES] = {NULL,NULL,NULL};
 
 void *R_GetImageBuffer( int size, bufferMemType_t bufferType ) {
 	if ( imageBufferSize[bufferType] < R_IMAGE_BUFFER_SIZE && size <= imageBufferSize[bufferType] ) {
+		if ( imageBufferPtr[bufferType] ) {
+			free( imageBufferPtr[bufferType] );
+		}
 		imageBufferSize[bufferType] = R_IMAGE_BUFFER_SIZE;
 		imageBufferPtr[bufferType] = malloc( imageBufferSize[bufferType] );
 //DAJ TEST		imageBufferPtr[bufferType] = Z_Malloc( imageBufferSize[bufferType] );
@@ -112,7 +115,7 @@ void R_FreeImageBuffer( void ) {
 	int bufferType;
 	for ( bufferType = 0; bufferType < BUFFER_MAX_TYPES; bufferType++ ) {
 		if ( !imageBufferPtr[bufferType] ) {
-			return;
+			continue;
 		}
 		free( imageBufferPtr[bufferType] );
 //DAJ TEST		Z_Free( imageBufferPtr[bufferType] );
