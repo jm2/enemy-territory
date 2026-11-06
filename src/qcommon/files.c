@@ -3005,6 +3005,8 @@ typedef struct {
 	qboolean ok;
 } officialpak_t;
 
+#define MAX_OFFICIAL_PAKS 64
+
 /*
 ================
 FS_VerifyOfficialPaks
@@ -3015,14 +3017,15 @@ qboolean FS_VerifyOfficialPaks( void ) {
 	searchpath_t    *sp;
 	int numOfficialPaksOnServer = 0;
 	int numOfficialPaksLocal = 0;
-	officialpak_t officialpaks[64];
+	officialpak_t officialpaks[MAX_OFFICIAL_PAKS];
 
 	if ( !fs_numServerPaks ) {
 		return qtrue;
 	}
 
-	for ( i = 0; i < fs_numServerPaks; i++ ) {
-		if ( FS_idPak( fs_serverPakNames[i], BASEGAME ) ) {
+	// the names and their count are the server's, and may not match the checksums
+	for ( i = 0; i < fs_numServerPaks && numOfficialPaksOnServer < MAX_OFFICIAL_PAKS; i++ ) {
+		if ( fs_serverPakNames[i] && FS_idPak( fs_serverPakNames[i], BASEGAME ) ) {
 			Q_strncpyz( officialpaks[numOfficialPaksOnServer].pakname, fs_serverPakNames[i], sizeof( officialpaks[0].pakname ) );
 			officialpaks[numOfficialPaksOnServer].ok = qfalse;
 			numOfficialPaksOnServer++;
@@ -4028,7 +4031,7 @@ void FS_PureServerSetLoadedPaks( const char *pakSums, const char *pakNames ) {
 		}
 	}
 
-	for ( i = 0 ; i < c ; i++ ) {
+	for ( i = 0 ; i < MAX_SEARCH_PATHS ; i++ ) {
 		if ( fs_serverPakNames[i] ) {
 			Z_Free( fs_serverPakNames[i] );
 		}

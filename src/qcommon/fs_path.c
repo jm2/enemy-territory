@@ -1,7 +1,8 @@
 // fs_path.c -- what counts as a safe path, for names that may come from a peer.
 //
-// From the Quake III port's FS_CheckQPath, which follows ioquake3 and adds HFS: ':' is the separator there, and each separator after
-// another one walks up a directory, as ".." does elsewhere.
+// From the Quake III port's FS_CheckQPath, which follows ioquake3 and adds HFS:
+// ':' is the separator there, and each separator after another one walks up a
+// directory, as ".." does elsewhere.
 #include "../game/q_shared.h"
 #include "qcommon.h"
 

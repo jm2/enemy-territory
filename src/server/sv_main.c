@@ -725,8 +725,9 @@ SV_RateLimited
 
 Query answers are larger than the requests, and UDP sources can be forged, so an
 unlimited server amplifies traffic at whoever is named as the source
-(CVE-2010-5077). Each source address gets a burst of 10, then one every 100 msec.
-The table is fixed: a source that shares a slot with another shares its budget.
+(CVE-2010-5077). Each slot of a fixed table gets a burst of 10, then one every
+100 msec, and addresses hash to slots, so sources in one slot share that budget.
+A flood from many forged sources can briefly refuse real clients; replies stay bounded.
 =================
 */
 #define RATE_SLOTS  256
@@ -745,7 +746,7 @@ static qboolean SV_RateLimited( netadr_t from ) {
 	if ( from.type != NA_IP ) {
 		return qfalse;
 	}
-	ip = ( from.ip[0] << 24 ) | ( from.ip[1] << 16 ) | ( from.ip[2] << 8 ) | from.ip[3];
+	ip = ( (unsigned int)from.ip[0] << 24 ) | ( from.ip[1] << 16 ) | ( from.ip[2] << 8 ) | from.ip[3];
 	hash = ( ip * 2654435761u ) >> 24;
 
 	if ( !slots[hash].used ) {

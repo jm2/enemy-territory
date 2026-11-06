@@ -19,8 +19,9 @@ it, and what has not been done. A cross-build proves only that code compiles.
 | Auto-update, which could start a process from a server's say-so | Local | Off in static builds. Code review |
 | Server overwriting registered client cvars through systeminfo | ETL `cl_parse.c` | Code review, and a real server still connects. No hostile-server test. A server can still seed a cvar not yet registered, which ETL closes with `CVAR_SERVER_CREATED` |
 | Amplification through `getstatus`, `getinfo`, `getchallenge` | CVE-2010-5077; simpler than Q3A's buckets. rcon keeps its existing global limit | Code review |
+| `FS_VerifyOfficialPaks`: stack overflow from repeated names, NULL from a short name list | Local review; ETL has the same code | `tests/security/test_official.c` extracts the function and runs it under ASan |
 | `SV_WriteDownloadToClient` checks | CVE-2006-2082 | Already in the 2.60 GPL source |
-| Unchecked allocations a Mac reaches (`R_GetImageBuffer`, `R_Hunk_Begin`, `SND_setup`) | Local | The first was found on the emulator, as the freeze during `oasis` loading |
+| Unchecked allocations a Mac reaches (`R_GetImageBuffer`, `R_Hunk_Begin`, `SND_setup`) | Local | The first was found on the emulator (commit aa88b4d) |
 
 ## Not done
 
@@ -34,11 +35,12 @@ it, and what has not been done. A cross-build proves only that code compiles.
 - `cm_optimizePatchPlanes` is not followed (E5). When it is, read it from `systemInfo`: the
   cvar keeps the first server's value.
 
+- No sanitizer run of the whole engine. Only `msg.c`, `huffman.c` and `fs_path.c` have one.
+
 ## Decided, and stricter than upstream
 
-`challengeResponse` is taken only from the IP the client asked. ET: Legacy and retail take it
+`challengeResponse` is taken only from the IP the client asked. ET: Legacy takes it
 from anyone, so a proxy can hand a connection to another address. Here that is refused,
 because a forged one moves the connection to the sender. A multi-homed server that answers
 from another address without `net_ip` set will not connect, but most home NATs would drop
 that reply too.
-- No sanitizer run of the whole engine. Only `msg.c`, `huffman.c` and `fs_path.c` have one.
