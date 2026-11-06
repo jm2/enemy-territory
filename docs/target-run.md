@@ -5,8 +5,23 @@ covers MacsBug, crashes and logs in more detail.
 
 ## Install
 
-Keep `build-mac/ET.xcoff` on the build machine, and take `ET.bin` to the Mac. On a
-writable disk:
+`./build_mac.sh package --bringup` writes everything to `release_mac/`:
+
+| File | Use |
+| --- | --- |
+| `ET_Install.img.bin` | Application, game data, and the stage 1 `METParms.txt` and `bringup.cfg` |
+| `ET_Bin.img.bin` | Application only, for redeploying after a rebuild |
+| `package.txt` | Commit, whether the tree was modified, and the images' SHA-256 |
+| `symbols/` | `ET.xcoff` and the manifest. Stays on the build machine for crash reports |
+
+Leave out `--bringup` for an image with no `METParms.txt`, which starts the game normally,
+without sound until `s_initsound` is set (stage 4).
+
+Decode the MacBinary file with StuffIt Expander, mount the image with Disk Copy 6.5, as for
+Quake III's images, and copy the `Enemy Territory` folder to a writable disk. That route is not
+yet tried for ET. The test VM has no Disk Copy, and the image has only been mounted there as a
+CD, which shows the same locked volume. The volume is locked, and the game writes `etkey`, its config and its logs
+beside itself. The tree on disk is:
 
 ```text
 Enemy Territory:
@@ -19,10 +34,10 @@ Enemy Territory:
         legacy_v2.86.2.pk3
 ```
 
-- Get Info needs at least 264 MB (293 MB preferred). Leave it there: OpenGL keeps its
-  texture copies in RAM outside the partition, and a bigger partition starves it.
-- The paks are from `https://mirror.etlegacy.com/etmain/`, the mod pk3 from the
-  v2.86.2 release. `etmain:etkey` is created on the first launch.
+- Leave Get Info at 264 MB (293 MB preferred). OpenGL keeps its texture copies in RAM outside
+  the partition, and a bigger partition starves it. The 512 MB emulator needed exactly that.
+  The Mac mini G4 has 1 GB, so it has more room for OpenGL than anything tested so far.
+- `etmain:etkey` is created on the first launch.
 - Thousands of colors for the windowed stages.
 
 An `etconfig.cfg` from an earlier build keeps its `com_hunkMegs` and `com_zoneMegs`.
@@ -34,7 +49,7 @@ As Quake III's, renamed: `etboot.log` and `etboot.prev.log` beside the applicati
 Copy them out before launching again.
 
 ```sh
-python3 mac_symbolize.py etboot.log build-mac/ET.xcoff
+python3 mac_symbolize.py etboot.log release_mac/symbols/ET.xcoff
 ```
 
 ## Stages
