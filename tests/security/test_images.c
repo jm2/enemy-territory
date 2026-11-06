@@ -104,6 +104,8 @@ int main( void ) {
 	n = MakeTGA( b, 2, 24, 1, 1, 0 ); b[12] = b[13] = b[14] = b[15] = 0xff; Load( R_LoadTGA, b, n ); Expect( "huge tga", 0 );
 	n = MakeBMP( b, 24, 1, 1 ); b[19] = b[20] = b[21] = 0x7f; b[23] = b[24] = 0x7f; Load( R_LoadBMP, b, n ); Expect( "huge bmp", 0 );
 	n = MakeTGA( b, 2, 24, 0, 16, 0 ); Load( R_LoadTGA, b, n ); Expect( "empty tga", 0 );
+	// one row of 5000: few pixels, but past the limit a side, and Upload32 cannot halve it evenly
+	n = MakeTGA( b, 2, 24, 5000, 1, 0 ); Load( R_LoadTGA, b, n ); Expect( "long thin tga", 0 );
 
 	// palette index past a short palette
 	n = MakeBMP( b, 8, 4, 4 ); b[46] = 2; b[54 + 1024] = 200; Load( R_LoadBMP, b, n ); Expect( "bmp palette", 0 );
@@ -115,6 +117,16 @@ int main( void ) {
 	memcpy( b, color_jpg, color_jpg_len );
 	b[i + 7] = b[i + 5];
 	Load( R_LoadJPG, b, color_jpg_len ); Expect( "duplicate jpeg component", 0 );
+
+	// a scan in another order than the frame: all there, and the rows must follow the component.
+	// libjpeg wrote the subsampled plane's data into the wrong one, past its end
+	for ( i = 0; i + 1 < (int)color_jpg_len; i++ ) {
+		if ( color_jpg[i] == 0xff && color_jpg[i + 1] == 0xda ) break;
+	}
+	memcpy( b, color_jpg, color_jpg_len );
+	n = b[i + 5]; b[i + 5] = b[i + 9]; b[i + 9] = n;
+	n = b[i + 6]; b[i + 6] = b[i + 10]; b[i + 10] = n;
+	Load( R_LoadJPG, b, color_jpg_len ); Expect( "reordered jpeg scan", 1 );
 
 	// a DC symbol past the end of extend_test: the first table is a DC one
 	for ( i = 0; i + 1 < (int)color_jpg_len; i++ ) {

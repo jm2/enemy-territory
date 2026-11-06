@@ -98,7 +98,7 @@ void R_LoadTGA( const char *name, byte **pic, int *width, int *height ) {
 	if ( !buffer ) return;
 	valid = length >= 0 && R_DecodeTGA( buffer, length, &output, &columns, &rows, &topDown );
 	ri.FS_FreeFile(buffer);
-	if ( !valid ) { ri.Printf( PRINT_WARNING, "WARNING: LoadTGA: %s is malformed, truncated, unsupported or larger than %u pixels\n", name, R_IMAGE_MAX_PIXELS ); return; }
+	if ( !valid ) { ri.Printf( PRINT_WARNING, "WARNING: LoadTGA: %s is malformed, truncated, unsupported or larger than %u pixels a side\n", name, R_IMAGE_MAX_SIDE ); return; }
 	if ( topDown ) ri.Printf( PRINT_WARNING, "WARNING: '%s' TGA file header declares top-down image, ignoring\n", name );
 	*pic = output;
 	if ( width ) *width = columns;

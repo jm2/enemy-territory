@@ -755,6 +755,13 @@ static void Upload32(   unsigned *data,
 		scaled_width >>= 1;
 		scaled_height >>= 1;
 	}
+	// a 4096x1 file reached zero here, and the mip loop below waits forever for height to reach it
+	if ( scaled_width < 1 ) {
+		scaled_width = 1;
+	}
+	if ( scaled_height < 1 ) {
+		scaled_height = 1;
+	}
 
 	//scaledBuffer = ri.Hunk_AllocateTempMemory( sizeof( unsigned ) * scaled_width * scaled_height );
 	scaledBuffer = R_GetImageBuffer( sizeof( unsigned ) * scaled_width * scaled_height, BUFFER_SCALED );
@@ -1433,8 +1440,12 @@ image_t *R_FindImageFile( const char *name, qboolean mipmap, qboolean allowPicmi
 #if !defined( _WIN32 )
 		char altname[MAX_QPATH];                              // copy the name
 		int len;                                              //
-		strcpy( altname, name );                              //
-		len = strlen( altname );                              //
+		len = strlen( name );                                 //
+		// a shader's map token reaches here at any length, with R_LoadImage having refused it
+		if ( len < 3 || len >= MAX_QPATH ) {                  //
+			return NULL;                                      //
+		}                                                     //
+		Q_strncpyz( altname, name, sizeof( altname ) );       //
 		altname[len - 3] = toupper( altname[len - 3] );             // and try upper case extension for unix systems
 		altname[len - 2] = toupper( altname[len - 2] );             //
 		altname[len - 1] = toupper( altname[len - 1] );             //

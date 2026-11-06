@@ -85,7 +85,7 @@ void R_LoadJPG( const char *name, byte **pic, int *width, int *height ) {
 	jpeg_mem_src( info, input, length < 0 ? 0 : length );
 	if ( jpeg_read_header( info, TRUE ) != JPEG_HEADER_OK ) R_JPEGFail( "invalid image header" );
 	if ( !R_ImageSizeValid( info->image_width, info->image_height ) ) R_JPEGFail( "empty image or more than 4096x4096 pixels" );
-	// libjpeg buffers every coefficient of a multi-scan image in a zone that is fatal when full
+	// this libjpeg has no multi-scan support, and says so later with less of a reason
 	if ( info->inputctl->has_multiple_scans ) R_JPEGFail( "multi-scan images are not supported" );
 	info->out_color_space = info->jpeg_color_space == JCS_GRAYSCALE ? JCS_GRAYSCALE : JCS_RGB;
 	jpeg_start_decompress( info );

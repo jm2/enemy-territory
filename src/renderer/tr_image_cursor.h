@@ -22,17 +22,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #ifndef TR_IMAGE_CURSOR_H
 #define TR_IMAGE_CURSOR_H
 
-#include <limits.h>
-/* Keep signed allocator header/alignment additions below INT_MAX. */
-#define R_IMAGE_MAX_BYTES (INT_MAX - 4096u)
 /*
- * Largest image a file may declare: 4096x4096 pixels, a 64 MiB RGBA buffer.
- * Retail art is far smaller and no Mac OS 9 era card takes more than 2048 per
- * side. ioquake3 and Quake3e bound only int overflow (0x1FFFFFFF pixels), which
- * still lets a tiny RLE file ask ri.Malloc for gigabytes, and a failed zone
- * allocation is ERR_FATAL. Loaders reject a larger size before allocating.
+ * Largest image a file may declare: 4096 pixels a side, a 64 MiB RGBA buffer at most. Retail art
+ * is far smaller and no Mac OS 9 era card takes more than 2048 a side. ioquake3 and Quake3e bound
+ * only int overflow (0x1FFFFFFF pixels), which still lets a tiny RLE file ask for gigabytes.
  */
-#define R_IMAGE_MAX_PIXELS (4096u * 4096u)
+#define R_IMAGE_MAX_SIDE 4096u
 
 /* Include q_shared.h before this private header. */
 typedef struct {
@@ -40,9 +35,9 @@ typedef struct {
 	unsigned int length, position;
 } imageCursor_t;
 
-/** Accept a non-empty size within R_IMAGE_MAX_PIXELS; the division cannot overflow. */
+/** Accept a non-empty size of at most R_IMAGE_MAX_SIDE each way. */
 static inline qboolean R_ImageSizeValid( unsigned int columns, unsigned int rows ) {
-	return columns && rows && rows <= R_IMAGE_MAX_PIXELS / columns;
+	return columns && rows && columns <= R_IMAGE_MAX_SIDE && rows <= R_IMAGE_MAX_SIDE;
 }
 
 /** Obtain a complete byte span without overflow or unaligned native loads. */

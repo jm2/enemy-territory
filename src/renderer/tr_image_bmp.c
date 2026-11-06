@@ -110,5 +110,5 @@ void R_LoadBMP( const char *name, byte **pic, int *width, int *height ) {
 	if ( !buffer ) return;
 	valid = length >= 0 && R_DecodeBMP( buffer, length, pic, width, height );
 	ri.FS_FreeFile( buffer );
-	if ( !valid ) ri.Printf( PRINT_WARNING, "WARNING: LoadBMP: %s is malformed, truncated, unsupported or larger than %u pixels\n", name, R_IMAGE_MAX_PIXELS );
+	if ( !valid ) ri.Printf( PRINT_WARNING, "WARNING: LoadBMP: %s is malformed, truncated, unsupported or larger than %u pixels a side\n", name, R_IMAGE_MAX_SIDE );
 }
