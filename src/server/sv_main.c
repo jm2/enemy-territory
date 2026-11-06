@@ -735,9 +735,9 @@ The table is fixed: a source that shares a slot with another shares its budget.
 
 static qboolean SV_RateLimited( netadr_t from ) {
 	static struct {
-		unsigned int ip;
 		int tokens;
 		int last;
+		qboolean used;
 	} slots[RATE_SLOTS];
 	unsigned int ip, hash;
 	int refill;
@@ -746,10 +746,10 @@ static qboolean SV_RateLimited( netadr_t from ) {
 		return qfalse;
 	}
 	ip = ( from.ip[0] << 24 ) | ( from.ip[1] << 16 ) | ( from.ip[2] << 8 ) | from.ip[3];
-	hash = ( ip ^ ( ip >> 8 ) ^ ( ip >> 16 ) ^ ( ip >> 24 ) ) & ( RATE_SLOTS - 1 );
+	hash = ( ip * 2654435761u ) >> 24;
 
-	if ( slots[hash].ip != ip ) {
-		slots[hash].ip = ip;
+	if ( !slots[hash].used ) {
+		slots[hash].used = qtrue;
 		slots[hash].tokens = RATE_BURST;
 		slots[hash].last = svs.time;
 	}

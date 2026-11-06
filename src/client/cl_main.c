@@ -2355,7 +2355,9 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 		if ( cls.state != CA_CONNECTING ) {
 			Com_Printf( "Unwanted challenge response received.  Ignored.\n" );
 		} else if ( !NET_CompareBaseAdr( from, clc.serverAddress ) ) {
-			// a spoofed one would move the connection to the sender
+			// A spoofed one would move the connection to the sender. Stricter than
+			// ET: Legacy, which allows a proxy to hand off to another address; see
+			// docs/security-provenance.md
 			Com_Printf( "challengeResponse from a different address.  Ignored.\n" );
 		} else {
 			// start sending challenge repsonse instead of challenge request packets

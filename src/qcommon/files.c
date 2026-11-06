@@ -4058,7 +4058,7 @@ checksums to see if any pk3 files need to be auto-downloaded.
 =====================
 */
 void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames ) {
-	int i, c, d;
+	int i, c, d, kept;
 
 	Cmd_TokenizeString( pakSums );
 
@@ -4087,15 +4087,21 @@ void FS_PureServerSetReferencedPaks( const char *pakSums, const char *pakNames )
 			d = c;
 		}
 
-		for ( i = 0 ; i < d ; i++ ) {
-			// these become paths in the home directory when a pak is
-			// downloaded, so an unsafe one is dropped here
+		// these become paths in the home directory when a pak is downloaded, so an
+		// unsafe one is dropped here, with its checksum so the two lists stay paired
+		for ( i = 0, kept = 0 ; i < d ; i++ ) {
 			if ( FS_CheckPakName( Cmd_Argv( i ) ) ) {
-				fs_serverReferencedPakNames[i] = CopyString( Cmd_Argv( i ) );
+				fs_serverReferencedPaks[kept] = fs_serverReferencedPaks[i];
+				fs_serverReferencedPakNames[kept] = CopyString( Cmd_Argv( i ) );
+				kept++;
 			} else {
 				Com_Printf( "WARNING: ignoring unsafe pak name from the server\n" );
 			}
 		}
+		fs_numServerReferencedPaks = kept;
+	} else {
+		// FS_ComparePaks needs a name for every checksum
+		fs_numServerReferencedPaks = 0;
 	}
 }
 

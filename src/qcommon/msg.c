@@ -160,7 +160,7 @@ void MSG_WriteBits( msg_t *msg, int value, int bits ) {
 		if ( bits & 7 ) {
 			int nbits = bits & 7;
 
-			if ( msg->bit + nbits > msg->maxsize << 3 ) {
+			if ( msg->bit + nbits >= msg->maxsize << 3 ) {
 				msg->overflowed = qtrue;
 				return;
 			}
