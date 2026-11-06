@@ -417,6 +417,7 @@ char *Sys_DefaultHomePath( void ) {
 //============================================
 
 void GetClockTicks( double *t ) {
+#if defined( __i386__ )
 	unsigned long lo, hi;
 
 	__asm__ __volatile__ (
@@ -426,6 +427,9 @@ void GetClockTicks( double *t ) {
 		: : "m" ( lo ), "m" ( hi ) );
 
 	*t = (double) lo + (double) 0xFFFFFFFF * hi ;
+#else
+	*t = 0;
+#endif
 }
 
 float Sys_GetCPUSpeed( void ) {
@@ -458,4 +462,21 @@ void Sys_EnterCriticalSection( void *ptr ) {
 }
 
 void Sys_LeaveCriticalSection( void *ptr ) {
+}
+
+/*
+=================
+Sys_RandomBytes
+=================
+*/
+qboolean Sys_RandomBytes( void *bytes, int len ) {
+	FILE	*f = fopen( "/dev/urandom", "rb" );
+	int		got;
+
+	if ( !f ) {
+		return qfalse;
+	}
+	got = fread( bytes, 1, len, f );
+	fclose( f );
+	return got == len;
 }

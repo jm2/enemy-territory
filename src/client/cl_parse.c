@@ -501,6 +501,41 @@ gamestate, and possibly during gameplay.
 ==================
 */
 void CL_PurgeCache( void );
+#ifdef ET_STATIC_MODULES
+/*
+==================
+CL_CheckStaticModServer
+
+The linked-in cgame only matches one release of the mod, and pmove prediction
+and the server commands it parses change between releases. A server running
+anything else would load and then misbehave, so refuse it by name here.
+==================
+*/
+static void CL_CheckStaticModServer( const char *systemInfo ) {
+	const char	*names;
+
+	if ( com_sv_running->integer ) {
+		return;
+	}
+	if ( Q_stricmp( Info_ValueForKey( systemInfo, "fs_game" ), ET_LEGACY_GAME ) ) {
+		Com_Error( ERR_DROP, "This client only plays " ET_LEGACY_GAME " " ET_LEGACY_RELEASE " servers, not fs_game \"%s\"",
+				   Info_ValueForKey( systemInfo, "fs_game" ) );
+	}
+	names = Info_ValueForKey( systemInfo, "sv_referencedPakNames" );
+	Cmd_TokenizeString( names );
+	{
+		int i, n = Cmd_Argc();
+
+		for ( i = 0; i < n; i++ ) {
+			if ( !Q_stricmp( Cmd_Argv( i ), ET_LEGACY_GAME "/" ET_LEGACY_PAK ) ) {
+				return;
+			}
+		}
+	}
+	Com_Error( ERR_DROP, "This client only plays " ET_LEGACY_GAME " " ET_LEGACY_RELEASE " servers, and this one does not run that release" );
+}
+#endif
+
 void CL_SystemInfoChanged( void ) {
 	char            *systemInfo;
 	const char      *s, *t;
@@ -520,6 +555,10 @@ void CL_SystemInfoChanged( void ) {
 	if ( clc.demoplaying ) {
 		return;
 	}
+
+#ifdef ET_STATIC_MODULES
+	CL_CheckStaticModServer( systemInfo );
+#endif
 
 	s = Info_ValueForKey( systemInfo, "sv_cheats" );
 	sv_cheats = atoi( s );    //bani

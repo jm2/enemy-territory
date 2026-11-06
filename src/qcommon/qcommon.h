@@ -1108,6 +1108,15 @@ void Sys_EnterCriticalSection( void *ptr );
 void Sys_LeaveCriticalSection( void *ptr );
 
 char* Sys_GetDLLName( const char *name );
+void Sys_InitStaticModules( void );
+qboolean Sys_RandomBytes( void *bytes, int len );
+void Com_RandomBytes( void *bytes, int len );
+char *Com_MD5FileETCompat( const char *filename );
+// the release the linked-in modules are; see legacy/static/version_generated.h
+#define ET_LEGACY_VERSION_INT 286020000
+#define ET_LEGACY_GAME "legacy"
+#define ET_LEGACY_RELEASE "v2.86.2"
+#define ET_LEGACY_PAK ET_LEGACY_GAME "_" ET_LEGACY_RELEASE
 // fqpath param added 2/15/02 by T.Ray - Sys_LoadDll is only called in vm.c at this time
 void    * QDECL Sys_LoadDll( const char *name, char *fqpath, int( QDECL * *entryPoint ) ( int, ... ),
 							 int ( QDECL * systemcalls )( int, ... ) );

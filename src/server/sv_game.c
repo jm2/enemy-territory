@@ -1051,7 +1051,12 @@ static void SV_InitGameVM( qboolean restart ) {
 
 	// use the current msec count for a random seed
 	// init for this gamestate
+#ifdef ET_STATIC_MODULES
+	// the legacy qagame refuses to start without these, its only use of them
+	VM_Call( gvm, GAME_INIT, svs.time, Com_Milliseconds(), restart, qtrue, ET_LEGACY_VERSION_INT );
+#else
 	VM_Call( gvm, GAME_INIT, svs.time, Com_Milliseconds(), restart );
+#endif
 }
 
 

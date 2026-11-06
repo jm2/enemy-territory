@@ -4089,6 +4089,13 @@ void FS_InitFilesystem( void ) {
 	Com_StartupVariable( "fs_copyfiles" );
 	Com_StartupVariable( "fs_restrict" );
 
+#ifdef ET_STATIC_MODULES
+	// the linked-in ui needs its own menus, which are in the mod's pk3
+	if ( !Cvar_VariableString( "fs_game" )[0] ) {
+		Cvar_Set( "fs_game", ET_LEGACY_GAME );
+	}
+#endif
+
 	// try to start up normally
 	FS_Startup( BASEGAME );
 

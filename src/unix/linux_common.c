@@ -42,6 +42,7 @@ If you have questions concerning this license or the applicable additional terms
 // TTimo - not compiled in anymore, Com_Mem* are in unix_main.c and the asm stuff were never used
 
 // bk001207 - we need something under Linux, too. Mac?
+#include <string.h>
 #if 1 // defined(C_ONLY) // bk010102 - dedicated?
 
 void Com_Memcpy( void* dest, const void* src, const size_t count ) {

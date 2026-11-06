@@ -46,7 +46,7 @@ int     *snd_p;
 int snd_linear_count;
 short   *snd_out;
 
-#ifdef __linux__
+#if defined( __linux__ ) && !defined( C_ONLY )
 
 // snd_mixa.s
 void S_WriteLinearBlastStereo16( void );
