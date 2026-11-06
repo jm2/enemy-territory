@@ -1228,16 +1228,37 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 					// in case the file was new
 					temp = zfi->file;
 					// set the file position in the zip file (also sets the current file info)
-					unzSetCurrentFileInfoPosition( pak->handle, pakFile->pos );
+					// callers take this size as an int and read that many bytes into a
+					// buffer of it: 0xffffffff is -1 here and an endless length to inflate
+					if ( unzSetCurrentFileInfoPosition( pak->handle, pakFile->pos ) != UNZ_OK
+						 || ( (unz_s *)pak->handle )->cur_file_info.uncompressed_size > (unsigned long)( INT_MAX - 1 ) ) {
+						Com_Printf( S_COLOR_YELLOW "WARNING: bad or oversized entry in %s: %s\n", pak->pakFilename, filename );
+						if ( uniqueFILE ) {
+							unzClose( fsh[*file].handleFiles.file.z );
+						}
+						Com_Memset( &fsh[*file], 0, sizeof( fsh[*file] ) );
+						*file = 0;
+						return -1;
+					}
 					// copy the file info into the unzip structure
 					// rain - don't copy zfi over itself
 					if ( zfi != pak->handle ) {
 						Com_Memcpy( zfi, pak->handle, sizeof( unz_s ) );
+						// the shared handle's decoder, if an error left one, stays its own
+						zfi->pfile_in_zip_read = NULL;
 					}
 					// we copy this back into the structure
 					zfi->file = temp;
 					// open the file in the zip
-					unzOpenCurrentFile( fsh[*file].handleFiles.file.z );
+					if ( unzOpenCurrentFile( fsh[*file].handleFiles.file.z ) != UNZ_OK ) {
+						Com_Printf( S_COLOR_YELLOW "WARNING: bad entry in %s: %s\n", pak->pakFilename, filename );
+						if ( uniqueFILE ) {
+							unzClose( fsh[*file].handleFiles.file.z );
+						}
+						Com_Memset( &fsh[*file], 0, sizeof( fsh[*file] ) );
+						*file = 0;
+						return -1;
+					}
 					fsh[*file].zipFilePos = pakFile->pos;
 
 					if ( fs_debug->integer ) {
@@ -1795,7 +1816,7 @@ int FS_Seek( fileHandle_t f, long offset, int origin ) {
 			// set the file position in the zip file (also sets the current file info)
 			unzSetCurrentFileInfoPosition( fsh[f].handleFiles.file.z, fsh[f].zipFilePos );
 			return unzOpenCurrentFile( fsh[f].handleFiles.file.z );
-		} else if ( offset < 65536 ) {
+		} else if ( offset > 0 && offset < 65536 ) {
 			// set the file position in the zip file (also sets the current file info)
 			unzSetCurrentFileInfoPosition( fsh[f].handleFiles.file.z, fsh[f].zipFilePos );
 			unzOpenCurrentFile( fsh[f].handleFiles.file.z );
@@ -2005,7 +2026,14 @@ int FS_ReadFile( const char *qpath, void **buffer ) {
 	buf = Hunk_AllocateTempMemory( len + 1 );
 	*buffer = buf;
 
-	FS_Read( buf, len, h );
+	// a short read leaves the rest of this buffer as whatever the hunk held
+	if ( FS_Read( buf, len, h ) != len ) {
+		FS_FCloseFile( h );
+		Hunk_FreeTempMemory( buf );
+		*buffer = NULL;
+		fs_loadStack--;
+		return -1;
+	}
 
 	// guarantee that it will have a trailing 0 for string operations
 	buf[len] = 0;

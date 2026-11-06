@@ -85,6 +85,11 @@ int main( void ) {
 
 	for ( i = 0; i < zip_seed_len; i += 7 ) { Put( zip_seed, i ); Walk(); }
 
+	// CVE-2002-0059: a tree error other than a data error freed the table twice
+	Put( zip_bad_tree, zip_bad_tree_len );
+	Walk();
+	Walk();
+
 	// a good file loads as a pack, with every name
 	{
 		pack_t *pack;
