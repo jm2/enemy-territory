@@ -119,7 +119,7 @@ int main( void ) {
 	Load( R_LoadJPG, b, color_jpg_len ); Expect( "duplicate jpeg component", 0 );
 
 	// a scan in another order than the frame: all there, and the rows must follow the component.
-	// libjpeg wrote the subsampled plane's data into the wrong one, past its end
+	// libjpeg wrote a larger plane's rows into a subsampled one, past its end
 	for ( i = 0; i + 1 < (int)color_jpg_len; i++ ) {
 		if ( color_jpg[i] == 0xff && color_jpg[i + 1] == 0xda ) break;
 	}
