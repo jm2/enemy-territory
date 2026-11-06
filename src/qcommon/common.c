@@ -3825,3 +3825,23 @@ int Q_vsnprintf( char *dest, int size, const char *fmt, va_list argptr ) {
 	}
 	return ret;
 }
+
+/*
+=================
+Com_RandomBytes
+=================
+*/
+void Com_RandomBytes( void *bytes, int len ) {
+	int		i;
+	byte	*out = bytes;
+
+	if ( Sys_RandomBytes( bytes, len ) ) {
+		return;
+	}
+
+	Com_Printf( "Com_RandomBytes: using weak randomization\n" );
+	srand( time( NULL ) ^ Sys_Milliseconds() );
+	for ( i = 0; i < len; i++ ) {
+		out[i] = (byte)( rand() % 256 );
+	}
+}

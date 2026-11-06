@@ -459,3 +459,20 @@ void Sys_EnterCriticalSection( void *ptr ) {
 
 void Sys_LeaveCriticalSection( void *ptr ) {
 }
+
+/*
+=================
+Sys_RandomBytes
+=================
+*/
+qboolean Sys_RandomBytes( void *bytes, int len ) {
+	FILE	*f = fopen( "/dev/urandom", "rb" );
+	int		got;
+
+	if ( !f ) {
+		return qfalse;
+	}
+	got = fread( bytes, 1, len, f );
+	fclose( f );
+	return got == len;
+}

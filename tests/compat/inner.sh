@@ -11,7 +11,7 @@ export DISPLAY=:9 LIBGL_ALWAYS_SOFTWARE=1 HOME=/clhome
   +map oasis >/out/server.log 2>&1 </dev/null &
 SV=$!
 sleep ${SVWAIT:-20}
-./et.x86 +set fs_basepath /base +set fs_homepath /clhome/.etwolf +set com_hunkMegs 128 +set com_maxfps 30 \
+${CLIENT:-./et.x86} +set fs_basepath /base +set fs_homepath /clhome/.etwolf +set com_hunkMegs 128 +set com_maxfps 30 \
   +set r_mode 3 +set r_fullscreen 0 +set s_initsound 0 +set in_dgamouse 0 +set in_mouse 0 +set ttycon 0 +set com_introplayed 1 +set fs_game legacy \
   +set cl_allowDownload ${DL:-0} +set pb_cl_enable 0 +set cl_guid ${CLGUID:-unknown} +set net_port 27970 +set logfile 2 +set developer ${DEV:-0} \
   +exec drive.cfg >/out/client.log 2>&1 </dev/null &

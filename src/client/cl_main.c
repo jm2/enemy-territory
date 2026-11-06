@@ -3284,6 +3284,83 @@ void CL_LoadTranslations_f( void ) {
 
 //===========================================================================================
 
+#ifdef ET_STATIC_MODULES
+/*
+====================
+CL_GenerateETKey
+
+PunkBuster set cl_guid on a retail client. ET: Legacy's clients take it from an
+etkey file instead, made once per install, and legacy's g_guidCheck, on by
+default, refuses a client without one. This is ET: Legacy's scheme and format,
+so the file also works with its clients. See docs/port-plan.md.
+====================
+*/
+#define ETKEY_FILE "etkey"
+#define ETKEY_SIZE 28
+
+static void CL_GenerateETKey( void ) {
+	fileHandle_t	f;
+	int				len;
+	time_t			tt;
+	struct tm		*t;
+	unsigned int	last;
+	char			buff[ETKEY_SIZE + 1];
+
+	len = FS_SV_FOpenFileRead( BASEGAME "/" ETKEY_FILE, &f );
+	if ( f ) {
+		FS_FCloseFile( f );
+	}
+	if ( len > 0 ) {
+		return;
+	}
+
+	tt = time( NULL );
+	t = localtime( &tt );
+	Com_RandomBytes( &last, sizeof( last ) );
+	last %= 10000;
+
+	Com_sprintf( buff, sizeof( buff ), "0000001002%04i%02i%02i%02i%02i%02i%04i", t->tm_year + 1900, t->tm_mon + 1,
+				 t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec, last );
+
+	f = FS_SV_FOpenFileWrite( BASEGAME "/" ETKEY_FILE );
+	if ( !f ) {
+		Com_Printf( S_COLOR_RED "ERROR: Could not open %s for write\n", ETKEY_FILE );
+		return;
+	}
+	if ( FS_Write( buff, ETKEY_SIZE, f ) > 0 ) {
+		Com_Printf( S_COLOR_CYAN "ETKEY file generated\n" );
+	} else {
+		Com_Printf( S_COLOR_RED "ERROR: Could not write file %s\n", ETKEY_FILE );
+	}
+	FS_FCloseFile( f );
+}
+
+/*
+====================
+CL_UpdateGUID
+====================
+*/
+static void CL_UpdateGUID( void ) {
+	fileHandle_t	f;
+	int				len;
+	char			*guid;
+
+	len = FS_SV_FOpenFileRead( BASEGAME "/" ETKEY_FILE, &f );
+	if ( f ) {
+		FS_FCloseFile( f );
+	}
+	if ( len < ETKEY_SIZE ) {
+		Com_Printf( S_COLOR_RED "ERROR: Could not set etkey (size mismatch)\n" );
+		Cvar_Set( "cl_guid", "unknown" );
+		return;
+	}
+	guid = Com_MD5FileETCompat( ETKEY_FILE );
+	if ( guid ) {
+		Cvar_Set( "cl_guid", guid );
+	}
+}
+#endif
+
 /*
 ====================
 CL_Init
@@ -3421,6 +3498,11 @@ void CL_Init( void ) {
 	// -NERVE - SMF
 
 	// userinfo
+#ifdef ET_STATIC_MODULES
+	CL_GenerateETKey();
+	Cvar_Get( "cl_guid", "", CVAR_USERINFO | CVAR_ROM );
+	CL_UpdateGUID();
+#endif
 	Cvar_Get( "name", "ETPlayer", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get( "rate", "5000", CVAR_USERINFO | CVAR_ARCHIVE );     // NERVE - SMF - changed from 3000
 	Cvar_Get( "snaps", "20", CVAR_USERINFO | CVAR_ARCHIVE );

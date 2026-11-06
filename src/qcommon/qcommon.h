@@ -1108,6 +1108,11 @@ void Sys_EnterCriticalSection( void *ptr );
 void Sys_LeaveCriticalSection( void *ptr );
 
 char* Sys_GetDLLName( const char *name );
+void Sys_InitStaticModules( void );
+qboolean Sys_RandomBytes( void *bytes, int len );
+void Com_RandomBytes( void *bytes, int len );
+char *Com_MD5FileETCompat( const char *filename );
+#define ET_LEGACY_VERSION_INT 286020000   // legacy/static/version_generated.h
 // fqpath param added 2/15/02 by T.Ray - Sys_LoadDll is only called in vm.c at this time
 void    * QDECL Sys_LoadDll( const char *name, char *fqpath, int( QDECL * *entryPoint ) ( int, ... ),
 							 int ( QDECL * systemcalls )( int, ... ) );

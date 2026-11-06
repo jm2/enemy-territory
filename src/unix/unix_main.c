@@ -600,6 +600,7 @@ char *Sys_ConsoleInput( void ) {
 
 /*****************************************************************************/
 
+#ifndef ET_STATIC_MODULES
 /*
 =================
 Sys_UnloadDll
@@ -876,6 +877,7 @@ void *Sys_LoadDll( const char *name, char *fqpath,
 	Com_Printf( "Sys_LoadDll(%s) succeeded!\n", name );
 	return libHandle;
 }
+#endif // ET_STATIC_MODULES
 
 /*
 ========================================================================
@@ -1435,6 +1437,9 @@ int main( int argc, char* argv[] ) {
 	memset( &eventQue[0], 0, MAX_QUED_EVENTS * sizeof( sysEvent_t ) );
 	memset( &sys_packetReceived[0], 0, MAX_MSGLEN * sizeof( byte ) );
 
+#ifdef ET_STATIC_MODULES
+	Sys_InitStaticModules();
+#endif
 	Com_Init( cmdline );
 	NET_Init();
 

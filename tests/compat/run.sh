@@ -3,7 +3,7 @@
 HERE=$(cd "$(dirname "$0")" && pwd)
 ET_DATA=${ET_DATA:-$HOME/et-data}
 R=$ET_DATA/run; O=$ET_DATA/compat-out; rm -rf "$O"; mkdir -p "$O"
-exec env CLGUID="${CLGUID:-unknown}" GUIDCHECK="${GUIDCHECK:-1}" PURE="${PURE:-1}" DL="${DL:-0}" DEV="${DEV:-0}" LIMIT="${LIMIT:-240}" \
+exec env CLIENT="${CLIENT:-./et.x86}" CLGUID="${CLGUID:-unknown}" GUIDCHECK="${GUIDCHECK:-1}" PURE="${PURE:-1}" DL="${DL:-0}" DEV="${DEV:-0}" LIMIT="${LIMIT:-240}" \
  bwrap --unshare-all --die-with-parent --new-session \
  --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin \
  --ro-bind /etc/alternatives /etc/alternatives --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache \
