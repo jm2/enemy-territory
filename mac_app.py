@@ -2,10 +2,11 @@
 """Finish, verify and export Retro68-built Classic Mac OS applications.
 
 Retro68's Rez combines the MakePEF output (the data fork) with the compiled
-resources and writes the application in three host-independent containers:
+resources and writes the application in host-independent containers. This
+build asks for two (Rez's Name.dsk truncates near a multiple of 800 KB):
 
   Name.bin              MacBinary: both forks and Finder info in one file
-  Name.dsk              HFS disk image holding the application
+  Name.dsk              HFS disk image holding the application (read, not built)
   Name.ad + %Name.ad    AppleDouble pair (data fork, then resource fork and
                         Finder info), the layout genisoimage -hfs -double reads
 

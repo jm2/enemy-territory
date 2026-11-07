@@ -8,12 +8,18 @@
 #   -fno-delete-null-pointer-checks: low memory is mapped on Mac OS 9, so a NULL
 #       dereference carries on and a later NULL check still has to run
 #   -ffp-contract=off: no fused multiply-add, so Pmove matches x86 peers and servers
+#   -fno-strict-aliasing: the engine and mods have it already; this reaches the splines
+#       C++, the console hooks and the installer, which pun floats too
 set(ET_OPT "-O2" CACHE STRING "Optimization for the Mac build")
-set(ET_SAFE_OPT "-fwrapv -fno-delete-null-pointer-checks -ffp-contract=off")
+set(ET_SAFE_OPT "-fwrapv -fno-delete-null-pointer-checks -ffp-contract=off -fno-strict-aliasing")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${ET_OPT} ${ET_SAFE_OPT} -g")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ET_OPT} ${ET_SAFE_OPT} -g -fsigned-char")
-set(CMAKE_C_FLAGS_RELEASE "")
-set(CMAKE_CXX_FLAGS_RELEASE "")
+# every build type's flags, not only Release's: RelWithDebInfo or MinSizeRel would add an -O after
+# ET_OPT and win, so -DET_OPT=-O0 would be lost
+foreach(config RELEASE RELWITHDEBINFO MINSIZEREL DEBUG)
+    set(CMAKE_C_FLAGS_${config} "")
+    set(CMAKE_CXX_FLAGS_${config} "")
+endforeach()
 set(ET_MOD_DEFS __MACOS__ __POWERPC__)
 list(APPEND ET_MOD_FLAGS "SHELL:-include ${ET_LEGACY}/static/mac_platform.h")
 # The XCOFF TOC holds 64 KB. Three modules and the engine in one image need about
