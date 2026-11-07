@@ -49,9 +49,10 @@ it, and what has not been done. A cross-build proves only that code compiles.
   yet. `inflate` itself is zlib 1.1.3 with the fix above and has only had the mutation test. Q3A has a long validation series (`docs/review-*`
   there). **A malicious server's pk3 remains the largest open risk**, and `sv_pure` does not
   defend a client against it.
-- The botlib preprocessor, which also reads the menus from pk3s, joins strings in
-  `PC_MergeTokens` with an unbounded `strcat` into a 1024-byte token. Q3A bounded its copy in
-  `06180353`, `fa39407b` and `f9f73568`; port those.
+- The botlib preprocessor, which also reads the menus from pk3s, merges tokens with `##` in
+  `PC_MergeTokens` by an unbounded `strcat` into a 1024-byte token, for two strings and for a
+  name with a name or number. Q3A bounded that in `08460fb3`. Its `fa39407b` and `f9f73568`
+  bound includes, expressions, live tokens and nested conditionals, which ET has not reviewed.
 - `cm_optimizePatchPlanes` is not followed (E5). When it is, read it from `systemInfo`: the
   cvar keeps the first server's value.
 
