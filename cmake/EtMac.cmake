@@ -80,18 +80,21 @@ add_custom_command(OUTPUT ET.pef
     DEPENDS ET ET.static-modules.txt COMMENT "Converting ET to PEF" VERBATIM)
 set(ET_REZ_INCLUDES "${CMAKE_SOURCE_DIR}/tools/Retro68-build/universal/RIncludes")
 # The SIZE minimum must hold the engine's fixed demand and this image with headroom
-add_custom_command(OUTPUT ET.bin ET.dsk ET.ad %ET.ad
+# No --cc ET.dsk: Rez sizes that image with 20 KB for HFS's own structures and ignores
+# hfs_write's errors, so an application just under a multiple of 800 KB came out
+# truncated, with no resource fork. Nothing used the image.
+add_custom_command(OUTPUT ET.bin ET.ad %ET.ad
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/cmake/mac_partition.py" map
         --root "${CMAKE_SOURCE_DIR}" --map ET.map
     COMMAND "${RETRO68_REZ}" "${ET_MAC}/mac_resources.r" -I "${ET_REZ_INCLUDES}" -I "${ET_MAC}"
-        -t APPL -c WfET --data ET.pef -o ET.bin --cc ET.dsk --cc %ET.ad
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/mac_app.py" finalize --creator WfET --pef ET.pef ET.bin ET.dsk %ET.ad
+        -t APPL -c WfET --data ET.pef -o ET.bin --cc %ET.ad
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/mac_app.py" finalize --creator WfET --pef ET.pef ET.bin %ET.ad
     DEPENDS ET.pef ${ET_MAC}/mac_resources.r ${ET_MAC}/et_icons.r "${CMAKE_SOURCE_DIR}/mac_app.py"
         "${CMAKE_SOURCE_DIR}/cmake/mac_partition.py"
     COMMENT "Building the Classic application" VERBATIM)
 include("${CMAKE_SOURCE_DIR}/cmake/EtBuildManifest.cmake")
 et_add_build_manifest(ET)
-add_custom_target(ET_APPL ALL DEPENDS ET.bin ET.dsk ET.ad %ET.ad ET.manifest.txt)
+add_custom_target(ET_APPL ALL DEPENDS ET.bin ET.ad %ET.ad ET.manifest.txt)
 
 # ---- the one-file installer: scripts/installer_pack.py adds the game to it
 add_executable(ETInstaller ${ET_MAC}/et_installer.c)

@@ -13,15 +13,20 @@ works too, with `tools/Retro68-src/Console` and
 ## Build
 
 ```sh
-./build_mac.sh                  # -O0
-./build_mac.sh -DET_OPT=-O2     # after -O2 is proven on hardware
+./build_mac.sh                  # -O2, the default
+./build_mac.sh -DET_OPT=-O0     # bring-up build, easier to read in MacsBug
 ```
+
+`-fwrapv -fno-delete-null-pointer-checks -ffp-contract=off` go with any `-O`, as in Quake III's
+port: id's code assumes wrapping overflow, low memory is mapped on Mac OS 9 so NULL checks must
+stay, and no fused multiply-add keeps movement matching x86 servers. build_mac.sh passes
+`-DET_OPT=-O2` unless given another, so an `-O0` left in the CMake cache does not stick.
 
 | Output, in `build-mac/` | Use |
 | --- | --- |
 | `ET.bin` | MacBinary, for the Mac |
 | `ET.xcoff` | Symbols for crash reports. Keep the one from the same build |
-| `ET.dsk`, `ET.ad`, `%ET.ad` | Disk image and AppleDouble pair |
+| `ET.ad`, `%ET.ad` | AppleDouble pair |
 | `ET.static-modules.txt` | The module reset ranges and duplicate-symbol check |
 
 ## Things that differ from Quake III's build
@@ -66,6 +71,5 @@ has no git checkout, as it does here, and `retro68_pinned` is then `no`.
 by hand after changing a memory default.
 
 `package.txt` records the commit, whether the tree was modified, `ET_OPT` and the PEF's SHA-256.
-`ET_OPT` stays in the CMake cache between builds, so check it before sending a package to a Mac:
-`-O2` is not proven on hardware. The next package deletes `release_mac/`, including the symbols
+An `-O0` build needs `-DET_OPT=-O0` on every build_mac.sh run. The next package deletes `release_mac/`, including the symbols
 of the image already on the Mac, so copy `symbols/` somewhere first if that image is still in use.
