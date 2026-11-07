@@ -71,6 +71,8 @@ has no git checkout, as it does here, and `retro68_pinned` is then `no`.
 `tests/package/run.sh` checks the refusals, the partition arithmetic and the installer format. There is no CI, so run it
 by hand after changing a memory default.
 
-`package.txt` records the commit, whether the tree was modified, `ET_OPT` and the PEF's SHA-256.
-`./build_mac.sh package --bringup -DET_OPT=-O2` is an optimized build with the stage 1 files. The next package deletes `release_mac/`, including the symbols
+`package.txt` records the commit (`commit=`), whether the tree was modified (`tree=`), `ET_OPT`
+(`opt=`), whether it has the stage 1 files (`bringup=`), the PEF's SHA-256 and each file's.
+`./build_mac.sh package --bringup -DET_OPT=-O2` is an optimized build with the stage 1 files; it
+needs the `-DET_OPT=-O2` on every run, or the next `--bringup` is `-O0` again. The next package deletes `release_mac/`, including the symbols
 of the image already on the Mac, so copy `symbols/` somewhere first if that image is still in use.

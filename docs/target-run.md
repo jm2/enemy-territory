@@ -12,7 +12,7 @@ covers MacsBug, crashes and logs in more detail.
 | `ET_Installer.bin` | One-file install: application, game data, and the stage 1 `METParms.txt` and `bringup.cfg` |
 | `ET.bin` | The bare application, for redeploying after a rebuild |
 | `ET_Install.img.bin` | The same install as a disk image, kept as a fallback. Mounting it needs Toast |
-| `package.txt` | Commit, whether the tree was modified, and each file's SHA-256 |
+| `package.txt` | Commit, whether the tree was modified, `-O` level, whether it has the stage 1 files, and each file's SHA-256 |
 | `symbols/` | `ET.xcoff` and the manifest. Stays on the build machine for crash reports |
 
 Leave out `--bringup` for the `-O2` package with no `METParms.txt`, which starts the game
