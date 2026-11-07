@@ -1272,12 +1272,16 @@ static int Sys_ReadStartupFile( const char *path, char *text, int textSize,
 	int		textLength;
 	int		readError;
 
+	Sys_LogPrintf( "main: parameters: opening %s\n", path );
 	f = fopen( path, "rb" );
 	if ( !f ) {
+		Sys_LogPrintf( "main: parameters: no file\n" );
 		return 0;
 	}
+	Sys_LogPrintf( "main: parameters: reading\n" );
 	textLength = (int)fread( text, 1, textSize, f );
 	readError = ferror( f );
+	Sys_LogPrintf( "main: parameters: read %d bytes, closing\n", textLength );
 	fclose( f );
 	if ( readError ) {
 		return -2;
@@ -1395,14 +1399,10 @@ static void Sys_LogSystemFacts( void ) {
 ==================
 Sys_StartBootLog
 
-Starts the boot log and gives it what the crash ring has so far. "+set
-sys_bootlog 0" leaves it off.
+Starts the boot log and gives it what the crash ring has so far.
 ==================
 */
-static void Sys_StartBootLog( const char *commandLine ) {
-	if ( strstr( commandLine, "sys_bootlog 0" ) ) {
-		return;
-	}
+static void Sys_StartBootLog( void ) {
 	if ( !Sys_BootLogOpen( Sys_GetCwd() ) ) {
 		Sys_LogPrintf( "main: no boot log this run, so etboot.log is an older run's\n" );
 		return;
@@ -1453,6 +1453,12 @@ int main( int argc, char **argv ) {
     }
 
     Sys_LogPrintf("main: START\n");
+
+    // Before the parameters, so a launch that stops reading them says where.
+    // A first launch on a real G4 froze here and left nothing. The parameters
+    // can turn both off again below.
+    Sys_StartBootLog();
+    Sys_InstallCrashHandler();
 
     commandLine[0] = 0;
     commandLength = 0;
@@ -1517,9 +1523,11 @@ int main( int argc, char **argv ) {
         }
     }
     Sys_LogPrintf( "main: command line: %s\n", commandLine );
-    Sys_StartBootLog( commandLine );
-    if ( !strstr( commandLine, "sys_crashhandler 0" ) ) {
-        Sys_InstallCrashHandler();
+    if ( strstr( commandLine, "sys_bootlog 0" ) ) {
+        Sys_BootLogClose();
+    }
+    if ( strstr( commandLine, "sys_crashhandler 0" ) ) {
+        Sys_RemoveCrashHandler();
     }
 
     // Note: Sys_Init() is called by Com_Init() after the cvar/zone systems

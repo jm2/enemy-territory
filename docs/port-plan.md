@@ -1,10 +1,12 @@
 # Enemy Territory on Mac OS 9: port plan
 
-Last updated: 2026-11-05. Target mod: `legacy` v2.86.2 (ET: Legacy tag `v2.86.2`,
+Last updated: 2026-11-07. Target mod: `legacy` v2.86.2 (ET: Legacy tag `v2.86.2`,
 `fdb40f87`). Engine base: id's 2.60 GPL release in `src/`. Platform base: the
-Quake III Arena Mac OS 9 port (`~/Quake-III-Arena`, `master` at `72dfd69f`).
+Quake III Arena Mac OS 9 port (`~/Quake-III-Arena`), copied at `72dfd69f` and its Mac layer
+merged up to `496b52ee`.
 
-"Verified" below means run on this host. Nothing here has run on Mac OS 9.
+"Verified" below means run on this host. The Mac OS 9 results so far are from an emulator
+(`docs/target-run.md`); nothing has run on real hardware.
 
 ## Does `legacy` v2.86.2 run on a 2.60b engine?
 
@@ -50,6 +52,13 @@ All are client-side and none changes the wire format.
 | E3 | **Refuse mismatched mod versions** | A static cgame only matches one release. `CG_Init` compares `GAME_VERSION` only, so a `legacy_v2.86.1.pk3` server would load and could desync. The client checks `fs_game` and `sv_referencedPakNames` at connect. | **Done, verified** against a server with the pk3 renamed. Known limits: a server holding two legacy pk3s passes, and one with the pk3 in `etmain/` is refused. Neither is a standard install |
 | E4 | ~~Raise `MAX_RELIABLE_COMMANDS` to 256~~ | Not needed. The GPL source is already 256; the first audit read the wrong header. | Closed |
 | E5 | **Follow `cm_optimizePatchPlanes`** | ETL servers default to 0 and publish it in systeminfo; 2.60 always behaves as 1. Prediction could differ on curved surfaces. | Inferred, not seen in the runs. Measure before porting |
+
+Found in stage 3, not yet fixed: the mod's menus focus an edit field by a name they build from two
+strings, such as `"efleft" "Profile Name:"`, and this engine logs `Script_SetEditFocus: Can't find
+efleftProfile Name:`. The x86 host build does the same, so it is not the Mac. The cause is not found: the menus build
+the name with `"efleft" ## TEXT`, and this engine's string merging in `PC_MergeTokens` and
+`PC_ReadToken` does the same as ET: Legacy's. Clicking the field still edits it, so a profile can be created, but keys typed before that go
+to bindings (`t` is chat).
 
 Expected and left alone: `OLD_CLIENT` shows a "SECURITY INFORMATION: You are
 running old software" label and an `UPGRADE NOW` button, since `etLegacyClient` is

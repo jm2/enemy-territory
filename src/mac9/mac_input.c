@@ -40,14 +40,15 @@ and activates it.  Returns qfalse, leaving the device inactive, if
 InputSprocket fails or the mouse has no X and Y movement.
 =================
 */
-static qboolean Sys_InitMouse( ISpDeviceReference device, macMouse_t *mouse ) {
+static qboolean Sys_InitMouse( ISpDeviceReference device, macMouse_t *mouse, qboolean useAxes ) {
 	ISpElementListReference	elementList;
 	ISpElementInfo		info;
 	ISpElementReference	deltas[2];		// other movement, in list order
-	ISpElementReference	axes[2];		// elements of any other kind, in list order
+	ISpElementReference	axisX, axisY;	// axes labeled X and Y
+	ISpElementReference	axes[2];		// unlabeled axes, in list order
 	ISpElementReference	others[MAX_MOUSE_BUTTONS];	// buttons not labeled mou1-3
 	UInt32				count;
-	int					i, button, numDeltas, numAxes, numOthers;
+	int					i, button, numDeltas, numAxes, numOthers, used;
 	OSStatus			err;
 
 	memset( mouse, 0, sizeof( *mouse ) );
@@ -68,6 +69,7 @@ static qboolean Sys_InitMouse( ISpDeviceReference device, macMouse_t *mouse ) {
 		count = MAX_ELEMENTS;
 	}
 
+	axisX = axisY = 0;
 	numDeltas = numAxes = numOthers = 0;
 	for ( i = 0 ; i < count ; i++ ) {
 		if ( ISpElement_GetInfo( elements[i], &info ) ) {
@@ -102,8 +104,14 @@ static qboolean Sys_InitMouse( ISpDeviceReference device, macMouse_t *mouse ) {
 			} else if ( numOthers < MAX_MOUSE_BUTTONS ) {
 				others[numOthers++] = elements[i];
 			}
-		} else if ( numAxes < 2 ) {
-			axes[numAxes++] = elements[i];
+		} else if ( useAxes && info.theKind == kISpElementKind_Axis ) {
+			if ( info.theLabel == kISpElementLabel_Axis_XAxis && !axisX ) {
+				axisX = elements[i];
+			} else if ( info.theLabel == kISpElementLabel_Axis_YAxis && !axisY ) {
+				axisY = elements[i];
+			} else if ( info.theLabel == kISpElementLabel_None && numAxes < 2 ) {
+				axes[numAxes++] = elements[i];
+			}
 		}
 	}
 
@@ -117,17 +125,25 @@ static qboolean Sys_InitMouse( ISpDeviceReference device, macMouse_t *mouse ) {
 		mouse->yAxis = deltas[i++];
 	}
 	// Retail did not look at the kind at all, so a driver that reports its
-	// movement some other way worked there: without this it would lose the
-	// mouse, and the menus with it.
-	i = 0;
-	if ( !mouse->xAxis && i < numAxes ) {
+	// movement as axes worked there: without this it would lose the mouse,
+	// and the menus with it.  Unlabeled axes are X then Y.
+	i = used = 0;
+	if ( !mouse->xAxis && axisX ) {
+		mouse->xAxis = axisX;
+		used++;
+	} else if ( !mouse->xAxis && i < numAxes ) {
 		mouse->xAxis = axes[i++];
+		used++;
 	}
-	if ( !mouse->yAxis && i < numAxes ) {
+	if ( !mouse->yAxis && axisY ) {
+		mouse->yAxis = axisY;
+		used++;
+	} else if ( !mouse->yAxis && i < numAxes ) {
 		mouse->yAxis = axes[i++];
+		used++;
 	}
-	if ( i ) {
-		Com_Printf( "using %i element(s) of another kind for mouse movement\n", i );
+	if ( used ) {
+		Com_Printf( "using %i axis element(s) for mouse movement\n", used );
 	}
 	if ( !mouse->xAxis || !mouse->yAxis ) {
 		Com_Printf( "no X and Y movement, skipping this device\n" );
@@ -163,7 +179,7 @@ Sys_InitInput
 void Sys_InitInput( void ) {
 	NumVersion		ver;
 	UInt32			count;
-	int				i;
+	int				i, useAxes;
 	OSStatus		err;
 	
 	numDevices = 0;
@@ -221,9 +237,12 @@ void Sys_InitInput( void ) {
 	if ( count > MAX_INPUT_DEVICES ) {
 		count = MAX_INPUT_DEVICES;
 	}
-	for ( i = 0 ; i < count && numDevices < MAX_MOUSE_DEVICES ; i++ ) {
-		if ( Sys_InitMouse( devices[i], &mice[numDevices] ) ) {
-			numDevices++;
+	// axes are a last resort, as they may be a joystick's: never with a mouse
+	for ( useAxes = 0 ; useAxes < 2 && !numDevices ; useAxes++ ) {
+		for ( i = 0 ; i < count && numDevices < MAX_MOUSE_DEVICES ; i++ ) {
+			if ( Sys_InitMouse( devices[i], &mice[numDevices], useAxes ) ) {
+				numDevices++;
+			}
 		}
 	}
 	if ( !numDevices ) {
