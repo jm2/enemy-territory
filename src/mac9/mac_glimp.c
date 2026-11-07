@@ -998,9 +998,9 @@ qboolean GLimp_SetMode( void ) {
 	}
 	sys_gl.fmt = aglChoosePixelFormat( &sys_gl.devices[ r_device->integer ], 1, attrib);
 	if ( !sys_gl.fmt && attrib[stencilAttrib] ) {
-		// r_stencilbits defaults to 8, which ATI's drivers can refuse. Only
-		// cg_shadows 2 uses it, so don't lose the mode over it; glConfig
-		// says what was got, as on win32
+		// ATI's drivers can refuse a stencil buffer. ET's r_stencilbits
+		// defaults to 0, so this runs only when it is set; don't lose the
+		// mode over it. glConfig says what was got, as on win32
 		ri.Printf( PRINT_ALL, "...no pixel format with stencil, trying without\n" );
 		aglGetError();
 		attrib[stencilAttrib] = 0;
