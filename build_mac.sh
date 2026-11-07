@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # Build the Classic application, and with "package" the files that install it.
-# See docs/building-mac-os9.md. Usage: ./build_mac.sh [package [--bringup]] [cmake options]
+# --bringup builds at -O0, as Quake III's does, and with "package" adds the stage 1 files.
+# See docs/building-mac-os9.md. Usage: ./build_mac.sh [package] [--bringup] [cmake options]
 set -euo pipefail
 cd "$(dirname "$0")"
 PACKAGE=0
 BRINGUP=
+OPT=-O2
 if [ "${1:-}" = package ]; then
     PACKAGE=1
     shift
-    if [ "${1:-}" = --bringup ]; then
-        BRINGUP=--bringup
-        shift
-    fi
+fi
+if [ "${1:-}" = --bringup ]; then
+    BRINGUP=--bringup
+    OPT=-O0
+    shift
+fi
+if [ "$PACKAGE" = 1 ]; then
     # refuse before a long build, not after it
     scripts/package_mac.sh --check
 fi
@@ -19,11 +24,11 @@ fi
 for option in "$@"; do
     case "$option" in
         -*) ;;
-        *) echo "build_mac.sh: $option is not a cmake option. Usage: ./build_mac.sh [package [--bringup]] [cmake options]" >&2; exit 1 ;;
+        *) echo "build_mac.sh: $option is not a cmake option. Usage: ./build_mac.sh [package] [--bringup] [cmake options]" >&2; exit 1 ;;
     esac
 done
-# -O2 unless an -DET_OPT among the options says otherwise: the cache would keep an old -O0
-cmake -S . -B build-mac -DET_TARGET=mac -DCMAKE_TOOLCHAIN_FILE=cmake/Retro68.toolchain.cmake -DET_OPT=-O2 "$@" >/dev/null
+# set on every run, or the cache would keep the last one; an -DET_OPT among the options wins
+cmake -S . -B build-mac -DET_TARGET=mac -DCMAKE_TOOLCHAIN_FILE=cmake/Retro68.toolchain.cmake -DET_OPT="$OPT" "$@" >/dev/null
 cmake --build build-mac -j"$(nproc)" --target ET_APPL ET_INSTALLER_APPL
 head -c 8 build-mac/ET.pef | grep -aq 'Joy!peff' || { echo "ET.pef is not a PEF" >&2; exit 1; }
 python3 mac_app.py verify --creator WfET --pef build-mac/ET.pef build-mac/ET.bin build-mac/%ET.ad

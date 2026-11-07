@@ -5,7 +5,7 @@ covers MacsBug, crashes and logs in more detail.
 
 ## Install
 
-`./build_mac.sh package --bringup` writes everything to `release_mac/`:
+`./build_mac.sh package --bringup` builds at `-O0` and writes everything to `release_mac/`:
 
 | File | Use |
 | --- | --- |
@@ -15,12 +15,14 @@ covers MacsBug, crashes and logs in more detail.
 | `package.txt` | Commit, whether the tree was modified, and each file's SHA-256 |
 | `symbols/` | `ET.xcoff` and the manifest. Stays on the build machine for crash reports |
 
-Leave out `--bringup` for a package with no `METParms.txt`, which starts the game normally,
-without sound until `s_initsound` is set (stage 4).
+Leave out `--bringup` for the `-O2` package with no `METParms.txt`, which starts the game
+normally, without sound until `s_initsound` is set (stage 4).
 
-The application is built at `-O2`, which has not run on hardware yet. If something fails on the
-mini, an `-O0` build (`./build_mac.sh package --bringup -DET_OPT=-O0`) tells whether the
-optimizer is involved. `package.txt` records which one a package is.
+`-O0`, as in Quake III's bring-up builds, keeps every variable in memory and plain stack frames,
+so a crash or hang reads more easily in MacsBug. The `-O2` build has not run on hardware yet. Once
+the stages pass at `-O0`, `./build_mac.sh package --bringup -DET_OPT=-O2` repeats them optimized;
+a difference between the two points at the optimizer. `package.txt` records which one a package
+is (`opt=`).
 
 **First install.** Transfer `ET_Installer.bin` in binary mode and decode it with StuffIt Expander.
 Put `ET Installer` on a writable disk and double-click it. It checks a CRC-32 of every file, and
