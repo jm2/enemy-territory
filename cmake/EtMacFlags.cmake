@@ -1,8 +1,8 @@
 # Classic Mac OS with Retro68, as Quake III's port builds it. See that port's
 # CMakeLists.txt for why each flag is here: -fsigned-char matches retail,
 # no section GC (MakePEF needs every XCOFF section), and Release adds no -O.
-# build_mac.sh passes -DET_OPT=-O2 unless told otherwise, so a cached -O0 never sticks;
-# -DET_OPT=-O0 is the bring-up build, easier to read in MacsBug.
+# build_mac.sh sets ET_OPT on every run, -O0 with --bringup (easier to read in MacsBug, as
+# Quake III's) and -O2 without, so the cache never keeps the last one.
 # The flags beside it keep what the code relies on, at any -O, as Quake III's port does:
 #   -fwrapv: signed overflow wraps (id's code assumes it; an LCG miscompiled without it there)
 #   -fno-delete-null-pointer-checks: low memory is mapped on Mac OS 9, so a NULL

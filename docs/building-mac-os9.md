@@ -14,13 +14,14 @@ works too, with `tools/Retro68-src/Console` and
 
 ```sh
 ./build_mac.sh                  # -O2, the default
-./build_mac.sh -DET_OPT=-O0     # bring-up build, easier to read in MacsBug
+./build_mac.sh --bringup        # -O0, easier to read in MacsBug, as Quake III's --bringup
 ```
 
 `-fwrapv -fno-delete-null-pointer-checks -ffp-contract=off` go with any `-O`, as in Quake III's
 port: id's code assumes wrapping overflow, low memory is mapped on Mac OS 9 so NULL checks must
-stay, and no fused multiply-add keeps movement matching x86 servers. build_mac.sh passes
-`-DET_OPT=-O2` unless given another, so an `-O0` left in the CMake cache does not stick.
+stay, and no fused multiply-add keeps movement matching x86 servers. build_mac.sh sets
+`ET_OPT` on every run, `-O0` with `--bringup` and `-O2` without, so the CMake cache never keeps
+the last one. An `-DET_OPT=` among the options wins over both.
 
 | Output, in `build-mac/` | Use |
 | --- | --- |
@@ -48,8 +49,8 @@ stay, and no fused multiply-add keeps movement matching x86 servers. build_mac.s
 ## Packaging
 
 ```sh
-./build_mac.sh package             # a package that starts the game normally
-./build_mac.sh package --bringup   # with the stage 1 files of docs/target-run.md
+./build_mac.sh package             # -O2, a package that starts the game normally
+./build_mac.sh package --bringup   # -O0, with the stage 1 files of docs/target-run.md
 ```
 
 This needs `genisoimage` or `mkisofs`, and the game data in `$ET_DATA_DIR`, which holds `etmain/`
@@ -70,6 +71,8 @@ has no git checkout, as it does here, and `retro68_pinned` is then `no`.
 `tests/package/run.sh` checks the refusals, the partition arithmetic and the installer format. There is no CI, so run it
 by hand after changing a memory default.
 
-`package.txt` records the commit, whether the tree was modified, `ET_OPT` and the PEF's SHA-256.
-An `-O0` build needs `-DET_OPT=-O0` on every build_mac.sh run. The next package deletes `release_mac/`, including the symbols
+`package.txt` records the commit (`commit=`), whether the tree was modified (`tree=`), `ET_OPT`
+(`opt=`), whether it has the stage 1 files (`bringup=`), the PEF's SHA-256 and each file's.
+`./build_mac.sh package --bringup -DET_OPT=-O2` is an optimized build with the stage 1 files; it
+needs the `-DET_OPT=-O2` on every run, or the next `--bringup` is `-O0` again. The next package deletes `release_mac/`, including the symbols
 of the image already on the Mac, so copy `symbols/` somewhere first if that image is still in use.

@@ -2,7 +2,7 @@
 # Stage the application and game data and make the files that go to the Mac. Run it through
 # ./build_mac.sh package, so that the build it packages is the commit it records. --check only
 # looks for what a package needs. --bringup adds the stage 1 METParms.txt and bringup.cfg of
-# docs/target-run.md.
+# docs/target-run.md; build_mac.sh also builds those at -O0.
 #
 # Game data is found locally and never committed: ET_DATA_DIR holds etmain/ and legacy/, and
 # defaults to ~/et-data/run/base. Every file must match mac-data/game-data.sha256, because a

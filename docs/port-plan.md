@@ -159,7 +159,7 @@ critical-section trio, `Sys_ShowIP` and `DL_*`. `Sys_GetBotLibAPI`,
 
 - Fixes for "Oversize packet from 0.0.0.0:0" and the 1024x768 windowed fallback.
 - `-O2`: the default since the owner asked for it on 2026-11-07, without waiting for Q3A's hardware
-  runs. Emulator stages 1 and 5 pass at `-O2`; nothing has run on hardware.
+  runs. Emulator stages 1 and 5 pass at `-O2`; nothing has run on hardware. `--bringup` builds at `-O0`, as Q3A's does.
 
 ## Rebuilding for a new ET: Legacy release
 
