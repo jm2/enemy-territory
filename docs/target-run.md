@@ -78,6 +78,19 @@ Multitexture and compiled vertex arrays are on where the driver has them, and th
 `...using` for each. If something renders wrongly or hangs, `+set r_ext_multitexture 0` and
 `+set r_ext_compiled_vertex_array 0` turn them off one at a time.
 
+Anisotropic filtering is on in a new config, at level 1: plain filtering, one extra texture
+parameter per upload, not measured on the mini. A config saved before keeps its old value. The
+menu's AF level, or `r_textureAnisotropy`, raises it; `+set r_ext_texture_filter_anisotropic 0`
+turns it off. A line `anisotropy out of range` at startup and after `vid_restart` is stock ET: the
+level still applies.
+
+S3TC texture compression is used if the driver lists `GL_EXT_texture_compression_s3tc`. The
+emulator's Radeon doesn't, and whether the mini's Radeon 9200 does under Mac OS 9 is unknown, so
+look for `...using` or `...not found` for it in the log. ET never compresses mipmapped textures on
+Mac, so world textures are unaffected: only 2D art larger than 128x128 is, meaning menus, the HUD,
+level shots and the font pages. If it is in use, check that menu text and the HUD are sharp. If
+they are blocky, use `+set r_ext_compressed_textures 0`.
+
 ## Stages
 
 On the emulator (ClassicMac, 512 MB) stages 1 to 3 pass, with sound muted there, and stage 5
