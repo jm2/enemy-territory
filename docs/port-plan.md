@@ -158,7 +158,8 @@ critical-section trio, `Sys_ShowIP` and `DL_*`. `Sys_GetBotLibAPI`,
 ## Questions for Q3A-OS9 (batch at phase 2)
 
 - Fixes for "Oversize packet from 0.0.0.0:0" and the 1024x768 windowed fallback.
-- Whether Q3A's `-O2` has been tried. ET's phase 5 waits on it.
+- `-O2`: the default since the owner asked for it on 2026-11-07, without waiting for Q3A's hardware
+  runs. Emulator stages 1 and 5 pass at `-O2`; nothing has run on hardware.
 
 ## Rebuilding for a new ET: Legacy release
 

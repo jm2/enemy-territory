@@ -66,9 +66,8 @@ BIN="$INSTALL_DIR/bin"
 TARGET=powerpc-apple-macos
 SCRATCH_PARENT="${TMPDIR:-/var/tmp}"
 
-# Keep in step with CMakeLists.txt, cmake/Retro68.toolchain.cmake and
-# check_retro68.ps1.
-COMPILE_FLAGS="-std=gnu99 -fgnu89-inline -O0 -g -fno-strict-aliasing -fsigned-char -Wformat=2 -Wno-format-nonliteral -Werror=format -Werror=format-security -Wno-error=format-overflow -Wno-error=format-truncation -D__MACOS__ -D__POWERPC__"
+# Keep in step with cmake/EtMacFlags.cmake and cmake/Retro68.toolchain.cmake.
+COMPILE_FLAGS="-std=gnu99 -fgnu89-inline -O2 -fwrapv -fno-delete-null-pointer-checks -ffp-contract=off -g -fno-strict-aliasing -fsigned-char -Wformat=2 -Wno-format-nonliteral -Werror=format -Werror=format-security -Wno-error=format-overflow -Wno-error=format-truncation -D__MACOS__ -D__POWERPC__"
 CXX_FLAGS="-fsigned-char"
 
 # Messages from a tool that failed because of its surroundings: no space,

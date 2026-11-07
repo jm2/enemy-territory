@@ -156,12 +156,22 @@ LOCAL void
 add_huff_table( j_compress_ptr cinfo,
 				JHUFF_TBL **htblptr, const UINT8 *bits, const UINT8 *val ) {
 /* Define a Huffman table */
+	int nsymbols, len;
+
 	if ( *htblptr == NULL ) {
 		*htblptr = jpeg_alloc_huff_table( (j_common_ptr) cinfo );
 	}
 
 	MEMCOPY( ( *htblptr )->bits, bits, SIZEOF( ( *htblptr )->bits ) );
-	MEMCOPY( ( *htblptr )->huffval, val, SIZEOF( ( *htblptr )->huffval ) );
+	/* copy only the symbols the table has, as libjpeg 6b does: the standard
+	   value tables are 12 and 162 bytes, not the 256 huffval holds */
+	nsymbols = 0;
+	for ( len = 1; len <= 16; len++ )
+		nsymbols += bits[len];
+	if ( nsymbols < 1 || nsymbols > 256 ) {
+		ERREXIT( cinfo, JERR_BAD_HUFF_TABLE );
+	}
+	MEMCOPY( ( *htblptr )->huffval, val, nsymbols * SIZEOF( UINT8 ) );
 
 	/* Initialize sent_table FALSE so table will be written to JPEG file. */
 	( *htblptr )->sent_table = FALSE;

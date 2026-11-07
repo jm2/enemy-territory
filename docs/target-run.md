@@ -18,6 +18,10 @@ covers MacsBug, crashes and logs in more detail.
 Leave out `--bringup` for a package with no `METParms.txt`, which starts the game normally,
 without sound until `s_initsound` is set (stage 4).
 
+The application is built at `-O2`, which has not run on hardware yet. If something fails on the
+mini, an `-O0` build (`./build_mac.sh package --bringup -DET_OPT=-O0`) tells whether the
+optimizer is involved. `package.txt` records which one a package is.
+
 **First install.** Transfer `ET_Installer.bin` in binary mode and decode it with StuffIt Expander.
 Put `ET Installer` on a writable disk and double-click it. It checks a CRC-32 of every file, and
 only when all have passed does it name the result `Enemy Territory`, beside itself. A failed run
