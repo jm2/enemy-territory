@@ -74,6 +74,13 @@ Multitexture and compiled vertex arrays are on where the driver has them, and th
 `...using` for each. If something renders wrongly or hangs, `+set r_ext_multitexture 0` and
 `+set r_ext_compiled_vertex_array 0` turn them off one at a time.
 
+Anisotropic filtering is on by default at level 1, which costs nothing. The menu's AF level, or
+`r_textureAnisotropy`, raises it. S3TC texture compression is used if the driver lists
+`GL_EXT_texture_compression_s3tc`. The emulator's Radeon doesn't, and whether the mini's Radeon 9200
+does under Mac OS 9 is unknown, so look for `...using` or `...not found` for it in the log. If
+compressed textures look wrong, use `+set r_ext_compressed_textures 0`. A line
+`anisotropy out of range` at startup is stock ET: the level is applied on the first frame.
+
 ## Stages
 
 On the emulator (ClassicMac, 512 MB) stages 1 to 3 pass, with sound muted there, and stage 5
