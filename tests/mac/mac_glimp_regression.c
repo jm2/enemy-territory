@@ -63,7 +63,7 @@ static void		CvarSet( const char *name, const char *value );
 
 cvar_t	*r_mode, *r_fullscreen, *r_colorbits, *r_stencilbits, *r_depthbits, *r_displayRefresh;
 cvar_t	*r_swapInterval, *r_ext_multitexture, *r_ext_compiled_vertex_array;
-cvar_t	*r_ext_texture_env_add, *r_allowExtensions;
+cvar_t	*r_ext_texture_env_add, *r_allowExtensions, *r_ext_compressed_textures;
 
 void	*qglMultiTexCoord2fARB, *qglActiveTextureARB, *qglClientActiveTextureARB;
 void	*qglLockArraysEXT, *qglUnlockArraysEXT;
@@ -986,6 +986,7 @@ static void Setup( void ) {
 	r_ext_compiled_vertex_array = CvarGet( "r_ext_compiled_vertex_array", "1", 0 );
 	r_ext_texture_env_add = CvarGet( "r_ext_texture_env_add", "1", 0 );
 	r_allowExtensions = CvarGet( "r_allowExtensions", "1", 0 );
+	r_ext_compressed_textures = CvarGet( "r_ext_compressed_textures", "1", 0 );
 	verbose = getenv( "Q3_TEST_VERBOSE" ) != NULL;
 }
 
@@ -1052,17 +1053,40 @@ static void TestAnisotropic( void ) {
 		&& CvarFind( "r_ext_texture_filter_anisotropic" ) != NULL,
 		"r_ext_texture_filter_anisotropic is registered" );
 	if ( r_ext_texture_filter_anisotropic ) {
-		Check( !strcmp( r_ext_texture_filter_anisotropic->string, "0" ),
-			"r_ext_texture_filter_anisotropic defaults to 0" );
+		/* on for the Radeon; r_textureAnisotropy stays 1, so it costs nothing until raised */
+		Check( !strcmp( r_ext_texture_filter_anisotropic->string, "1" ),
+			"r_ext_texture_filter_anisotropic defaults to 1" );
 		Check( ( r_ext_texture_filter_anisotropic->flags & ( CVAR_LATCH | CVAR_ARCHIVE ) )
 			== ( CVAR_LATCH | CVAR_ARCHIVE ), "r_ext_texture_filter_anisotropic is latched and archived" );
 	}
 	avail = CvarGet( "r_ext_texture_filter_anisotropic_avail", "", 0 );
 	Check( avail->integer == 1, "r_ext_texture_filter_anisotropic_avail is 1" );
-	/* ET: glConfig.anisotropicAvailable means in use, so it follows the cvar, which is 0 */
+	/* ET: glConfig.anisotropicAvailable means in use, so it follows the cvar */
+	Check( glConfig.anisotropicAvailable, "anisotropy is used by default" );
+	GLimp_Shutdown();
+	CheckReleased();
+
+	currentCase = "anisotropic-present-off";
+	ResetAll();
+	CvarSet( "r_ext_texture_filter_anisotropic", "0" );
+	glExtensions = "GL_ARB_multitexture GL_EXT_texture_filter_anisotropic";
+	Check( Init(), "GLimp_Init succeeds with the cvar off" );
+	CheckLive();
 	Check( !glConfig.anisotropicAvailable, "anisotropy is off while the cvar is 0" );
 	GLimp_Shutdown();
 	CheckReleased();
+	CvarSet( "r_ext_texture_filter_anisotropic", "1" );
+
+	currentCase = "anisotropic-extensions-off";
+	ResetAll();
+	CvarSet( "r_allowExtensions", "0" );
+	glExtensions = "GL_ARB_multitexture GL_EXT_texture_filter_anisotropic";
+	Check( Init(), "GLimp_Init succeeds with r_allowExtensions 0" );
+	CheckLive();
+	Check( !glConfig.anisotropicAvailable, "r_allowExtensions 0 turns anisotropy off" );
+	GLimp_Shutdown();
+	CheckReleased();
+	CvarSet( "r_allowExtensions", "1" );
 
 	currentCase = "anisotropic-present-on";
 	ResetAll();
@@ -1087,6 +1111,31 @@ static void TestAnisotropic( void ) {
 	GLimp_Shutdown();
 	CheckReleased();
 	CvarSet( "r_ext_texture_filter_anisotropic", "0" );
+}
+
+/* S3TC is taken as the Windows renderer takes it */
+static void S3tcCase( const char *name, const char *extensions, const char *cvar, const char *allow, int want ) {
+	currentCase = name;
+	ResetAll();
+	CvarSet( "r_ext_compressed_textures", cvar );
+	CvarSet( "r_allowExtensions", allow );
+	glExtensions = extensions;
+	Check( Init(), "GLimp_Init succeeds" );
+	CheckLive();
+	Check( glConfig.textureCompression == ( want ? TC_EXT_COMP_S3TC : TC_NONE ), "texture compression is as expected" );
+	GLimp_Shutdown();
+	CheckReleased();
+	CvarSet( "r_ext_compressed_textures", "1" );
+	CvarSet( "r_allowExtensions", "1" );
+}
+
+static void TestS3tc( void ) {
+	const char *with = "GL_ARB_multitexture GL_EXT_texture_compression_s3tc";
+
+	S3tcCase( "s3tc-present", with, "1", "1", 1 );
+	S3tcCase( "s3tc-cvar-off", with, "0", "1", 0 );
+	S3tcCase( "s3tc-extensions-off", with, "1", "0", 0 );
+	S3tcCase( "s3tc-absent", "GL_ARB_multitexture GL_S3_s3tc", "1", "1", 0 );
 }
 
 /* #34, and repeated vid_restart for #15 and #16 */
@@ -1757,6 +1806,7 @@ int main( void ) {
 	Setup();
 
 	TestAnisotropic();
+	TestS3tc();
 	TestRestartCycles();
 	TestBadMode();
 	TestConfirmSwitch();

@@ -548,14 +548,30 @@ static void GLimp_Extensions( void ) {
 		ri.Printf( PRINT_ALL, "...GL_EXT_texture_env_add not found\n" );
 	}
 
+	// GL_EXT_texture_compression_s3tc, as the Windows renderer takes it.
+	// GL_S3_s3tc stays unused there too. tr_image.c never compresses a mipmapped
+	// texture on __MACOS__, so only 2D art larger than 128x128 is compressed here.
+	glConfig.textureCompression = TC_NONE;
+	if ( strstr( extensions, "GL_EXT_texture_compression_s3tc" ) ) {
+		if ( r_ext_compressed_textures->integer && r_allowExtensions->integer ) {
+			glConfig.textureCompression = TC_EXT_COMP_S3TC;
+			ri.Printf( PRINT_ALL, "...using GL_EXT_texture_compression_s3tc\n" );
+		} else {
+			ri.Printf( PRINT_ALL, "...ignoring GL_EXT_texture_compression_s3tc\n" );
+		}
+	} else {
+		ri.Printf( PRINT_ALL, "...GL_EXT_texture_compression_s3tc not found\n" );
+	}
+
 	// GL_EXT_texture_filter_anisotropic
 	glConfig.anisotropicAvailable = qfalse;
 	if ( strstr( glConfig.extensions_string, "EXT_texture_filter_anisotropic" ) )
 	{
-		glConfig.anisotropicAvailable = r_ext_texture_filter_anisotropic->integer ? qtrue : qfalse;
+		// r_allowExtensions 0 turns it off too, as on Windows
+		glConfig.anisotropicAvailable = ( r_ext_texture_filter_anisotropic->integer && r_allowExtensions->integer ) ? qtrue : qfalse;
 		ri.Printf( PRINT_ALL, "...GL_EXT_texture_filter_anisotropic available\n" );
 
-		if ( r_ext_texture_filter_anisotropic->integer )
+		if ( glConfig.anisotropicAvailable )
 		{
 			ri.Printf( PRINT_ALL, "...using GL_EXT_texture_filter_anisotropic\n" );
 		}
@@ -1105,7 +1121,7 @@ void GLimp_Init( void ) {
 	r_device = ri.Cvar_Get( "r_device", "0", CVAR_LATCH | CVAR_ARCHIVE );
 	r_ext_transform_hint = ri.Cvar_Get( "r_ext_transform_hint", "1", CVAR_LATCH | CVAR_ARCHIVE );
 	r_ext_texture_filter_anisotropic = ri.Cvar_Get(
-		"r_ext_texture_filter_anisotropic", "0", CVAR_LATCH | CVAR_ARCHIVE );
+		"r_ext_texture_filter_anisotropic", "1", CVAR_LATCH | CVAR_ARCHIVE );
 	r_displayConfirm = ri.Cvar_Get( "r_displayConfirm", "0", 0 );
 	r_displayConfirmed = ri.Cvar_Get( "r_displayConfirmed", "", CVAR_ARCHIVE );
 	glimp_lastResort = qfalse;
