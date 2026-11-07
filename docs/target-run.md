@@ -76,6 +76,10 @@ Multitexture and compiled vertex arrays are on where the driver has them, and th
 
 ## Stages
 
+On the emulator (ClassicMac, 512 MB) stages 1 to 3 pass, with sound muted there, and stage 5
+against a `legacy` server in the same VM. Its colors are wrong in a window with 32-bit textures,
+which is the emulator's, and it says nothing about a real card or real speed.
+
 ### 1. Window, no network, no sound
 
 `METParms.txt`:

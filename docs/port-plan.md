@@ -51,6 +51,12 @@ All are client-side and none changes the wire format.
 | E4 | ~~Raise `MAX_RELIABLE_COMMANDS` to 256~~ | Not needed. The GPL source is already 256; the first audit read the wrong header. | Closed |
 | E5 | **Follow `cm_optimizePatchPlanes`** | ETL servers default to 0 and publish it in systeminfo; 2.60 always behaves as 1. Prediction could differ on curved surfaces. | Inferred, not seen in the runs. Measure before porting |
 
+Found in stage 3, not yet fixed: the mod's menus focus an edit field by a name they build from two
+strings, such as `"efleft" "Profile Name:"`, and this engine logs `Script_SetEditFocus: Can't find
+efleftProfile Name:`. The x86 host build does the same, so it is the engine's script parser, not the
+Mac. Clicking the field still edits it, so a profile can be created, but keys typed before that go
+to bindings (`t` is chat).
+
 Expected and left alone: `OLD_CLIENT` shows a "SECURITY INFORMATION: You are
 running old software" label and an `UPGRADE NOW` button, since `etLegacyClient` is
 0. Removing them means changing the mod's menus or setting `etVersion`, which turns
