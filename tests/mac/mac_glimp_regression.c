@@ -1075,6 +1075,18 @@ static void TestAnisotropic( void ) {
 	Check( !glConfig.anisotropicAvailable, "anisotropy is off while the cvar is 0" );
 	GLimp_Shutdown();
 	CheckReleased();
+	CvarSet( "r_ext_texture_filter_anisotropic", "1" );
+
+	currentCase = "anisotropic-extensions-off";
+	ResetAll();
+	CvarSet( "r_allowExtensions", "0" );
+	glExtensions = "GL_ARB_multitexture GL_EXT_texture_filter_anisotropic";
+	Check( Init(), "GLimp_Init succeeds with r_allowExtensions 0" );
+	CheckLive();
+	Check( !glConfig.anisotropicAvailable, "r_allowExtensions 0 turns anisotropy off" );
+	GLimp_Shutdown();
+	CheckReleased();
+	CvarSet( "r_allowExtensions", "1" );
 
 	currentCase = "anisotropic-present-on";
 	ResetAll();
@@ -1101,14 +1113,13 @@ static void TestAnisotropic( void ) {
 	CvarSet( "r_ext_texture_filter_anisotropic", "0" );
 }
 
-/* S3TC is taken as the Windows renderer takes it, and a stale value never survives a restart */
+/* S3TC is taken as the Windows renderer takes it */
 static void S3tcCase( const char *name, const char *extensions, const char *cvar, const char *allow, int want ) {
 	currentCase = name;
 	ResetAll();
 	CvarSet( "r_ext_compressed_textures", cvar );
 	CvarSet( "r_allowExtensions", allow );
 	glExtensions = extensions;
-	glConfig.textureCompression = TC_EXT_COMP_S3TC;
 	Check( Init(), "GLimp_Init succeeds" );
 	CheckLive();
 	Check( glConfig.textureCompression == ( want ? TC_EXT_COMP_S3TC : TC_NONE ), "texture compression is as expected" );

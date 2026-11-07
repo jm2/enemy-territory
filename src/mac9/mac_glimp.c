@@ -549,7 +549,8 @@ static void GLimp_Extensions( void ) {
 	}
 
 	// GL_EXT_texture_compression_s3tc, as the Windows renderer takes it.
-	// GL_S3_s3tc stays unused there too.
+	// GL_S3_s3tc stays unused there too. tr_image.c never compresses a mipmapped
+	// texture on __MACOS__, so only 2D art larger than 128x128 is compressed here.
 	glConfig.textureCompression = TC_NONE;
 	if ( strstr( extensions, "GL_EXT_texture_compression_s3tc" ) ) {
 		if ( r_ext_compressed_textures->integer && r_allowExtensions->integer ) {
@@ -566,10 +567,11 @@ static void GLimp_Extensions( void ) {
 	glConfig.anisotropicAvailable = qfalse;
 	if ( strstr( glConfig.extensions_string, "EXT_texture_filter_anisotropic" ) )
 	{
-		glConfig.anisotropicAvailable = r_ext_texture_filter_anisotropic->integer ? qtrue : qfalse;
+		// r_allowExtensions 0 turns it off too, as on Windows
+		glConfig.anisotropicAvailable = ( r_ext_texture_filter_anisotropic->integer && r_allowExtensions->integer ) ? qtrue : qfalse;
 		ri.Printf( PRINT_ALL, "...GL_EXT_texture_filter_anisotropic available\n" );
 
-		if ( r_ext_texture_filter_anisotropic->integer )
+		if ( glConfig.anisotropicAvailable )
 		{
 			ri.Printf( PRINT_ALL, "...using GL_EXT_texture_filter_anisotropic\n" );
 		}

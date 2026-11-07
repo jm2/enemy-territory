@@ -50,3 +50,15 @@ awk -v file="$Q3_TEST_ROOT/src/mac9/mac_glimp.c" '
 ASAN_OPTIONS=detect_leaks=${Q3_TEST_DETECT_LEAKS:-1}:halt_on_error=1 \
 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
     "$Q3_TEST_DIR/mac_glimp"
+
+# The fixture runs only GLimp_Init, but R_Register registers the anisotropy cvar first, so
+# tr_init.c's default is the one a Mac gets. Preprocess its registration as the Mac build does.
+Q3_TEST_ANISO="$(awk '{ sub(/\r$/, "") } /^#ifdef __MACOS__/ { buf = ""; keep = 1 } keep { buf = buf $0 "\n" }
+    keep && /^#endif/ { if ( buf ~ /r_ext_texture_filter_anisotropic/ ) printf "%s", buf; keep = 0 }' \
+    "$Q3_TEST_ROOT/src/renderer/tr_init.c" | "${CC:-cc}" -E -P -D__MACOS__ - |
+    grep -o 'Cvar_Get( "r_ext_texture_filter_anisotropic", "[^"]*"' || true)"
+if [ "$Q3_TEST_ANISO" != 'Cvar_Get( "r_ext_texture_filter_anisotropic", "1"' ]; then
+    echo "FAIL: tr_init.c does not default r_ext_texture_filter_anisotropic to 1 on Mac (got: $Q3_TEST_ANISO)" >&2
+    exit 1
+fi
+echo "tr_init.c defaults r_ext_texture_filter_anisotropic to 1 on Mac"
