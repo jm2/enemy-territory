@@ -11,7 +11,9 @@ it, and what has not been done. A cross-build proves only that code compiles.
 | Truncated or hostile bit reads and writes (`MSG_ReadBits`, `MSG_WriteBits`, Huffman) | ETL `bb2c0e3e`, ioquake3 `d2b1d124`, `1e309787` (including its partial-bits `>=`, which ETL lacks) | `tests/security/test_msg.c` under ASan and UBSan. Fails on the original tree at a misaligned load in `msg.c` |
 | Unaligned OOB integers | Q3A | Same test. OOB fields are assembled from bytes |
 | Delta field counts past the table, or -1 at end of message | ETL `msg.c` | `test_bad_field_counts` |
-| Fragment length, reassembly into `maxsize - 4` | Q3A | Code review; no dedicated test |
+| Fragment length, reassembly into `maxsize - 4` | Q3A `7681d890` | Code review; no dedicated test. Its larger receive buffer is not taken: ET: Legacy's client receives into exactly `MAX_MSGLEN` too. `FRAGMENT_BIT` is unsigned, as there, with the same bit on the wire |
+| Oversized packet leaking its zone block in `Com_EventLoop` | Q3A (`break` for `continue`) | `tests/mac/run_mac_net_tests.sh`: an oversized packet is dropped and every event block freed once, under ASan's leak check |
+| A quoted `+` splitting a startup command | Quake III 1.32 as released; ET 2.60 computes the quote state and never uses it | `tests/mac/run_mac_startup_parms_tests.sh` |
 | Gamestate `clientNum` range, snapshot area mask length | Q3A #40, ioquake3 `99abd01c` | Code review; no dedicated test |
 | Format strings with network text | ETL `62ff3687`, `58a49288`; ioquake3 `59c231c6` | The Mac build fails on any such call (`-Werror=format-security`). 16 sites fixed |
 | Client file overwrite through server pak names, and path traversal including HFS `::` | CVE-2006-3324 (ioquake3 `813a6ecd`); Q3A #262 | `tests/security/test_path.c`, with `/` and `:` separators |

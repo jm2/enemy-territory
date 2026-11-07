@@ -58,11 +58,21 @@ Delete it between builds if the memory defaults changed.
 ## Logs
 
 As Quake III's, renamed: `etboot.log` and `etboot.prev.log` beside the application.
-Copy them out before launching again.
+Copy them out before launching again. The log starts before `METParms.txt` is read, so a
+launch that stops while reading it still leaves one.
 
 ```sh
 python3 mac_symbolize.py etboot.log release_mac/symbols/ET.xcoff
 ```
+
+A crash logs whether the fault was a read, write or execute, and for a memory fault its address.
+Trust `fault address` over `DAR`, `DSISR` and `MSR`, which were wrong under emulation.
+
+Commands typed at the console in a game need a leading `/`: plain text is chat.
+
+Multitexture and compiled vertex arrays are on where the driver has them, and the log says
+`...using` for each. If something renders wrongly or hangs, `+set r_ext_multitexture 0` and
+`+set r_ext_compiled_vertex_array 0` turn them off one at a time.
 
 ## Stages
 
@@ -102,10 +112,27 @@ Pass: `has joined the Allied team`, a second `CL_InitCGame` from the `vid_restar
 As stage 1, without `r_fullscreen`. It should return to the desktop with the right
 colors, after a quit and after a fatal error.
 
+The log lists the refresh rates the display offers for a mode, and the one used, before the
+display changes. The game takes the fastest rate up to 85 Hz that DrawSprocket trusts, or else
+the slowest trusted rate above that. If it trusts none, it takes the slowest rate of at least
+60 Hz, or the fastest below 60 Hz if that is all there is. `+set r_displayRefresh 85` asks for
+one.
+
+**If DrawSprocket doesn't trust the mode, the game asks whether you can read a prompt.** Press Y
+to keep it, and it is not asked again. N, Escape or 15 seconds without a Y put the display back
+and fall back to 640x480x16. If the monitor loses sync, wait, and don't press Y blind. On the
+Quake III port, a Mac mini G4 with a CRT went out of range at 1024x768 before this prompt
+existed. The fallback isn't asked about and ignores `r_displayRefresh`; if it is out of range
+too, restart the Mac and set a mode in `METParms.txt`. `+set r_displayConfirm 1` asks about
+every mode, to test the prompt; clear `r_displayConfirmed` or start with `safe` to be asked
+about a mode already confirmed.
+
 ### 3. Mouse and keyboard, menus
 
 No `+exec`. Expect the mod's menus and the `SECURITY INFORMATION` label, which is
 expected on this engine. Create a profile, then start `oasis` from the menu and play.
+The log names each input device and its elements. `using ... axis element(s)` means no device
+reports delta movement, so axes are read as mouse movement, and the view may turn on its own.
 
 ### 4. Sound
 
@@ -114,4 +141,5 @@ Add `+set s_initsound 1`, and try `snd_restart` several times.
 ### 5. Network
 
 Leave out `net_noudp`, and `connect` to a `legacy` v2.86.2 server. A server on any
-other release is refused with a message.
+other release is refused with a message. `Dropped a packet with no source address` is harmless:
+such packets are not used. Send it along with its numbers, as the cause is not known.

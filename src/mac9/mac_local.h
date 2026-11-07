@@ -367,6 +367,7 @@ void GLimp_ReleaseDisplay( void );
 
 // mac_crash.c
 void Sys_InstallCrashHandler( void );
+void Sys_RemoveCrashHandler( void );
 
 // mac_console.c
 

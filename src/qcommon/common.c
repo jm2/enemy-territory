@@ -512,7 +512,7 @@ void Com_ParseCommandLine( char *commandLine ) {
 		}
 		// look for a + seperating character
 		// if commandLine came from a file, we might have real line seperators
-		if ( *commandLine == '+' || *commandLine == '\n' || *commandLine == '\r' ) {
+		if ( ( *commandLine == '+' && !inq ) || *commandLine == '\n' || *commandLine == '\r' ) {
 			if ( com_numConsoleLines == MAX_CONSOLE_LINES ) {
 				return;
 			}
@@ -2357,7 +2357,7 @@ int Com_EventLoop( void ) {
 			// enough to hold fragment reassembly
 			if ( (unsigned)buf.cursize > buf.maxsize ) {
 				Com_Printf( "Com_EventLoop: oversize packet\n" );
-				continue;
+				break;      // drop it; its block is freed below
 			}
 			memcpy( buf.data, ( byte * )( (netadr_t *)ev.evPtr + 1 ), buf.cursize );
 			if ( com_sv_running->integer ) {

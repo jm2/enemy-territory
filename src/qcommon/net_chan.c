@@ -61,7 +61,7 @@ to the new value before sending out any replies.
 // two ints and a short
 #define PACKET_HEADER           10
 
-#define FRAGMENT_BIT    ( 1 << 31 )
+#define FRAGMENT_BIT    ( 1U << 31 )
 
 cvar_t      *showpackets;
 cvar_t      *showdrop;
