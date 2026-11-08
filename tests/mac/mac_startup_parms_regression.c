@@ -360,6 +360,41 @@ static void TestFileBounds( void ) {
 	CheckCommandLine( "safe", 4 );
 }
 
+/* The command line goes to etboot.log and the crash report, which people
+ * attach to bug reports, so password cvar values are masked there. */
+static void TestMaskSecrets( void ) {
+	static const char *cases[][2] = {
+		{ "+set rconpassword hunter2 +map q3dm1", "+set rconpassword ******* +map q3dm1" },
+		{ "+set g_password \"two words\"\n+set sv_hostname Mine",
+		  "+set g_password \"*** *****\"\n+set sv_hostname Mine" },
+		/* "set" takes every remaining word as the value */
+		{ "+set g_password my secret phrase +map q3dm1", "+set g_password ** ****** ****** +map q3dm1" },
+		{ "set rconpassword a b\r\nmap q3dm1", "set rconpassword * *\r\nmap q3dm1" },
+		/* a line break ends the console line even inside an open quote, as in Com_ParseCommandLine */
+		{ "+set rconpassword \"abc\n+map q3dm1\n+set sv_hostname Foo",
+		  "+set rconpassword \"***\n+map q3dm1\n+set sv_hostname Foo" },
+		/* a quoted '+' does not end the value */
+		{ "+set g_password \"a+b\" +map q3dm1", "+set g_password \"***\" +map q3dm1" },
+		{ "+sv_privatePassword x +RCONPASSWORD s3cret", "+sv_privatePassword * +RCONPASSWORD ******" },
+		{ "safe\n+seta cl_password abc", "safe\n+seta cl_password ***" },
+		{ "+set rconpassword", "+set rconpassword" },
+		{ "+set rconpassword \"unterminated", "+set rconpassword \"************" },
+		{ "+set s_initsound 1 +set com_hunkMegs 64", "+set s_initsound 1 +set com_hunkMegs 64" },
+		{ "", "" },
+	};
+	char	line[COMMAND_SIZE];
+	int		i;
+
+	for ( i = 0 ; i < (int)( sizeof( cases ) / sizeof( cases[0] ) ) ; i++ ) {
+		Q_strncpyz( line, cases[i][0], sizeof( line ) );
+		Sys_MaskStartupSecrets( line );
+		if ( strcmp( line, cases[i][1] ) ) {
+			fprintf( stderr, "masked \"%s\" as \"%s\"\n", cases[i][0], line );
+		}
+		Check( !strcmp( line, cases[i][1] ), "password cvar values are masked in the logged command line" );
+	}
+}
+
 int main( int argc, char **argv ) {
 	if ( argc != 2 ) {
 		fprintf( stderr, "usage: %s scratch-directory\n", argv[0] );
@@ -375,6 +410,7 @@ int main( int argc, char **argv ) {
 	TestQuotingAndBytes();
 	TestArgumentBounds();
 	TestFileBounds();
+	TestMaskSecrets();
 
 	free( commandLine );
 	free( text );

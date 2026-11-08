@@ -32,6 +32,7 @@ Q3_TEST_EXTRACT '^static int[[:space:]]+Sys_AppendStartupText[[:space:]]*[(]' "$
 Q3_TEST_EXTRACT '^static int[[:space:]]+Sys_ReadStartupFile[[:space:]]*[(]' "$Q3_TEST_MAIN" "$Q3_TEST_DIR/mac_main_extracted.c"
 Q3_TEST_EXTRACT '^static int[[:space:]]+Sys_StartupError[[:space:]]*[(]' "$Q3_TEST_MAIN" "$Q3_TEST_DIR/mac_main_extracted.c"
 Q3_TEST_EXTRACT '^static void[[:space:]]+Sys_JoinHFSPath[[:space:]]*[(]' "$Q3_TEST_MAIN" "$Q3_TEST_DIR/mac_main_extracted.c"
+Q3_TEST_EXTRACT '^static void[[:space:]]+Sys_MaskStartupSecrets[[:space:]]*[(]' "$Q3_TEST_MAIN" "$Q3_TEST_DIR/mac_main_extracted.c"
 Q3_TEST_EXTRACT '^int[[:space:]]+main[[:space:]]*[(]' "$Q3_TEST_MAIN" "$Q3_TEST_DIR/mac_main_extracted.c"
 Q3_TEST_EXTRACT '^void[[:space:]]+Sys_Error[[:space:]]*[(]' "$Q3_TEST_MAIN" "$Q3_TEST_DIR/mac_main_extracted.c"
 Q3_TEST_EXTRACT '^int[[:space:]]+Sys_ConsoleWanted[[:space:]]*[(]' "$Q3_TEST_CONSOLE" "$Q3_TEST_DIR/mac_console_extracted.c"
