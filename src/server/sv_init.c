@@ -80,10 +80,63 @@ void SV_SetConfigstring( int index, const char *val ) {
 	sv.configstringsmodified[index] = qtrue;
 }
 
-void SV_UpdateConfigStrings( void ) {
-	int len, i, index;
-	client_t    *client;
+/*
+===============
+SV_SendConfigstring
+
+Send configstring index to one client: as one cs command, or in bcs chunks
+when it is too long for one. Some clients do not get some configstrings.
+===============
+*/
+static void SV_SendConfigstring( client_t *client, int index ) {
+	int len;
 	int maxChunkSize = MAX_STRING_CHARS - 24;
+
+	// do not always send server info to all clients
+	if ( index == CS_SERVERINFO && client->gentity && ( client->gentity->r.svFlags & SVF_NOSERVERINFO ) ) {
+		return;
+	}
+
+	// RF, don't send to bot/AI
+	// Gordon: Note: might want to re-enable later for bot support
+	// RF, re-enabled
+	// Arnout: removed hardcoded gametype
+	// Arnout: added coop
+	if ( ( SV_GameIsSinglePlayer() || SV_GameIsCoop() ) && client->gentity && ( client->gentity->r.svFlags & SVF_BOT ) ) {
+		return;
+	}
+
+	len = strlen( sv.configstrings[ index ] );
+	if ( len >= maxChunkSize ) {
+		int sent = 0;
+		int remaining = len;
+		char    *cmd;
+		char buf[MAX_STRING_CHARS];
+
+		while ( remaining > 0 ) {
+			if ( sent == 0 ) {
+				cmd = "bcs0";
+			} else if ( remaining < maxChunkSize )    {
+				cmd = "bcs2";
+			} else {
+				cmd = "bcs1";
+			}
+			Q_strncpyz( buf, &sv.configstrings[ index ][sent], maxChunkSize );
+
+			SV_SendServerCommand( client, "%s %i \"%s\"\n", cmd, index, buf );
+
+			sent += ( maxChunkSize - 1 );
+			remaining -= ( maxChunkSize - 1 );
+		}
+	} else {
+		// standard cs, just send it
+		SV_SendServerCommand( client, "cs %i \"%s\"\n", index, sv.configstrings[ index ] );
+	}
+}
+
+void SV_UpdateConfigStrings( void ) {
+	int i, index;
+	client_t    *client;
 
 	for ( index = 0; index < MAX_CONFIGSTRINGS; index++ ) {
 
@@ -97,51 +150,42 @@ void SV_UpdateConfigStrings( void ) {
 		if ( sv.state == SS_GAME || sv.restarting ) {
 			// send the data to all relevent clients
 			for ( i = 0, client = svs.clients; i < sv_maxclients->integer ; i++, client++ ) {
-				if ( client->state < CS_PRIMED ) {
-					continue;
-				}
-				// do not always send server info to all clients
-				if ( index == CS_SERVERINFO && client->gentity && ( client->gentity->r.svFlags & SVF_NOSERVERINFO ) ) {
-					continue;
-				}
-
-				// RF, don't send to bot/AI
-				// Gordon: Note: might want to re-enable later for bot support
-				// RF, re-enabled
-				// Arnout: removed hardcoded gametype
-				// Arnout: added coop
-				if ( ( SV_GameIsSinglePlayer() || SV_GameIsCoop() ) && client->gentity && ( client->gentity->r.svFlags & SVF_BOT ) ) {
-					continue;
-				}
-
-				len = strlen( sv.configstrings[ index ] );
-				if ( len >= maxChunkSize ) {
-					int sent = 0;
-					int remaining = len;
-					char    *cmd;
-					char buf[MAX_STRING_CHARS];
-
-					while ( remaining > 0 ) {
-						if ( sent == 0 ) {
-							cmd = "bcs0";
-						} else if ( remaining < maxChunkSize )    {
-							cmd = "bcs2";
-						} else {
-							cmd = "bcs1";
-						}
-						Q_strncpyz( buf, &sv.configstrings[ index ][sent], maxChunkSize );
-
-						SV_SendServerCommand( client, "%s %i \"%s\"\n", cmd, index, buf );
-
-						sent += ( maxChunkSize - 1 );
-						remaining -= ( maxChunkSize - 1 );
+				// A client loading the map acknowledges nothing until it is
+				// in the world, so every command sent meanwhile stays queued,
+				// and MAX_RELIABLE_COMMANDS of them drop it with "Server
+				// command overflow". Other players changing userinfo, teams
+				// or votes could do that to anyone who loads slowly. Mark the
+				// change instead, and send the latest value once when the
+				// client enters the world (ioquake3's csUpdated).
+				if ( client->state < CS_ACTIVE ) {
+					if ( client->state == CS_PRIMED ) {
+						client->csUpdated[index] = 1;
 					}
-				} else {
-					// standard cs, just send it
-					SV_SendServerCommand( client, "cs %i \"%s\"\n", index, sv.configstrings[ index ] );
+					continue;
 				}
+				SV_SendConfigstring( client, index );
 			}
 		}
+	}
+}
+
+/*
+===============
+SV_UpdateClientConfigstrings
+
+Send a client entering the world the configstrings that changed while it
+was loading (CS_PRIMED), each once, at its current value.
+===============
+*/
+void SV_UpdateClientConfigstrings( client_t *client ) {
+	int index;
+
+	for ( index = 0 ; index < MAX_CONFIGSTRINGS ; index++ ) {
+		if ( !client->csUpdated[index] ) {
+			continue;
+		}
+		client->csUpdated[index] = 0;
+		SV_SendConfigstring( client, index );
 	}
 }
 
@@ -185,7 +229,7 @@ void SV_SetUserinfo( int index, const char *val ) {
 	}
 
 	Q_strncpyz( svs.clients[index].userinfo, val, sizeof( svs.clients[ index ].userinfo ) );
-	Q_strncpyz( svs.clients[index].name, Info_ValueForKey( val, "name" ), sizeof( svs.clients[index].name ) );
+	SV_CopyClientName( svs.clients[index].name, Info_ValueForKey( val, "name" ), sizeof( svs.clients[index].name ) );
 }
 
 

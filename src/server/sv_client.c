@@ -615,6 +615,9 @@ void SV_SendClientGameState( client_t *client ) {
 	// notice that it is from a different serverid and that the
 	// gamestate message was not just sent, forcing a retransmit
 	client->gamestateMessageNum = client->netchan.outgoingSequence;
+	client->gamestateOwed = qfalse;
+	// the gamestate holds every configstring as it is now
+	memset( client->csUpdated, 0, sizeof( client->csUpdated ) );
 
 	MSG_Init( &msg, msgBuffer, sizeof( msgBuffer ) );
 
@@ -689,8 +692,29 @@ void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {
 	client->nextSnapshotTime = svs.time;    // generate a snapshot immediately
 	client->lastUsercmd = *cmd;
 
+	// what changed while it was loading
+	SV_UpdateClientConfigstrings( client );
+
 	// call the game begin function
 	VM_Call( gvm, GAME_CLIENT_BEGIN, client - svs.clients );
+}
+
+/*
+==================
+SV_ClientMapRestarted
+
+How SV_MapRestart_f puts every client at CS_CONNECTED or above into the
+restarted world. A client still downloading or loading has not entered the
+world on a gamestate yet: its donedl, or a dropped gamestate, must still get
+it the new one (SV_DoneDownload_f). A second map_restart before it catches
+up must not take that back.
+==================
+*/
+void SV_ClientMapRestarted( client_t *client ) {
+	if ( client->state != CS_ACTIVE ) {
+		client->gamestateOwed = qtrue;
+	}
+	SV_ClientEnterWorld( client, &client->lastUsercmd );
 }
 
 /*
@@ -751,6 +775,14 @@ Downloads are finished
 ==================
 */
 void SV_DoneDownload_f( client_t *cl ) {
+	// An active client is in the world already. A new gamestate would make
+	// the game run ClientBegin for it again: a respawn with no death. ETL
+	// (1916f7de3) and ioquake3 ignore it too. The exception is a client
+	// SV_MapRestart_f made active while it was still downloading or loading,
+	// which waits for this gamestate.
+	if ( cl->state == CS_ACTIVE && !cl->gamestateOwed ) {
+		return;
+	}
 	Com_DPrintf( "clientDownload: %s Done\n", cl->name );
 	// resend the game state to update any clients that entered during the download
 	SV_SendClientGameState( cl );
@@ -766,6 +798,16 @@ the same as cl->downloadClientBlock
 */
 void SV_NextDownload_f( client_t *cl ) {
 	int block = atoi( Cmd_Argv( 1 ) );
+
+	// Only a block the server has read can have been received. Acknowledging
+	// further ahead, which a packet of chained nextdl commands could, pushed
+	// downloadClientBlock past downloadCurrentBlock: the stale block sizes
+	// accepted every ack, and SV_WriteDownloadToClient then read every block
+	// up to the new window in one frame. Such an ack is ignored, as is any
+	// nextdl with no download.
+	if ( !*cl->downloadName || block >= cl->downloadCurrentBlock ) {
+		return;
+	}
 
 	if ( block == cl->downloadClientBlock ) {
 		Com_DPrintf( "clientDownload: %d : client acknowledge of block %d\n", (int)( cl - svs.clients ), block );
@@ -1349,6 +1391,26 @@ static void SV_ResetPureClient_f( client_t *cl ) {
 
 /*
 =================
+SV_CopyClientName
+
+The engine's copy of a client's name, without control characters: it goes
+into status replies and console lines, where a line break would forge a new
+line. Color codes are printable and stay; the game cleans its own copy.
+=================
+*/
+void SV_CopyClientName( char *dest, const char *src, int destsize ) {
+	int i, j;
+
+	for ( i = j = 0 ; src[i] && j < destsize - 1 ; i++ ) {
+		if ( (unsigned char)src[i] >= ' ' && src[i] != 127 ) {
+			dest[j++] = src[i];
+		}
+	}
+	dest[j] = '\0';
+}
+
+/*
+=================
 SV_UserinfoChanged
 
 Pull specific info from a newly changed userinfo string
@@ -1360,7 +1422,7 @@ void SV_UserinfoChanged( client_t *cl ) {
 	int i;
 
 	// name for C code
-	Q_strncpyz( cl->name, Info_ValueForKey( cl->userinfo, "name" ), sizeof( cl->name ) );
+	SV_CopyClientName( cl->name, Info_ValueForKey( cl->userinfo, "name" ), sizeof( cl->name ) );
 
 	// rate command
 
@@ -1620,6 +1682,13 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 		return;
 	}
 
+	// only a client that has loaded a gamestate makes usercmds (one that is
+	// downloading or lost its gamestate makes none), so one in the world
+	// sending them is owed nothing, whatever serverId it claims
+	if ( cl->state == CS_ACTIVE ) {
+		cl->gamestateOwed = qfalse;
+	}
+
 	if ( cmdCount > MAX_PACKET_USERCMDS ) {
 		Com_Printf( "cmdCount > MAX_PACKET_USERCMDS\n" );
 		return;
@@ -1648,12 +1717,13 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 	// catch the no-cp-yet situation before SV_ClientEnterWorld
 	// if CS_ACTIVE, then it's time to trigger a new gamestate emission
 	// if not, then we are getting remaining parasite usermove commands, which we should ignore
+	// Retail resent the gamestate here to a client in the world without a
+	// cp, but "vdr" (sent before the cp of every vid_restart) leaves one so
+	// too, and a new gamestate would run ClientBegin for it again
+	// (SV_DoneDownload_f). Its usercmds wait for the cp instead. A client
+	// map_restart made active before its cp sends the cp ahead of its first
+	// usercmd on the new serverId, which the netchan keeps resending.
 	if ( sv_pure->integer != 0 && cl->pureAuthentic == 0 && !cl->gotCP ) {
-		if ( cl->state == CS_ACTIVE ) {
-			// we didn't get a cp yet, don't assume anything and just send the gamestate all over again
-			Com_DPrintf( "%s: didn't get cp command, resending gamestate\n", cl->name );
-			SV_SendClientGameState( cl );
-		}
 		return;
 	}
 
@@ -1765,6 +1835,13 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 		cl->reliableAcknowledge = cl->reliableSequence;
 		return;
 	}
+	// a packet on the current serverId comes from a client that has caught
+	// up with the map_restart, so it is owed no gamestate any more (a
+	// downloading client keeps its old serverId until it gets one)
+	if ( serverId == sv.serverId ) {
+		cl->gamestateOwed = qfalse;
+	}
+
 	// if this is a usercmd from a previous gamestate,
 	// ignore it or retransmit the current gamestate
 	//
@@ -1784,8 +1861,11 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 			return;
 		}
 		// if we can tell that the client has dropped the last
-		// gamestate we sent them, resend it
-		if ( cl->messageAcknowledge > cl->gamestateMessageNum ) {
+		// gamestate we sent them, resend it. Not to a client in the world,
+		// for the reason SV_DoneDownload_f gives: an old serverId would
+		// otherwise respawn it (ETL 5b72751f5 and ioquake3 check it too).
+		if ( ( cl->state != CS_ACTIVE || cl->gamestateOwed ) &&
+			 cl->messageAcknowledge > cl->gamestateMessageNum ) {
 			Com_DPrintf( "%s : dropped gamestate, resending\n", cl->name );
 			SV_SendClientGameState( cl );
 		}
