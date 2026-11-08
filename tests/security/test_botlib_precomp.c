@@ -638,6 +638,39 @@ static void Fragmented( void ) {
 	Finish( source );
 }
 
+static void FragmentedHandle( void ) {
+	pc_token_t pc;
+	int handle, i, j, reads;
+
+	/* the same file through the module API: once the source has failed for
+	   memory, a further read must hand back an empty string, not the
+	   uninitialised stack token PC_ReadTokenHandle copied before */
+	Begin();
+	for ( i = 0; i < 1500; i++ ) {
+		Append( "#define A%d_", i );
+		for ( j = 0; j < 500; j++ ) Append( "a" );
+		Append( "\n#define B%d x\n", i );
+	}
+	for ( i = 0; i < 1500; i++ ) {
+		Append( "#undef A%d_", i );
+		for ( j = 0; j < 500; j++ ) Append( "a" );
+		Append( "\n" );
+	}
+	Append( "#define C" );
+	for ( i = 0; i < 6000; i++ ) Append( " x" );
+	Append( "\nmarker C\n" );
+	AddFile( "fragment2.menu", text );
+	handle = LOAD( "fragment2.menu" );
+	Check( handle > 0, "the file loads" );
+	for ( reads = 0; reads < 100000 && PC_ReadTokenHandle( handle, &pc ); reads++ ) {
+	}
+	Check( reads < 100000, "the source fails" );
+	memset( pc.string, 'Z', sizeof( pc.string ) );
+	Check( !PC_ReadTokenHandle( handle, &pc ), "a read after the failure fails" );
+	Check( pc.string[0] == '\0', "and returns an empty string" );
+	PC_FreeSourceHandle( handle );
+}
+
 static void RecursiveIncludes( void ) {
 	source_t *source;
 	int i;
@@ -763,6 +796,7 @@ static void RunHandles( int a ) { (void)a; Handles(); }
 static void RunEmptyDefines( int a ) { (void)a; EmptyDefines(); }
 static void RunRecursive( int a ) { (void)a; RecursiveIncludes(); }
 static void RunFragmented( int a ) { (void)a; Fragmented(); }
+static void RunFragmentedHandle( int a ) { (void)a; FragmentedHandle(); }
 
 static const testcase_t cases[] = {
 	{ "long source and include names are refused", RunLongNames, 0 },
@@ -790,6 +824,7 @@ static const testcase_t cases[] = {
 	{ "120000 empty definitions are refused before the zone runs out", RunEmptyDefines, 0 },
 	{ "300 recursive includes of a file count against the include budget", RunRecursive, 0 },
 	{ "a fragmented zone refuses the source instead of failing fatally", RunFragmented, 0 },
+	{ "a module read after an out-of-memory failure gets an empty token", RunFragmentedHandle, 0 },
 };
 
 static const testcase_t *current;

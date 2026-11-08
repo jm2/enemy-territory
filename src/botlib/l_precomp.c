@@ -1721,8 +1721,10 @@ define_t *PC_CopyDefine( source_t *source, define_t *define ) {
 	//the define is not linked
 	newdefine->next = NULL;
 	newdefine->hashnext = NULL;
-	//copy the define tokens
+	//copy the define tokens; parms is cleared first, as a failed copy frees
+	//the define (its memory is not cleared)
 	newdefine->tokens = NULL;
+	newdefine->parms = NULL;
 	for ( lasttoken = NULL, token = define->tokens; token; token = token->next )
 	{
 		newtoken = PC_SourceCopyToken( source, token );
@@ -3088,7 +3090,11 @@ static int PC_ReadTokenNoJoin( source_t *source, token_t *token ) {
 int PC_ReadToken( source_t *source, token_t *token ) {
 	token_t newtoken;
 
-	if ( source->memoryerror || !PC_ReadTokenNoJoin( source, token ) ) {
+	if ( source->memoryerror ) {
+		token->string[0] = '\0';     // callers copy the token out even on failure
+		return qfalse;
+	}
+	if ( !PC_ReadTokenNoJoin( source, token ) ) {
 		return qfalse;
 	}
 	// concatenate strings that are behind each other; this loop gives the
@@ -3537,8 +3543,9 @@ int PC_ReadTokenHandle( int handle, pc_token_t *pc_token ) {
 		return 0;
 	}
 
+	memset( &token, 0, sizeof( token ) );
 	ret = PC_ReadToken( sourceFiles[handle], &token );
-	strcpy( pc_token->string, token.string );
+	Q_strncpyz( pc_token->string, token.string, sizeof( pc_token->string ) );
 	pc_token->type = token.type;
 	pc_token->subtype = token.subtype;
 	pc_token->intvalue = token.intvalue;
