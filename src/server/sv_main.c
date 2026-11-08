@@ -282,7 +282,7 @@ void SV_MasterHeartbeat( const char *hbname ) {
 				sv_master[i]->modified = qfalse;
 				continue;
 			}
-			if ( !strstr( ":", sv_master[i]->string ) ) {
+			if ( !strchr( sv_master[i]->string, ':' ) ) {    // a port in the name stays (Quake III 7582058f)
 				adr[i].port = BigShort( PORT_MASTER );
 			}
 			Com_Printf( "%s resolved to %i.%i.%i.%i:%i\n", sv_master[i]->string,
@@ -339,7 +339,7 @@ void SV_MasterGameCompleteStatus() {
 				sv_master[i]->modified = qfalse;
 				continue;
 			}
-			if ( !strstr( ":", sv_master[i]->string ) ) {
+			if ( !strchr( sv_master[i]->string, ':' ) ) {    // a port in the name stays (Quake III 7582058f)
 				adr[i].port = BigShort( PORT_MASTER );
 			}
 			Com_Printf( "%s resolved to %i.%i.%i.%i:%i\n", sv_master[i]->string,
