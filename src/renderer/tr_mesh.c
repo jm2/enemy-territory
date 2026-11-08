@@ -187,7 +187,10 @@ int R_ComputeLOD( trRefEntity_t *ent ) {
 
 		frame = ( md3Frame_t * )( ( ( unsigned char * ) tr.currentModel->model.md3[0] ) + tr.currentModel->model.md3[0]->ofsFrames );
 
-		frame += ent->e.frame;
+		// the frame is only checked against the chosen LOD later
+		if ( ent->e.frame > 0 && ent->e.frame < tr.currentModel->model.md3[0]->numFrames ) {
+			frame += ent->e.frame;
+		}
 
 		radius = RadiusFromBounds( frame->bounds[0], frame->bounds[1] );
 

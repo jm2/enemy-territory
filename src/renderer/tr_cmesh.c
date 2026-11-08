@@ -324,6 +324,14 @@ void R_AddMDCSurfaces( trRefEntity_t *ent ) {
 
 	header = tr.currentModel->model.mdc[lod];
 
+	// each LOD is a separate file, which may have fewer frames than the first
+	if ( ent->e.frame >= header->numFrames || ent->e.oldframe >= header->numFrames ) {
+		ri.Printf( PRINT_DEVELOPER, "R_AddMDCSurfaces: no such frame %d to %d for '%s' LOD %d\n",
+				   ent->e.oldframe, ent->e.frame, tr.currentModel->name, lod );
+		ent->e.frame = 0;
+		ent->e.oldframe = 0;
+	}
+
 	//
 	// cull the entire model if merged bounding box of both frames
 	// is outside the view frustum.

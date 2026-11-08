@@ -86,6 +86,39 @@ static int totalrv, totalrt, totalv, totalt;                //----(SA)
 
 //-----------------------------------------------------------------------------
 
+/*
+=============
+R_MDXHeader
+
+The game pairs a mesh with skeletons by handle when it renders, so make sure
+the handle really names an MDX before using its data as one.
+=============
+*/
+static mdxHeader_t *R_MDXHeader( qhandle_t handle ) {
+	model_t *model = R_GetModelByHandle( handle );
+
+	return model->type == MOD_MDX ? model->model.mdx : NULL;
+}
+
+/*
+=============
+R_MDXFrame
+
+Frame numbers come from the game's animation data, not the MDX, so clamp them
+to the frames the loader validated. The compressed bones follow the frame.
+=============
+*/
+static mdxFrame_t *R_MDXFrame( const mdxHeader_t *header, int frameNum ) {
+	if ( frameNum >= header->numFrames ) {
+		frameNum = header->numFrames - 1;
+	}
+	if ( frameNum < 0 ) {
+		frameNum = 0;
+	}
+	return ( mdxFrame_t * )( (byte *)header + header->ofsFrames +
+							 frameNum * (int)( sizeof( mdxFrame_t ) + sizeof( mdxBoneFrameCompressed_t ) * header->numBones ) );
+}
+
 static float ProjectRadius( float r, vec3_t location ) {
 	float pr;
 	float dist;
@@ -145,20 +178,16 @@ static int R_CullModel( trRefEntity_t *ent ) {
 	mdxFrame_t  *oldFrame, *newFrame;
 	int i;
 
-	newFrameHeader = R_GetModelByHandle( ent->e.frameModel )->model.mdx;
-	oldFrameHeader = R_GetModelByHandle( ent->e.oldframeModel )->model.mdx;
+	newFrameHeader = R_MDXHeader( ent->e.frameModel );
+	oldFrameHeader = R_MDXHeader( ent->e.oldframeModel );
 
 	if ( !newFrameHeader || !oldFrameHeader ) {
 		return CULL_OUT;
 	}
 
 	// compute frame pointers
-	newFrame = ( mdxFrame_t * )( ( byte * ) newFrameHeader + newFrameHeader->ofsFrames +
-								 ent->e.frame * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * newFrameHeader->numBones +
-								 ent->e.frame * sizeof( mdxFrame_t ) );
-	oldFrame = ( mdxFrame_t * )( ( byte * ) oldFrameHeader + oldFrameHeader->ofsFrames +
-								 ent->e.oldframe * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * oldFrameHeader->numBones +
-								 ent->e.oldframe * sizeof( mdxFrame_t ) );
+	newFrame = R_MDXFrame( newFrameHeader, ent->e.frame );
+	oldFrame = R_MDXFrame( oldFrameHeader, ent->e.oldframe );
 
 	// cull bounding sphere ONLY if this is not an upscaled entity
 	if ( !ent->e.nonNormalizedAxes ) {
@@ -285,12 +314,13 @@ static int R_ComputeFogNum( trRefEntity_t *ent ) {
 		return 0;
 	}
 
-	header = R_GetModelByHandle( ent->e.frameModel )->model.mdx;
+	header = R_MDXHeader( ent->e.frameModel );
+	if ( !header ) {
+		return 0;
+	}
 
 	// compute frame pointers
-	mdxFrame = ( mdxFrame_t * )( ( byte * ) header + header->ofsFrames +
-								 ent->e.frame * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * header->numBones +
-								 ent->e.frame * sizeof( mdxFrame_t ) );
+	mdxFrame = R_MDXFrame( header, ent->e.frame );
 
 	// FIXME: non-normalized axis issues
 	VectorAdd( ent->e.origin, mdxFrame->localOrigin, localOrigin );
@@ -1152,18 +1182,31 @@ R_CalcBones
 	The list of bones[] should only be built and modified from within here
 ==============
 */
-static void R_CalcBones( const refEntity_t *refent, int *boneList, int numBones ) {
+static qboolean R_CalcBones( const refEntity_t *refent, int *boneList, int numBones ) {
 
 	int i;
 	int     *boneRefs;
 	float torsoWeight;
-	mdxHeader_t *mdxFrameHeader = R_GetModelByHandle( refent->frameModel )->model.mdx;
-	mdxHeader_t *mdxOldFrameHeader = R_GetModelByHandle( refent->oldframeModel )->model.mdx;
-	mdxHeader_t *mdxTorsoFrameHeader = R_GetModelByHandle( refent->torsoFrameModel )->model.mdx;
-	mdxHeader_t *mdxOldTorsoFrameHeader = R_GetModelByHandle( refent->oldTorsoFrameModel )->model.mdx;
+	mdxHeader_t *mdxFrameHeader = R_MDXHeader( refent->frameModel );
+	mdxHeader_t *mdxOldFrameHeader = R_MDXHeader( refent->oldframeModel );
+	mdxHeader_t *mdxTorsoFrameHeader = R_MDXHeader( refent->torsoFrameModel );
+	mdxHeader_t *mdxOldTorsoFrameHeader = R_MDXHeader( refent->oldTorsoFrameModel );
 
 	if ( !mdxFrameHeader || !mdxOldFrameHeader || !mdxTorsoFrameHeader || !mdxOldTorsoFrameHeader ) {
-		return;
+		return qfalse;
+	}
+
+	// one bone number indexes all four skeletons' frames and the shared bone
+	// arrays, so the skeletons must agree and the mesh's bones must fit them
+	if ( mdxOldFrameHeader->numBones != mdxFrameHeader->numBones ||
+		 mdxTorsoFrameHeader->numBones != mdxFrameHeader->numBones ||
+		 mdxOldTorsoFrameHeader->numBones != mdxFrameHeader->numBones ) {
+		return qfalse;
+	}
+	for ( i = 0; i < numBones; i++ ) {
+		if ( boneList[i] < 0 || boneList[i] >= mdxFrameHeader->numBones ) {
+			return qfalse;
+		}
 	}
 
 	//
@@ -1207,30 +1250,18 @@ static void R_CalcBones( const refEntity_t *refent, int *boneList, int numBones 
 		torsoFrontlerp = 1.0f - torsoBacklerp;
 	}
 
-	frame = ( mdxFrame_t * )( (byte *)mdxFrameHeader + mdxFrameHeader->ofsFrames +
-							  refent->frame * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * mdxFrameHeader->numBones +
-							  refent->frame * sizeof( mdxFrame_t ) );
-	torsoFrame = ( mdxFrame_t * )( (byte *)mdxTorsoFrameHeader + mdxTorsoFrameHeader->ofsFrames +
-								   refent->torsoFrame * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * mdxTorsoFrameHeader->numBones +
-								   refent->torsoFrame * sizeof( mdxFrame_t ) );
-	oldFrame = ( mdxFrame_t * )( (byte *)mdxOldFrameHeader + mdxOldFrameHeader->ofsFrames +
-								 refent->oldframe * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * mdxOldFrameHeader->numBones +
-								 refent->oldframe * sizeof( mdxFrame_t ) );
-	oldTorsoFrame = ( mdxFrame_t * )( (byte *)mdxOldTorsoFrameHeader + mdxOldTorsoFrameHeader->ofsFrames +
-									  refent->oldTorsoFrame * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * mdxOldTorsoFrameHeader->numBones +
-									  refent->oldTorsoFrame * sizeof( mdxFrame_t ) );
+	frame = R_MDXFrame( mdxFrameHeader, refent->frame );
+	torsoFrame = R_MDXFrame( mdxTorsoFrameHeader, refent->torsoFrame );
+	oldFrame = R_MDXFrame( mdxOldFrameHeader, refent->oldframe );
+	oldTorsoFrame = R_MDXFrame( mdxOldTorsoFrameHeader, refent->oldTorsoFrame );
 
 	//
 	// lerp all the needed bones (torsoParent is always the first bone in the list)
 	//
 	frameSize = (int) sizeof( mdxBoneFrameCompressed_t ) * mdxFrameHeader->numBones;
 
-	cBoneList = ( mdxBoneFrameCompressed_t * )( (byte *)mdxFrameHeader + mdxFrameHeader->ofsFrames +
-												( refent->frame + 1 ) * sizeof( mdxFrame_t ) +
-												refent->frame * frameSize );
-	cBoneListTorso = ( mdxBoneFrameCompressed_t * )( (byte *)mdxTorsoFrameHeader + mdxTorsoFrameHeader->ofsFrames +
-													 ( refent->torsoFrame + 1 ) * sizeof( mdxFrame_t ) +
-													 refent->torsoFrame * frameSize );
+	cBoneList = ( mdxBoneFrameCompressed_t * )( frame + 1 );
+	cBoneListTorso = ( mdxBoneFrameCompressed_t * )( torsoFrame + 1 );
 
 	boneInfo = ( mdxBoneInfo_t * )( (byte *)mdxFrameHeader + mdxFrameHeader->ofsBones );
 	boneRefs = boneList;
@@ -1258,12 +1289,8 @@ static void R_CalcBones( const refEntity_t *refent, int *boneList, int numBones 
 
 	} else {    // interpolated
 
-		cOldBoneList = ( mdxBoneFrameCompressed_t * )( (byte *)mdxOldFrameHeader + mdxOldFrameHeader->ofsFrames +
-													   ( refent->oldframe + 1 ) * sizeof( mdxFrame_t ) +
-													   refent->oldframe * frameSize );
-		cOldBoneListTorso = ( mdxBoneFrameCompressed_t * )( (byte *)mdxOldTorsoFrameHeader + mdxOldTorsoFrameHeader->ofsFrames +
-															( refent->oldTorsoFrame + 1 ) * sizeof( mdxFrame_t ) +
-															refent->oldTorsoFrame * frameSize );
+		cOldBoneList = ( mdxBoneFrameCompressed_t * )( oldFrame + 1 );
+		cOldBoneListTorso = ( mdxBoneFrameCompressed_t * )( oldTorsoFrame + 1 );
 
 		for ( i = 0; i < numBones; i++, boneRefs++ ) {
 
@@ -1335,6 +1362,7 @@ static void R_CalcBones( const refEntity_t *refent, int *boneList, int numBones 
 
 	// backup the final bones
 	memcpy( oldBones, bones, sizeof( bones[0] ) * mdxFrameHeader->numBones );
+	return qtrue;
 }
 
 #ifdef DBG_PROFILE_BONES
@@ -1365,7 +1393,9 @@ void RB_MDM_SurfaceAnim( mdmSurface_t *surface ) {
 	boneList = ( int * )( (byte *)surface + surface->ofsBoneReferences );
 	header = ( mdmHeader_t * )( (byte *)surface + surface->ofsHeader );
 
-	R_CalcBones( (const refEntity_t *)refent, boneList, surface->numBoneReferences );
+	if ( !R_CalcBones( (const refEntity_t *)refent, boneList, surface->numBoneReferences ) ) {
+		return;
+	}
 
 	DBG_SHOWTIME
 
@@ -1402,6 +1432,10 @@ void RB_MDM_SurfaceAnim( mdmSurface_t *surface ) {
 
 	if ( render_count > surface->numVerts ) {
 		render_count = surface->numVerts;
+	}
+	// keep vertex 0, so the collapse map is only read where the loader checked it
+	if ( render_count < 1 && surface->numVerts > 0 ) {
+		render_count = 1;
 	}
 
 	// ydnar: to profile bone transform performance only
@@ -1537,7 +1571,7 @@ void RB_MDM_SurfaceAnim( mdmSurface_t *surface ) {
 				}
 
 				// connect to our parent if it's valid
-				if ( validBones[boneInfo[*boneRefs].parent] ) {
+				if ( boneInfo[*boneRefs].parent >= 0 && validBones[boneInfo[*boneRefs].parent] ) {
 					qglLineWidth( r_bonesDebug->integer == 8 ? 4 : 2 );
 					qglBegin( GL_LINES );
 					qglColor3f( .6,.6,.6 );
@@ -1552,7 +1586,7 @@ void RB_MDM_SurfaceAnim( mdmSurface_t *surface ) {
 			if ( r_bonesDebug->integer == 8 ) {
 				// FIXME: Actually draw the whole skeleton
 				//if( surface == (mdmSurface_t *)((byte *)header + header->ofsSurfaces) ) {
-				mdxHeader_t *mdxHeader = R_GetModelByHandle( refent->frameModel )->model.mdx;
+				mdxHeader_t *mdxHeader = R_MDXHeader( refent->frameModel );
 				boneRefs = ( int * )( (byte *)surface + surface->ofsBoneReferences );
 
 				qglDepthRange( 0, 0 );      // never occluded
@@ -1705,7 +1739,7 @@ void RB_MDM_SurfaceAnim( mdmSurface_t *surface ) {
 
 /*	if( r_showmodelbounds->integer ) {
 		vec3_t diff, v1, v2, v3, v4, v5, v6;
-		mdxHeader_t	*mdxHeader = R_GetModelByHandle( refent->frameModel )->model.mdx;
+		mdxHeader_t	*mdxHeader = R_MDXHeader( refent->frameModel );
 		mdxFrame_t	*mdxFrame = (mdxFrame_t *)((byte *)mdxHeader + mdxHeader->ofsFrames +
 								refent->frame * (int) ( sizeof( mdxBoneFrameCompressed_t ) ) * mdxHeader->numBones +
 								refent->frame * sizeof(mdxFrame_t));
@@ -1789,6 +1823,9 @@ int R_MDM_GetBoneTag( orientation_t *outTag, mdmHeader_t *mdm, int startTagIndex
 		memset( outTag, 0, sizeof( *outTag ) );
 		return -1;
 	}
+	if ( startTagIndex < 0 ) {
+		startTagIndex = 0;
+	}
 
 	// find the correct tag
 
@@ -1815,7 +1852,10 @@ int R_MDM_GetBoneTag( orientation_t *outTag, mdmHeader_t *mdm, int startTagIndex
 	// calc the bones
 
 	boneList = ( int * )( (byte *)pTag + pTag->ofsBoneReferences );
-	R_CalcBones( refent, boneList, pTag->numBoneReferences );
+	if ( !R_CalcBones( refent, boneList, pTag->numBoneReferences ) ) {
+		memset( outTag, 0, sizeof( *outTag ) );
+		return -1;
+	}
 
 	// now extract the orientation for the bone that represents our tag
 	bone = &bones[pTag->boneIndex];

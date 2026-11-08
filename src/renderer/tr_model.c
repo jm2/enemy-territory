@@ -33,12 +33,12 @@ If you have questions concerning this license or the applicable additional terms
 #define LL( x ) x = LittleLong( x )
 
 // Ridah
-static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, const char *mod_name );
+static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, int length, const char *mod_name );
 // done.
-static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, const char *name );
-static qboolean R_LoadMDS( model_t *mod, void *buffer, const char *name );
-static qboolean R_LoadMDM( model_t *mod, void *buffer, const char *name );
-static qboolean R_LoadMDX( model_t *mod, void *buffer, const char *name );
+static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, int length, const char *name );
+static qboolean R_LoadMDS( model_t *mod, void *buffer, int length, const char *name );
+static qboolean R_LoadMDM( model_t *mod, void *buffer, int length, const char *name );
+static qboolean R_LoadMDX( model_t *mod, void *buffer, int length, const char *name );
 
 model_t *loadmodel;
 
@@ -151,6 +151,7 @@ qhandle_t RE_RegisterModel( const char *name ) {
 	qboolean loaded;
 	qhandle_t hModel;
 	int numLoaded;
+	int length;
 	char filename[1024];
 
 	if ( !name || !name[0] ) {
@@ -214,17 +215,17 @@ qhandle_t RE_RegisterModel( const char *name ) {
 
 	if ( strstr( name, ".mds" ) || strstr( name, ".mdm" ) || strstr( name, ".mdx" ) ) {    // try loading skeletal file
 		loaded = qfalse;
-		ri.FS_ReadFile( name, (void **)&buf );
+		length = ri.FS_ReadFile( name, (void **)&buf );
 		if ( buf ) {
 			loadmodel = mod;
 
-			ident = LittleLong( *(unsigned *)buf );
+			ident = length >= 4 ? LittleLong( *(unsigned *)buf ) : 0;
 			if ( ident == MDS_IDENT ) {
-				loaded = R_LoadMDS( mod, buf, name );
+				loaded = R_LoadMDS( mod, buf, length, name );
 			} else if ( ident == MDM_IDENT ) {
-				loaded = R_LoadMDM( mod, buf, name );
+				loaded = R_LoadMDM( mod, buf, length, name );
 			} else if ( ident == MDX_IDENT ) {
-				loaded = R_LoadMDX( mod, buf, name );
+				loaded = R_LoadMDX( mod, buf, length, name );
 			}
 
 			ri.FS_FreeFile( buf );
@@ -250,11 +251,11 @@ qhandle_t RE_RegisterModel( const char *name ) {
 		}
 
 		filename[strlen( filename ) - 1] = 'c';  // try MDC first
-		ri.FS_ReadFile( filename, (void **)&buf );
+		length = ri.FS_ReadFile( filename, (void **)&buf );
 
 		if ( !buf ) {
 			filename[strlen( filename ) - 1] = '3';  // try MD3 second
-			ri.FS_ReadFile( filename, (void **)&buf );
+			length = ri.FS_ReadFile( filename, (void **)&buf );
 			if ( !buf ) {
 				continue;
 			}
@@ -262,17 +263,18 @@ qhandle_t RE_RegisterModel( const char *name ) {
 
 		loadmodel = mod;
 
-		ident = LittleLong( *(unsigned *)buf );
+		ident = length >= 4 ? LittleLong( *(unsigned *)buf ) : 0;
 		// Ridah, mesh compression
 		if ( ident != MD3_IDENT && ident != MDC_IDENT ) {
 			ri.Printf( PRINT_WARNING,"RE_RegisterModel: unknown fileid for %s\n", name );
+			ri.FS_FreeFile( buf );
 			goto fail;
 		}
 
 		if ( ident == MD3_IDENT ) {
-			loaded = R_LoadMD3( mod, lod, buf, name );
+			loaded = R_LoadMD3( mod, lod, buf, length, name );
 		} else {
-			loaded = R_LoadMDC( mod, lod, buf, name );
+			loaded = R_LoadMDC( mod, lod, buf, length, name );
 		}
 		// done.
 
@@ -745,13 +747,561 @@ static qboolean R_MDC_ConvertMD3( model_t *mod, int lod, const char *mod_name ) 
 // rain - #if 0
 
 /*
+==============================================================================
+
+Model layout validation
+
+A model can come from any pk3 a server offers. Each loader checks the whole
+layout against the real file length before it allocates, copies, registers
+a shader or byte-swaps anything. Fields are read through LittleLong and
+LittleShort, exactly as the swap loops produce them, so the values checked
+are the values the renderer later uses. Offsets are checked by division
+before a pointer is formed. Sections that the loader writes must not overlap:
+a big-endian swap, or a shaderIndex or ident store, would otherwise change a
+value after it was checked. The checks follow Quake III's MD3/MD4 validation;
+MDC, MDS, MDM and MDX use the same rules.
+
+==============================================================================
+*/
+
+typedef struct {
+	unsigned int offset, size;
+} modelRange_t;
+
+static unsigned int R_ModelWord( const byte *data ) {
+	int word;
+
+	memcpy( &word, data, sizeof( word ) );
+	return (unsigned int)LittleLong( word );
+}
+
+static int R_ModelShort( const byte *data ) {
+	short word;
+
+	memcpy( &word, data, sizeof( word ) );
+	return LittleShort( word );
+}
+
+#define R_MODEL_FIELD( data, type, field ) R_ModelWord( (const byte *)( data ) + offsetof( type, field ) )
+
+// a complete array inside [0, limit), past the enclosing header and aligned for native access
+static qboolean R_ModelRange( unsigned int limit, unsigned int headerSize, unsigned int offset,
+							  unsigned int count, unsigned int stride, unsigned int alignment, modelRange_t *range ) {
+	if ( offset > limit || offset % alignment || count > ( limit - offset ) / stride || ( count && offset < headerSize ) ) {
+		return qfalse;
+	}
+	range->offset = offset;
+	range->size = count * stride;
+	return qtrue;
+}
+
+static qboolean R_ModelDisjoint( const modelRange_t *ranges, int count ) {
+	int i, j;
+
+	for ( i = 0; i < count; i++ ) {
+		for ( j = i + 1; j < count; j++ ) {
+			if ( ranges[i].size && ranges[j].size &&
+				 ranges[i].offset < ranges[j].offset + ranges[j].size &&
+				 ranges[j].offset < ranges[i].offset + ranges[i].size ) {
+				return qfalse;
+			}
+		}
+	}
+	return qtrue;
+}
+
+static qboolean R_ModelName( const byte *name, int size ) {
+	return memchr( name, 0, size ) != NULL;
+}
+
+// one entry of a chain of surfaces or tags: its header inside the file, and an
+// ofsEnd that covers the header, stays inside the file and strictly advances
+static const char *R_ModelChainEntry( const byte *data, unsigned int size, unsigned int offset,
+									  unsigned int headerSize, unsigned int endField, unsigned int *entrySize ) {
+	if ( headerSize > size - offset ) {
+		return "truncated surface or tag";
+	}
+	*entrySize = R_ModelWord( data + offset + endField );
+	if ( *entrySize < headerSize || *entrySize > size - offset || *entrySize % 4 ) {
+		return "surface or tag end outside the file";
+	}
+	return NULL;
+}
+
+/*
+Skeletal surfaces (MDS and MDM) share a layout: a header whose ofsHeader points
+back at the model header, variable-size vertexes, triangles, a collapse map and
+bone references. The two surface headers are identical, as are numWeights
+and the leading boneIndex of a weight; vertexHeader is offsetof( vertex, weights ).
+*/
+static const char *R_ValidateSkeletalSurface( const byte *surface, unsigned int surfaceOffset, unsigned int surfaceSize,
+											  unsigned int surfaceHeader, unsigned int vertexHeader, unsigned int weightSize,
+											  unsigned int maxVerts, unsigned int maxTriangles, unsigned int numBones ) {
+	unsigned int vertices, triangles, references, vertexOffset, weights, i, j;
+	modelRange_t ranges[4];
+
+	vertices = R_MODEL_FIELD( surface, mdsSurface_t, numVerts );
+	triangles = R_MODEL_FIELD( surface, mdsSurface_t, numTriangles );
+	references = R_MODEL_FIELD( surface, mdsSurface_t, numBoneReferences );
+
+	if ( R_MODEL_FIELD( surface, mdsSurface_t, ofsHeader ) != 0u - surfaceOffset ) {
+		return "surface does not point back at the header";
+	}
+	if ( !R_ModelName( surface + offsetof( mdsSurface_t, name ), MAX_QPATH ) ||
+		 !R_ModelName( surface + offsetof( mdsSurface_t, shader ), MAX_QPATH ) ) {
+		return "unterminated surface or shader name";
+	}
+	if ( vertices >= SHADER_MAX_VERTEXES || vertices > maxVerts ||
+		 triangles >= SHADER_MAX_INDEXES / 3 || triangles > maxTriangles ) {
+		return "too many vertexes or triangles on a surface";
+	}
+	if ( !R_ModelRange( surfaceSize, surfaceHeader, R_MODEL_FIELD( surface, mdsSurface_t, ofsVerts ), vertices, vertexHeader, 4, &ranges[0] ) ||
+		 !R_ModelRange( surfaceSize, surfaceHeader, R_MODEL_FIELD( surface, mdsSurface_t, ofsTriangles ), triangles, sizeof( mdsTriangle_t ), 4, &ranges[1] ) ||
+		 !R_ModelRange( surfaceSize, surfaceHeader, R_MODEL_FIELD( surface, mdsSurface_t, ofsCollapseMap ), vertices, sizeof( int ), 4, &ranges[2] ) ||
+		 !R_ModelRange( surfaceSize, surfaceHeader, R_MODEL_FIELD( surface, mdsSurface_t, ofsBoneReferences ), references, sizeof( int ), 4, &ranges[3] ) ) {
+		return "surface array outside the surface";
+	}
+
+	// every vertex, and every weight, must lie inside the surface
+	vertexOffset = ranges[0].offset;
+	for ( i = 0; i < vertices; i++ ) {
+		if ( vertexHeader > surfaceSize - vertexOffset ) {
+			return "vertex outside the surface";
+		}
+		// the renderer reads weights[0] of every vertex
+		weights = R_ModelWord( surface + vertexOffset + offsetof( mdsVertex_t, numWeights ) );
+		vertexOffset += vertexHeader;
+		if ( weights < 1 || weights > ( surfaceSize - vertexOffset ) / weightSize ) {
+			return "vertex weights outside the surface";
+		}
+		for ( j = 0; j < weights; j++ ) {
+			if ( R_ModelWord( surface + vertexOffset + j * weightSize ) >= numBones ) {
+				return "vertex weight bone out of range";
+			}
+		}
+		vertexOffset += weights * weightSize;
+	}
+	ranges[0].size = vertexOffset - ranges[0].offset;
+	if ( !R_ModelDisjoint( ranges, 4 ) ) {
+		return "overlapping surface arrays";
+	}
+
+	for ( i = 0; i < triangles * 3; i++ ) {
+		if ( R_ModelWord( surface + ranges[1].offset + i * sizeof( int ) ) >= vertices ) {
+			return "triangle vertex out of range";
+		}
+	}
+	// a vertex collapses onto an earlier one, which the renderer has already placed
+	for ( i = 0; i < vertices; i++ ) {
+		if ( R_ModelWord( surface + ranges[2].offset + i * sizeof( int ) ) >= ( i ? i : vertices ) ) {
+			return "collapse map out of range";
+		}
+	}
+	for ( i = 0; i < references; i++ ) {
+		if ( R_ModelWord( surface + ranges[3].offset + i * sizeof( int ) ) >= numBones ) {
+			return "bone reference out of range";
+		}
+	}
+	return NULL;
+}
+
+// a parent must come before its child, so parent chains end and have no cycles
+static const char *R_ValidateBoneInfo( const byte *data, unsigned int offset, unsigned int numBones ) {
+	unsigned int i;
+	int parent;
+
+	for ( i = 0; i < numBones; i++ ) {
+		// mdsBoneInfo_t and mdxBoneInfo_t are identical
+		parent = (int)R_ModelWord( data + offset + i * sizeof( mdsBoneInfo_t ) + offsetof( mdsBoneInfo_t, parent ) );
+		if ( parent >= (int)i ) {
+			return "bone parent out of order";
+		}
+	}
+	return NULL;
+}
+
+static const char *R_ValidateMD3( const byte *data, int length, int *validatedSize ) {
+	const byte *surface;
+	unsigned int size, frames, tags, surfaces, surfaceOffset, surfaceSize, vertices, triangles, shaders, surfaceFrames, i, j;
+	modelRange_t fileRanges[3], ranges[4];
+	const char *error;
+
+	if ( !data || length < (int)sizeof( md3Header_t ) ) {
+		return "truncated header";
+	}
+	if ( R_MODEL_FIELD( data, md3Header_t, version ) != MD3_VERSION ) {
+		return "wrong version";
+	}
+	size = R_MODEL_FIELD( data, md3Header_t, ofsEnd );
+	frames = R_MODEL_FIELD( data, md3Header_t, numFrames );
+	tags = R_MODEL_FIELD( data, md3Header_t, numTags );
+	surfaces = R_MODEL_FIELD( data, md3Header_t, numSurfaces );
+	if ( size < sizeof( md3Header_t ) || size > (unsigned int)length ) {
+		return "end offset outside the file";
+	}
+	// nothing keeps a per-surface array, and legacy's secretdocs.md3 has 38 surfaces,
+	// more than MD3_MAX_SURFACES, so the surface count is bounded by the file instead
+	if ( frames < 1 || frames > MD3_MAX_FRAMES || tags > MD3_MAX_TAGS ) {
+		return "bad frame or tag count";
+	}
+	if ( !R_ModelRange( size, sizeof( md3Header_t ), R_MODEL_FIELD( data, md3Header_t, ofsFrames ), frames, sizeof( md3Frame_t ), 4, &fileRanges[0] ) ||
+		 !R_ModelRange( size, sizeof( md3Header_t ), R_MODEL_FIELD( data, md3Header_t, ofsTags ), frames * tags, sizeof( md3Tag_t ), 4, &fileRanges[1] ) ) {
+		return "frames or tags outside the file";
+	}
+	for ( i = 0; i < frames * tags; i++ ) {
+		if ( !R_ModelName( data + fileRanges[1].offset + i * sizeof( md3Tag_t ), MAX_QPATH ) ) {
+			return "unterminated tag name";
+		}
+	}
+
+	surfaceOffset = R_MODEL_FIELD( data, md3Header_t, ofsSurfaces );
+	if ( !R_ModelRange( size, sizeof( md3Header_t ), surfaceOffset, surfaces, sizeof( md3Surface_t ), 4, &fileRanges[2] ) ) {
+		return "surfaces outside the file";
+	}
+	for ( i = 0; i < surfaces; i++ ) {
+		if ( ( error = R_ModelChainEntry( data, size, surfaceOffset, sizeof( md3Surface_t ), offsetof( md3Surface_t, ofsEnd ), &surfaceSize ) ) != NULL ) {
+			return error;
+		}
+		surface = data + surfaceOffset;
+		vertices = R_MODEL_FIELD( surface, md3Surface_t, numVerts );
+		triangles = R_MODEL_FIELD( surface, md3Surface_t, numTriangles );
+		shaders = R_MODEL_FIELD( surface, md3Surface_t, numShaders );
+		// the renderer reads the model's frames and the big-endian swap the surface's;
+		// legacy's editor camera has a surface frame count of 0, so cover both
+		surfaceFrames = R_MODEL_FIELD( surface, md3Surface_t, numFrames );
+		if ( surfaceFrames > MD3_MAX_FRAMES ) {
+			return "bad surface frame count";
+		}
+		if ( surfaceFrames < frames ) {
+			surfaceFrames = frames;
+		}
+		if ( vertices >= SHADER_MAX_VERTEXES || vertices > MD3_MAX_VERTS ||
+			 triangles >= SHADER_MAX_INDEXES / 3 || triangles > MD3_MAX_TRIANGLES || shaders > MD3_MAX_SHADERS ) {
+			return "too many vertexes, triangles or shaders on a surface";
+		}
+		if ( !R_ModelName( surface + offsetof( md3Surface_t, name ), MAX_QPATH ) ) {
+			return "unterminated surface name";
+		}
+		if ( !R_ModelRange( surfaceSize, sizeof( md3Surface_t ), R_MODEL_FIELD( surface, md3Surface_t, ofsTriangles ), triangles, sizeof( md3Triangle_t ), 4, &ranges[0] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( md3Surface_t ), R_MODEL_FIELD( surface, md3Surface_t, ofsShaders ), shaders, sizeof( md3Shader_t ), 4, &ranges[1] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( md3Surface_t ), R_MODEL_FIELD( surface, md3Surface_t, ofsSt ), vertices, sizeof( md3St_t ), 4, &ranges[2] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( md3Surface_t ), R_MODEL_FIELD( surface, md3Surface_t, ofsXyzNormals ), vertices * surfaceFrames, sizeof( md3XyzNormal_t ), 2, &ranges[3] ) ) {
+			return "surface array outside the surface";
+		}
+		if ( !R_ModelDisjoint( ranges, 4 ) ) {
+			return "overlapping surface arrays";
+		}
+		for ( j = 0; j < triangles * 3; j++ ) {
+			if ( R_ModelWord( surface + ranges[0].offset + j * sizeof( int ) ) >= vertices ) {
+				return "triangle vertex out of range";
+			}
+		}
+		for ( j = 0; j < shaders; j++ ) {
+			if ( !R_ModelName( surface + ranges[1].offset + j * sizeof( md3Shader_t ), MAX_QPATH ) ) {
+				return "unterminated shader name";
+			}
+		}
+		surfaceOffset += surfaceSize;
+	}
+	fileRanges[2].size = surfaceOffset - fileRanges[2].offset;
+	if ( !R_ModelDisjoint( fileRanges, 3 ) ) {
+		return "overlapping frames, tags and surfaces";
+	}
+	*validatedSize = size;
+	return NULL;
+}
+
+static const char *R_ValidateMDC( const byte *data, int length, int *validatedSize ) {
+	const byte *surface;
+	unsigned int size, frames, tags, surfaces, surfaceOffset, surfaceSize, vertices, triangles, shaders;
+	unsigned int baseFrames, compFrames, i, j;
+	int frame;
+	modelRange_t fileRanges[4], ranges[7];
+	const char *error;
+
+	if ( !data || length < (int)sizeof( mdcHeader_t ) ) {
+		return "truncated header";
+	}
+	if ( R_MODEL_FIELD( data, mdcHeader_t, version ) != MDC_VERSION ) {
+		return "wrong version";
+	}
+	size = R_MODEL_FIELD( data, mdcHeader_t, ofsEnd );
+	frames = R_MODEL_FIELD( data, mdcHeader_t, numFrames );
+	tags = R_MODEL_FIELD( data, mdcHeader_t, numTags );
+	surfaces = R_MODEL_FIELD( data, mdcHeader_t, numSurfaces );
+	if ( size < sizeof( mdcHeader_t ) || size > (unsigned int)length ) {
+		return "end offset outside the file";
+	}
+	// as for MD3, the surface count is bounded by the file
+	if ( frames < 1 || frames > MD3_MAX_FRAMES || tags > MD3_MAX_TAGS ) {
+		return "bad frame or tag count";
+	}
+	if ( !R_ModelRange( size, sizeof( mdcHeader_t ), R_MODEL_FIELD( data, mdcHeader_t, ofsFrames ), frames, sizeof( md3Frame_t ), 4, &fileRanges[0] ) ||
+		 !R_ModelRange( size, sizeof( mdcHeader_t ), R_MODEL_FIELD( data, mdcHeader_t, ofsTagNames ), tags, sizeof( mdcTagName_t ), 1, &fileRanges[1] ) ||
+		 !R_ModelRange( size, sizeof( mdcHeader_t ), R_MODEL_FIELD( data, mdcHeader_t, ofsTags ), frames * tags, sizeof( mdcTag_t ), 2, &fileRanges[2] ) ) {
+		return "frames or tags outside the file";
+	}
+	for ( i = 0; i < tags; i++ ) {
+		if ( !R_ModelName( data + fileRanges[1].offset + i * sizeof( mdcTagName_t ), sizeof( mdcTagName_t ) ) ) {
+			return "unterminated tag name";
+		}
+	}
+
+	surfaceOffset = R_MODEL_FIELD( data, mdcHeader_t, ofsSurfaces );
+	if ( !R_ModelRange( size, sizeof( mdcHeader_t ), surfaceOffset, surfaces, sizeof( mdcSurface_t ), 4, &fileRanges[3] ) ) {
+		return "surfaces outside the file";
+	}
+	for ( i = 0; i < surfaces; i++ ) {
+		if ( ( error = R_ModelChainEntry( data, size, surfaceOffset, sizeof( mdcSurface_t ), offsetof( mdcSurface_t, ofsEnd ), &surfaceSize ) ) != NULL ) {
+			return error;
+		}
+		surface = data + surfaceOffset;
+		vertices = R_MODEL_FIELD( surface, mdcSurface_t, numVerts );
+		triangles = R_MODEL_FIELD( surface, mdcSurface_t, numTriangles );
+		shaders = R_MODEL_FIELD( surface, mdcSurface_t, numShaders );
+		baseFrames = R_MODEL_FIELD( surface, mdcSurface_t, numBaseFrames );
+		compFrames = R_MODEL_FIELD( surface, mdcSurface_t, numCompFrames );
+		if ( baseFrames > frames || compFrames > frames ) {
+			return "surface frame count exceeds the model";
+		}
+		if ( vertices >= SHADER_MAX_VERTEXES || vertices > MD3_MAX_VERTS ||
+			 triangles >= SHADER_MAX_INDEXES / 3 || triangles > MD3_MAX_TRIANGLES || shaders > MD3_MAX_SHADERS ) {
+			return "too many vertexes, triangles or shaders on a surface";
+		}
+		if ( !R_ModelName( surface + offsetof( mdcSurface_t, name ), MAX_QPATH ) ) {
+			return "unterminated surface name";
+		}
+		if ( !R_ModelRange( surfaceSize, sizeof( mdcSurface_t ), R_MODEL_FIELD( surface, mdcSurface_t, ofsTriangles ), triangles, sizeof( md3Triangle_t ), 4, &ranges[0] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( mdcSurface_t ), R_MODEL_FIELD( surface, mdcSurface_t, ofsShaders ), shaders, sizeof( md3Shader_t ), 4, &ranges[1] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( mdcSurface_t ), R_MODEL_FIELD( surface, mdcSurface_t, ofsSt ), vertices, sizeof( md3St_t ), 4, &ranges[2] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( mdcSurface_t ), R_MODEL_FIELD( surface, mdcSurface_t, ofsXyzNormals ), vertices * baseFrames, sizeof( md3XyzNormal_t ), 2, &ranges[3] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( mdcSurface_t ), R_MODEL_FIELD( surface, mdcSurface_t, ofsXyzCompressed ), vertices * compFrames, sizeof( mdcXyzCompressed_t ), 4, &ranges[4] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( mdcSurface_t ), R_MODEL_FIELD( surface, mdcSurface_t, ofsFrameBaseFrames ), frames, sizeof( short ), 2, &ranges[5] ) ||
+			 !R_ModelRange( surfaceSize, sizeof( mdcSurface_t ), R_MODEL_FIELD( surface, mdcSurface_t, ofsFrameCompFrames ), frames, sizeof( short ), 2, &ranges[6] ) ) {
+			return "surface array outside the surface";
+		}
+		if ( !R_ModelDisjoint( ranges, 7 ) ) {
+			return "overlapping surface arrays";
+		}
+		for ( j = 0; j < triangles * 3; j++ ) {
+			if ( R_ModelWord( surface + ranges[0].offset + j * sizeof( int ) ) >= vertices ) {
+				return "triangle vertex out of range";
+			}
+		}
+		for ( j = 0; j < shaders; j++ ) {
+			if ( !R_ModelName( surface + ranges[1].offset + j * sizeof( md3Shader_t ), MAX_QPATH ) ) {
+				return "unterminated shader name";
+			}
+		}
+		// every frame names a base frame, and a compressed frame when the surface has any
+		for ( j = 0; j < frames; j++ ) {
+			frame = R_ModelShort( surface + ranges[5].offset + j * sizeof( short ) );
+			if ( frame < 0 || frame >= (int)baseFrames ) {
+				return "base frame out of range";
+			}
+			frame = R_ModelShort( surface + ranges[6].offset + j * sizeof( short ) );
+			if ( compFrames && frame >= (int)compFrames ) {
+				return "compressed frame out of range";
+			}
+		}
+		surfaceOffset += surfaceSize;
+	}
+	fileRanges[3].size = surfaceOffset - fileRanges[3].offset;
+	if ( !R_ModelDisjoint( fileRanges, 4 ) ) {
+		return "overlapping frames, tags and surfaces";
+	}
+	*validatedSize = size;
+	return NULL;
+}
+
+static const char *R_ValidateMDS( const byte *data, int length, int *validatedSize ) {
+	const byte *surface, *tag;
+	unsigned int size, frames, bones, tags, surfaces, frameSize, surfaceOffset, surfaceSize, i;
+	modelRange_t fileRanges[4];
+	const char *error;
+
+	if ( !data || length < (int)sizeof( mdsHeader_t ) ) {
+		return "truncated header";
+	}
+	if ( R_MODEL_FIELD( data, mdsHeader_t, version ) != MDS_VERSION ) {
+		return "wrong version";
+	}
+	size = R_MODEL_FIELD( data, mdsHeader_t, ofsEnd );
+	frames = R_MODEL_FIELD( data, mdsHeader_t, numFrames );
+	bones = R_MODEL_FIELD( data, mdsHeader_t, numBones );
+	tags = R_MODEL_FIELD( data, mdsHeader_t, numTags );
+	surfaces = R_MODEL_FIELD( data, mdsHeader_t, numSurfaces );
+	if ( size < sizeof( mdsHeader_t ) || size > (unsigned int)length ) {
+		return "end offset outside the file";
+	}
+	if ( frames < 1 || bones > MDS_MAX_BONES || tags > MDS_MAX_TAGS || surfaces > MDS_MAX_SURFACES ) {
+		return "bad frame, bone, tag or surface count";
+	}
+	frameSize = offsetof( mdsFrame_t, bones ) + bones * sizeof( mdsBoneFrameCompressed_t );
+	if ( !R_ModelRange( size, sizeof( mdsHeader_t ), R_MODEL_FIELD( data, mdsHeader_t, ofsFrames ), frames, frameSize, 4, &fileRanges[0] ) ||
+		 !R_ModelRange( size, sizeof( mdsHeader_t ), R_MODEL_FIELD( data, mdsHeader_t, ofsBones ), bones, sizeof( mdsBoneInfo_t ), 4, &fileRanges[1] ) ||
+		 !R_ModelRange( size, sizeof( mdsHeader_t ), R_MODEL_FIELD( data, mdsHeader_t, ofsTags ), tags, sizeof( mdsTag_t ), 4, &fileRanges[2] ) ) {
+		return "frames, bones or tags outside the file";
+	}
+	if ( ( error = R_ValidateBoneInfo( data, fileRanges[1].offset, bones ) ) != NULL ) {
+		return error;
+	}
+	for ( i = 0; i < tags; i++ ) {
+		tag = data + fileRanges[2].offset + i * sizeof( mdsTag_t );
+		if ( !R_ModelName( tag, MAX_QPATH ) ) {
+			return "unterminated tag name";
+		}
+		if ( R_MODEL_FIELD( tag, mdsTag_t, boneIndex ) >= bones ) {
+			return "tag bone out of range";
+		}
+	}
+
+	surfaceOffset = R_MODEL_FIELD( data, mdsHeader_t, ofsSurfaces );
+	if ( !R_ModelRange( size, sizeof( mdsHeader_t ), surfaceOffset, surfaces, sizeof( mdsSurface_t ), 4, &fileRanges[3] ) ) {
+		return "surfaces outside the file";
+	}
+	for ( i = 0; i < surfaces; i++ ) {
+		if ( ( error = R_ModelChainEntry( data, size, surfaceOffset, sizeof( mdsSurface_t ), offsetof( mdsSurface_t, ofsEnd ), &surfaceSize ) ) != NULL ) {
+			return error;
+		}
+		surface = data + surfaceOffset;
+		if ( ( error = R_ValidateSkeletalSurface( surface, surfaceOffset, surfaceSize, sizeof( mdsSurface_t ),
+												  offsetof( mdsVertex_t, weights ), sizeof( mdsWeight_t ),
+												  MDS_MAX_VERTS, MDS_MAX_TRIANGLES, bones ) ) != NULL ) {
+			return error;
+		}
+		surfaceOffset += surfaceSize;
+	}
+	fileRanges[3].size = surfaceOffset - fileRanges[3].offset;
+	if ( !R_ModelDisjoint( fileRanges, 4 ) ) {
+		return "overlapping frames, bones, tags and surfaces";
+	}
+	*validatedSize = size;
+	return NULL;
+}
+
+/*
+MDM bone numbers index the skeleton of whichever MDX the entity animates with,
+which is paired at render time. Here they are bounded by the renderer's bone
+arrays; R_CalcBones checks them against the paired MDX.
+*/
+static const char *R_ValidateMDM( const byte *data, int length, int *validatedSize ) {
+	const byte *surface, *tag;
+	unsigned int size, tags, surfaces, surfaceOffset, surfaceSize, tagOffset, tagSize, i, j;
+	modelRange_t fileRanges[2], references;
+	const char *error;
+
+	if ( !data || length < (int)sizeof( mdmHeader_t ) ) {
+		return "truncated header";
+	}
+	if ( R_MODEL_FIELD( data, mdmHeader_t, version ) != MDM_VERSION ) {
+		return "wrong version";
+	}
+	size = R_MODEL_FIELD( data, mdmHeader_t, ofsEnd );
+	tags = R_MODEL_FIELD( data, mdmHeader_t, numTags );
+	surfaces = R_MODEL_FIELD( data, mdmHeader_t, numSurfaces );
+	if ( size < sizeof( mdmHeader_t ) || size > (unsigned int)length ) {
+		return "end offset outside the file";
+	}
+	if ( tags > MDM_MAX_TAGS || surfaces > MDM_MAX_SURFACES ) {
+		return "bad tag or surface count";
+	}
+
+	surfaceOffset = R_MODEL_FIELD( data, mdmHeader_t, ofsSurfaces );
+	if ( !R_ModelRange( size, sizeof( mdmHeader_t ), surfaceOffset, surfaces, sizeof( mdmSurface_t ), 4, &fileRanges[0] ) ) {
+		return "surfaces outside the file";
+	}
+	for ( i = 0; i < surfaces; i++ ) {
+		if ( ( error = R_ModelChainEntry( data, size, surfaceOffset, sizeof( mdmSurface_t ), offsetof( mdmSurface_t, ofsEnd ), &surfaceSize ) ) != NULL ) {
+			return error;
+		}
+		surface = data + surfaceOffset;
+		if ( ( error = R_ValidateSkeletalSurface( surface, surfaceOffset, surfaceSize, sizeof( mdmSurface_t ),
+												  offsetof( mdmVertex_t, weights ), sizeof( mdmWeight_t ),
+												  MDM_MAX_VERTS, MDM_MAX_TRIANGLES, MDX_MAX_BONES ) ) != NULL ) {
+			return error;
+		}
+		surfaceOffset += surfaceSize;
+	}
+	fileRanges[0].size = surfaceOffset - fileRanges[0].offset;
+
+	// tags are a chain too, each with its own bone references
+	tagOffset = R_MODEL_FIELD( data, mdmHeader_t, ofsTags );
+	if ( !R_ModelRange( size, sizeof( mdmHeader_t ), tagOffset, tags, sizeof( mdmTag_t ), 4, &fileRanges[1] ) ) {
+		return "tags outside the file";
+	}
+	for ( i = 0; i < tags; i++ ) {
+		if ( ( error = R_ModelChainEntry( data, size, tagOffset, sizeof( mdmTag_t ), offsetof( mdmTag_t, ofsEnd ), &tagSize ) ) != NULL ) {
+			return error;
+		}
+		tag = data + tagOffset;
+		if ( !R_ModelName( tag, MAX_QPATH ) ) {
+			return "unterminated tag name";
+		}
+		if ( R_MODEL_FIELD( tag, mdmTag_t, boneIndex ) >= MDX_MAX_BONES ) {
+			return "tag bone out of range";
+		}
+		if ( !R_ModelRange( tagSize, sizeof( mdmTag_t ), R_MODEL_FIELD( tag, mdmTag_t, ofsBoneReferences ),
+							R_MODEL_FIELD( tag, mdmTag_t, numBoneReferences ), sizeof( int ), 4, &references ) ) {
+			return "tag bone references outside the tag";
+		}
+		for ( j = 0; j < references.size / sizeof( int ); j++ ) {
+			if ( R_ModelWord( tag + references.offset + j * sizeof( int ) ) >= MDX_MAX_BONES ) {
+				return "tag bone reference out of range";
+			}
+		}
+		tagOffset += tagSize;
+	}
+	fileRanges[1].size = tagOffset - fileRanges[1].offset;
+	if ( !R_ModelDisjoint( fileRanges, 2 ) ) {
+		return "overlapping surfaces and tags";
+	}
+	*validatedSize = size;
+	return NULL;
+}
+
+static const char *R_ValidateMDX( const byte *data, int length, int *validatedSize ) {
+	unsigned int size, frames, bones, frameSize;
+	modelRange_t fileRanges[2];
+	const char *error;
+
+	if ( !data || length < (int)sizeof( mdxHeader_t ) ) {
+		return "truncated header";
+	}
+	if ( R_MODEL_FIELD( data, mdxHeader_t, version ) != MDX_VERSION ) {
+		return "wrong version";
+	}
+	size = R_MODEL_FIELD( data, mdxHeader_t, ofsEnd );
+	frames = R_MODEL_FIELD( data, mdxHeader_t, numFrames );
+	bones = R_MODEL_FIELD( data, mdxHeader_t, numBones );
+	if ( size < sizeof( mdxHeader_t ) || size > (unsigned int)length ) {
+		return "end offset outside the file";
+	}
+	if ( frames < 1 || bones > MDX_MAX_BONES ) {
+		return "bad frame or bone count";
+	}
+	frameSize = sizeof( mdxFrame_t ) + bones * sizeof( mdxBoneFrameCompressed_t );
+	if ( !R_ModelRange( size, sizeof( mdxHeader_t ), R_MODEL_FIELD( data, mdxHeader_t, ofsFrames ), frames, frameSize, 4, &fileRanges[0] ) ||
+		 !R_ModelRange( size, sizeof( mdxHeader_t ), R_MODEL_FIELD( data, mdxHeader_t, ofsBones ), bones, sizeof( mdxBoneInfo_t ), 4, &fileRanges[1] ) ) {
+		return "frames or bones outside the file";
+	}
+	if ( ( error = R_ValidateBoneInfo( data, fileRanges[1].offset, bones ) ) != NULL ) {
+		return error;
+	}
+	if ( !R_ModelDisjoint( fileRanges, 2 ) ) {
+		return "overlapping frames and bones";
+	}
+	*validatedSize = size;
+	return NULL;
+}
+
+/*
 =================
 R_LoadMDC
 =================
 */
-static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, const char *mod_name ) {
+static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, int length, const char *mod_name ) {
 	int i, j;
-	mdcHeader_t         *pinmodel;
 	md3Frame_t          *frame;
 	mdcSurface_t        *surf;
 	md3Shader_t         *shader;
@@ -761,24 +1311,20 @@ static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, const char *mod_
 	mdcXyzCompressed_t  *xyzComp;
 	mdcTag_t            *tag;
 	short               *ps;
-	int version;
+	const char          *error;
 	int size;
 
-	pinmodel = (mdcHeader_t *)buffer;
-
-	version = LittleLong( pinmodel->version );
-	if ( version != MDC_VERSION ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMDC: %s has wrong version (%i should be %i)\n",
-				   mod_name, version, MDC_VERSION );
+	error = R_ValidateMDC( buffer, length, &size );
+	if ( error ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDC: %s: %s\n", mod_name, error );
 		return qfalse;
 	}
 
 	mod->type = MOD_MDC;
-	size = LittleLong( pinmodel->ofsEnd );
 	mod->dataSize += size;
 	mod->model.mdc[lod] = ri.Hunk_Alloc( size, h_low );
 
-	memcpy( mod->model.mdc[lod], buffer, LittleLong( pinmodel->ofsEnd ) );
+	memcpy( mod->model.mdc[lod], buffer, size );
 
 	LL( mod->model.mdc[lod]->ident );
 	LL( mod->model.mdc[lod]->version );
@@ -850,15 +1396,6 @@ static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, const char *mod_
 		LL( surf->ofsFrameBaseFrames );
 		LL( surf->ofsFrameCompFrames );
 		LL( surf->ofsEnd );
-
-		if ( surf->numVerts > tess.maxShaderVerts ) {
-			ri.Error( ERR_DROP, "R_LoadMDC: %s has more than %i verts on a surface (%i)",
-					  mod_name, tess.maxShaderVerts, surf->numVerts );
-		}
-		if ( surf->numTriangles * 3 > tess.maxShaderIndicies ) {
-			ri.Error( ERR_DROP, "R_LoadMDC: %s has more than %i triangles on a surface (%i)",
-					  mod_name, tess.maxShaderIndicies / 3, surf->numTriangles );
-		}
 
 		// change to surface identifier
 		surf->ident = SF_MDC;
@@ -953,9 +1490,8 @@ static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, const char *mod_
 R_LoadMD3
 =================
 */
-static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, const char *mod_name ) {
+static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, int length, const char *mod_name ) {
 	int i, j;
-	md3Header_t         *pinmodel;
 	md3Frame_t          *frame;
 	md3Surface_t        *surf;
 	md3Shader_t         *shader;
@@ -963,25 +1499,21 @@ static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, const char *mod_
 	md3St_t             *st;
 	md3XyzNormal_t      *xyz;
 	md3Tag_t            *tag;
-	int version;
+	const char          *error;
 	int size;
 	qboolean fixRadius = qfalse;
 
-	pinmodel = (md3Header_t *)buffer;
-
-	version = LittleLong( pinmodel->version );
-	if ( version != MD3_VERSION ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMD3: %s has wrong version (%i should be %i)\n",
-				   mod_name, version, MD3_VERSION );
+	error = R_ValidateMD3( buffer, length, &size );
+	if ( error ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMD3: %s: %s\n", mod_name, error );
 		return qfalse;
 	}
 
 	mod->type = MOD_MESH;
-	size = LittleLong( pinmodel->ofsEnd );
 	mod->dataSize += size;
 	mod->model.md3[lod] = ri.Hunk_Alloc( size, h_low );
 
-	memcpy( mod->model.md3[lod], buffer, LittleLong( pinmodel->ofsEnd ) );
+	memcpy( mod->model.md3[lod], buffer, size );
 
 	LL( mod->model.md3[lod]->ident );
 	LL( mod->model.md3[lod]->version );
@@ -1059,15 +1591,6 @@ static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, const char *mod_
 		LL( surf->ofsXyzNormals );
 		LL( surf->ofsEnd );
 
-		if ( surf->numVerts > tess.maxShaderVerts ) {
-			ri.Error( ERR_DROP, "R_LoadMD3: %s has more than %i verts on a surface (%i)",
-					  mod_name, tess.maxShaderVerts, surf->numVerts );
-		}
-		if ( surf->numTriangles * 3 > tess.maxShaderIndicies ) {
-			ri.Error( ERR_DROP, "R_LoadMD3: %s has more than %i triangles on a surface (%i)",
-					  mod_name, tess.maxShaderIndicies / 3, surf->numTriangles );
-		}
-
 		// change to surface identifier
 		surf->ident = SF_MD3;
 
@@ -1139,36 +1662,32 @@ static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, const char *mod_
 R_LoadMDS
 =================
 */
-static qboolean R_LoadMDS( model_t *mod, void *buffer, const char *mod_name ) {
+static qboolean R_LoadMDS( model_t *mod, void *buffer, int length, const char *mod_name ) {
 	int i, j, k;
-	mdsHeader_t         *pinmodel, *mds;
+	mdsHeader_t         *mds;
 	mdsFrame_t          *frame;
 	mdsSurface_t        *surf;
 	mdsTriangle_t       *tri;
 	mdsVertex_t         *v;
 	mdsBoneInfo_t       *bi;
 	mdsTag_t            *tag;
-	int version;
+	const char          *error;
 	int size;
 	shader_t            *sh;
 	int frameSize;
 	int                 *collapseMap, *boneref;
 
-	pinmodel = (mdsHeader_t *)buffer;
-
-	version = LittleLong( pinmodel->version );
-	if ( version != MDS_VERSION ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMDS: %s has wrong version (%i should be %i)\n",
-				   mod_name, version, MDS_VERSION );
+	error = R_ValidateMDS( buffer, length, &size );
+	if ( error ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDS: %s: %s\n", mod_name, error );
 		return qfalse;
 	}
 
 	mod->type = MOD_MDS;
-	size = LittleLong( pinmodel->ofsEnd );
 	mod->dataSize += size;
 	mds = mod->model.mds = ri.Hunk_Alloc( size, h_low );
 
-	memcpy( mds, buffer, LittleLong( pinmodel->ofsEnd ) );
+	memcpy( mds, buffer, size );
 
 	LL( mds->ident );
 	LL( mds->version );
@@ -1245,15 +1764,6 @@ static qboolean R_LoadMDS( model_t *mod, void *buffer, const char *mod_name ) {
 
 		// change to surface identifier
 		surf->ident = SF_MDS;
-
-		if ( surf->numVerts > tess.maxShaderVerts ) {
-			ri.Error( ERR_DROP, "R_LoadMDS: %s has more than %i verts on a surface (%i)",
-					  mod_name, tess.maxShaderVerts, surf->numVerts );
-		}
-		if ( surf->numTriangles * 3 > tess.maxShaderIndicies ) {
-			ri.Error( ERR_DROP, "R_LoadMDS: %s has more than %i triangles on a surface (%i)",
-					  mod_name, tess.maxShaderIndicies / 3, surf->numTriangles );
-		}
 
 		// register the shaders
 		if ( surf->shader[0] ) {
@@ -1336,34 +1846,30 @@ static qboolean R_LoadMDS( model_t *mod, void *buffer, const char *mod_name ) {
 R_LoadMDM
 =================
 */
-static qboolean R_LoadMDM( model_t *mod, void *buffer, const char *mod_name ) {
+static qboolean R_LoadMDM( model_t *mod, void *buffer, int length, const char *mod_name ) {
 	int i, j, k;
-	mdmHeader_t         *pinmodel, *mdm;
+	mdmHeader_t         *mdm;
 //    mdmFrame_t			*frame;
 	mdmSurface_t        *surf;
 	mdmTriangle_t       *tri;
 	mdmVertex_t         *v;
 	mdmTag_t            *tag;
-	int version;
+	const char          *error;
 	int size;
 	shader_t            *sh;
 	int                 *collapseMap, *boneref;
 
-	pinmodel = (mdmHeader_t *)buffer;
-
-	version = LittleLong( pinmodel->version );
-	if ( version != MDM_VERSION ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMDM: %s has wrong version (%i should be %i)\n",
-				   mod_name, version, MDM_VERSION );
+	error = R_ValidateMDM( buffer, length, &size );
+	if ( error ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDM: %s: %s\n", mod_name, error );
 		return qfalse;
 	}
 
 	mod->type = MOD_MDM;
-	size = LittleLong( pinmodel->ofsEnd );
 	mod->dataSize += size;
 	mdm = mod->model.mdm = ri.Hunk_Alloc( size, h_low );
 
-	memcpy( mdm, buffer, LittleLong( pinmodel->ofsEnd ) );
+	memcpy( mdm, buffer, size );
 
 	LL( mdm->ident );
 	LL( mdm->version );
@@ -1454,15 +1960,6 @@ static qboolean R_LoadMDM( model_t *mod, void *buffer, const char *mod_name ) {
 		// change to surface identifier
 		surf->ident = SF_MDM;
 
-		if ( surf->numVerts > tess.maxShaderVerts ) {
-			ri.Error( ERR_DROP, "R_LoadMDM: %s has more than %i verts on a surface (%i)",
-					  mod_name, tess.maxShaderVerts, surf->numVerts );
-		}
-		if ( surf->numTriangles * 3 > tess.maxShaderIndicies ) {
-			ri.Error( ERR_DROP, "R_LoadMDM: %s has more than %i triangles on a surface (%i)",
-					  mod_name, tess.maxShaderIndicies / 3, surf->numTriangles );
-		}
-
 		// register the shaders
 		if ( surf->shader[0] ) {
 			sh = R_FindShader( surf->shader, LIGHTMAP_NONE, qtrue );
@@ -1532,31 +2029,27 @@ static qboolean R_LoadMDM( model_t *mod, void *buffer, const char *mod_name ) {
 R_LoadMDX
 =================
 */
-static qboolean R_LoadMDX( model_t *mod, void *buffer, const char *mod_name ) {
+static qboolean R_LoadMDX( model_t *mod, void *buffer, int length, const char *mod_name ) {
 	int i, j;
-	mdxHeader_t                 *pinmodel, *mdx;
+	mdxHeader_t                 *mdx;
 	mdxFrame_t                  *frame;
 	short                       *bframe;
 	mdxBoneInfo_t               *bi;
-	int version;
+	const char          *error;
 	int size;
 	int frameSize;
 
-	pinmodel = (mdxHeader_t *)buffer;
-
-	version = LittleLong( pinmodel->version );
-	if ( version != MDX_VERSION ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMDX: %s has wrong version (%i should be %i)\n",
-				   mod_name, version, MDX_VERSION );
+	error = R_ValidateMDX( buffer, length, &size );
+	if ( error ) {
+		ri.Printf( PRINT_WARNING, "R_LoadMDX: %s: %s\n", mod_name, error );
 		return qfalse;
 	}
 
 	mod->type = MOD_MDX;
-	size = LittleLong( pinmodel->ofsEnd );
 	mod->dataSize += size;
 	mdx = mod->model.mdx = ri.Hunk_Alloc( size, h_low );
 
-	memcpy( mdx, buffer, LittleLong( pinmodel->ofsEnd ) );
+	memcpy( mdx, buffer, size );
 
 	LL( mdx->ident );
 	LL( mdx->version );
@@ -1637,6 +2130,9 @@ void R_ModelInit( void ) {
 	tr.numModels = 0;
 
 	mod = R_AllocModel();
+	if ( !mod ) {
+		ri.Error( ERR_DROP, "R_ModelInit: R_AllocModel failed" );
+	}
 	mod->type = MOD_BAD;
 
 	// Ridah, load in the cacheModels
@@ -1698,6 +2194,9 @@ static int R_GetTag( byte *mod, int frame, const char *tagName, int startTagInde
 		// it is possible to have a bad frame while changing models, so don't error
 		frame = md3->numFrames - 1;
 	}
+	if ( frame < 0 ) {
+		frame = 0;
+	}
 
 	if ( startTagIndex > md3->numTags ) {
 		*outTag = NULL;
@@ -1739,6 +2238,9 @@ static int R_GetMDCTag( byte *mod, int frame, const char *tagName, int startTagI
 	if ( frame >= mdc->numFrames ) {
 		// it is possible to have a bad frame while changing models, so don't error
 		frame = mdc->numFrames - 1;
+	}
+	if ( frame < 0 ) {
+		frame = 0;
 	}
 
 	if ( startTagIndex > mdc->numTags ) {
@@ -1872,6 +2374,11 @@ int R_LerpTag( orientation_t *tag, const refEntity_t *refent, const char *tagNam
 		// failed
 		return -1;
 
+	} else if ( model->type != MOD_MDC ) {
+		// a brush model or skeleton has no tags, and its pointer is not an MDC
+		start = NULL;
+		end = NULL;
+		retval = -1;
 	} else {
 		// psuedo-compressed MDC tags
 		mdcTag_t    *cstart, *cend;
