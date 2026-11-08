@@ -1315,6 +1315,23 @@ int FileLength( FILE *fp ) {
 // Changes Globals:		-
 //============================================================================
 int COM_Compress( char *data_p );
+//============================================================================
+// true when size bytes can be taken and PS_MEMORY_RESERVE still stays free,
+// so that input is refused before an allocation fails fatally (the Mac zone
+// is 10 MB)
+//
+// Parameter:				-
+// Returns:					-
+// Changes Globals:		-
+//============================================================================
+int PS_MemoryAvailable( int size ) {
+#ifdef BOTLIB
+	if ( botimport.AvailableMemory && botimport.AvailableMemory() - size < PS_MEMORY_RESERVE ) {
+		return qfalse;
+	}
+#endif
+	return qtrue;
+} //end of the function PS_MemoryAvailable
 script_t *LoadScriptFile( const char *filename ) {
 #ifdef BOTLIB
 	fileHandle_t fp;
@@ -1341,6 +1358,11 @@ script_t *LoadScriptFile( const char *filename ) {
 	}
 	length = botimport.FS_FOpenFile( pathname, &fp, FS_READ );
 	if ( !fp ) {
+		return NULL;
+	}
+	if ( length < 0 || !PS_MemoryAvailable( sizeof( script_t ) + length + 1 ) ) {
+		botimport.Print( PRT_ERROR, "%s: not enough memory to load the script\n", pathname );
+		botimport.FS_FCloseFile( fp );
 		return NULL;
 	}
 #else

@@ -683,6 +683,7 @@ void SV_BotInitBotLib( void ) {
 	botlib_import.FreeMemory = BotImport_FreeMemory;
 	botlib_import.FreeZoneMemory = BotImport_FreeZoneMemory;
 	botlib_import.HunkAlloc = BotImport_HunkAlloc;
+	botlib_import.AvailableMemory = Z_AvailableMemory;
 
 	// file system acess
 	botlib_import.FS_FOpenFile = FS_FOpenFileByMode;

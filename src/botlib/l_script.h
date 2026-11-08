@@ -253,6 +253,10 @@ int EndOfScript( script_t *script );
 char *PunctuationFromNum( script_t *script, int num );
 //load a script from the given file at the given offset with the given length
 script_t *LoadScriptFile( const char *filename );
+//free memory the preprocessor leaves for the rest of the engine
+#define PS_MEMORY_RESERVE           ( 256 * 1024 )
+//true when size bytes can be allocated with PS_MEMORY_RESERVE left free
+int PS_MemoryAvailable( int size );
 //load a script from the given memory with the given length
 script_t *LoadScriptMemory( char *ptr, int length, char *name );
 //free a script

@@ -200,6 +200,8 @@ typedef struct botlib_import_s
 	void ( *FreeMemory )( void *ptr );
 	void ( *FreeZoneMemory )( void );
 	void        *( *HunkAlloc )( int size );
+	//bytes still free where GetMemory allocates
+	int ( *AvailableMemory )( void );
 	//file system access
 	int ( *FS_FOpenFile )( const char *qpath, fileHandle_t *file, fsMode_t mode );
 	int ( *FS_Read )( void *buffer, int len, fileHandle_t f );

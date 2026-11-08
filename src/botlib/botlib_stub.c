@@ -47,7 +47,8 @@ If you have questions concerning this license or the applicable additional terms
 #include "l_precomp.h"
 
 void botlib_stub( void );
-int PC_LoadSourceHandle( const char * );
+int PC_LoadSourceHandle( const char *, int );
+void PC_FreeSourceHandles( int );
 int PC_FreeSourceHandle( int );
 int PC_ReadTokenHandle( int, pc_token_t * );
 int PC_SourceFileAndLine( int, char *, int * );
@@ -214,6 +215,7 @@ botlib_export_t *GetBotLibAPI( int version, botlib_import_t *imports ) {
 	botlib_export.PC_ReadTokenHandle = PC_ReadTokenHandle;
 	botlib_export.PC_SourceFileAndLine = PC_SourceFileAndLine;
 	botlib_export.PC_UnreadLastTokenHandle = PC_UnreadLastTokenHandle;
+	botlib_export.PC_FreeSourceHandles = PC_FreeSourceHandles;
 
 
 	return &botlib_export;
@@ -223,9 +225,15 @@ void botlib_stub( void ) {
 	botimport.Print( PRT_WARNING, "WARNING: botlib stub!\n" );
 }
 
-int PC_LoadSourceHandle( const char *filename ) {
+int PC_LoadSourceHandle( const char *filename, int owner ) {
 	// rain - FIXME - LoadSourceFile should take a const filename
+	(void)owner;
 	return (int)LoadSourceFile( filename );
+}
+
+void PC_FreeSourceHandles( int owner ) {
+	// handles here are source pointers the stub does not track
+	(void)owner;
 }
 
 int PC_FreeSourceHandle( int handle ) {

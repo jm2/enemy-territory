@@ -5,9 +5,12 @@
    tests/bot_preprocessor_bounds_regression.c and bot_macro_regression.c.
 
    Each case runs in its own process, on a 1 MiB thread stack (the Mac OS 9
-   stack has no guard page) under an alarm, with an allocator that fails past
-   64 MiB, so the old code fails a case by a sanitizer report, a stack
-   overflow, a hang, a fatal allocation or a missing refusal. */
+   stack has no guard page) under an alarm, with an allocator that models the
+   Mac zone the preprocessor allocates from: 10 MB, of which a map uses about
+   2 MB, with the zone's block header on every allocation.  Running out is a
+   fatal Z_Malloc error there, so the old code fails a case by a sanitizer
+   report, a stack overflow, a hang, a fatal allocation or a missing refusal,
+   and the new code must refuse while memory remains. */
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -29,8 +32,11 @@
 
 #define CASE_STACK ( 1024 * 1024 )
 #define MAX_FILES 160
-#define MAX_TEXT ( 2 * 1024 * 1024 )
-#define MEMORY_CAP ( 64UL * 1024 * 1024 )
+#define MAX_TEXT ( 4 * 1024 * 1024 )
+/* __MACOS__ DEF_COMZONEMEGS is 10; the stock maps use about 2 MB of it */
+#define MEMORY_CAP ( 8UL * 1024 * 1024 )
+/* memblock_t header and trash word of a zone block, rounded to 4 */
+#define ZONE_OVERHEAD 24
 
 botlib_import_t botimport;
 extern int numtokens;
@@ -51,6 +57,7 @@ static void Check( int ok, const char *what ) {
 
 void *GetMemory( unsigned long size ) {
 	size_t *p;
+	size = ( size + ZONE_OVERHEAD + 3 ) & ~3UL;
 	if ( size > MEMORY_CAP - liveBytes ) {
 		return NULL;
 	}
@@ -64,6 +71,7 @@ void *GetMemory( unsigned long size ) {
 	return (char *)p + 16;
 }
 void *GetClearedMemory( unsigned long size ) { void *p = GetMemory( size ); if ( p ) { memset( p, 0, size ); } return p; }
+static int AvailableMemory( void ) { return (int)( MEMORY_CAP - liveBytes ); }
 void FreeMemory( void *p ) {
 	size_t *block;
 	if ( !p ) {
@@ -562,7 +570,7 @@ static void LiveTokens( void ) {
 	Append( "marker\n" );
 	AddFile( "defines.menu", text );
 	source = Load( "defines.menu" );
-	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "preprocessor holds more than" );
+	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "too many tokens" );
 	Finish( source );
 
 	Begin();
@@ -572,22 +580,53 @@ static void LiveTokens( void ) {
 	AddFile( "argument.menu", text );
 	source = Load( "argument.menu" );
 	Expect( source, TT_NAME, "marker" );
-	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "preprocessor holds more than" );
+	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "too many tokens" );
 	Finish( source );
 
-	/* retail legacy menus hold about 6100 copies at their peak */
+	/* retail legacy menus hold 6122 copies at their peak: 6200 fit */
 	Begin();
-	for ( i = 0; i < 70; i++ ) {
+	for ( i = 0; i < 61; i++ ) {
 		Append( "#define BIG%d", i );
 		for ( j = 0; j < 100; j++ ) Append( " b" );
 		Append( "\n" );
 	}
-	Append( "BIG69 end\n" );
+	Append( "BIG60 end\n" );
 	AddFile( "big.menu", text );
 	source = Load( "big.menu" );
 	for ( j = 0; j < 100; j++ ) Expect( source, TT_NAME, "b" );
 	Expect( source, TT_NAME, "end" );
 	ExpectEnd( source );
+	Finish( source );
+}
+
+static void EmptyDefines( void ) {
+	source_t *source;
+	int i;
+
+	/* 120,000 definitions without a body: no token copies, but about 9 MB of
+	   definitions in the zone */
+	Begin();
+	for ( i = 0; i < 120000; i++ ) Append( "#define d%d\n", i );
+	Append( "marker\n" );
+	AddFile( "empty.menu", text );
+	source = Load( "empty.menu" );
+	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "out of memory for #define" );
+	Finish( source );
+}
+
+static void RecursiveIncludes( void ) {
+	source_t *source;
+	int i;
+
+	/* every line includes the file itself: each is refused as recursive,
+	   but the old code loaded the whole file again for each one */
+	Begin();
+	for ( i = 0; i < 300; i++ ) Append( "#include \"self.menu\"\n" );
+	Append( "end\n" );
+	AddFile( "self.menu", text );
+	source = Load( "self.menu" );
+	Check( ReadUntilFailure( source, 5 ) == 0, "the source fails" );
+	Check( strstr( lastError, "more than 256 included files" ) != NULL, "repeated recursive includes count against the include budget" );
 	Finish( source );
 }
 
@@ -644,9 +683,30 @@ static void Handles( void ) {
 		PC_FreeSourceHandles( PC_OWNER_GAME );
 		Check( !PC_ReadTokenHandle( ui, &pc ) && !PC_ReadTokenHandle( game, &pc ), "every module's handles are freed" );
 	}
-#else
-	Check( 0, "a module's leaked handles can be freed when it shuts down" );
 #endif
+	{
+		/* a UI that errors out of 63 menus leaks every slot; its shutdown has
+		   to give them back, or no module can load a file afterwards */
+		int h[64], n, next;
+		AddFile( "leak.menu", "menuDef {\n" );
+		PS_SetBaseFolder( "" );
+		for ( n = 0; n < 63; n++ ) {
+			h[n] = LOAD( "leak.menu" );
+			Check( h[n] > 0, "a leaked handle opens" );
+		}
+		Check( !LOAD( "leak.menu" ), "the handle table is full" );
+#ifdef PC_OWNER_UI
+		PC_FreeSourceHandles( PC_OWNER_UI );
+#endif
+		next = LOAD( "leak.menu" );
+		Check( next > 0, "a file loads after the UI that leaked its handles shuts down" );
+		if ( next ) {
+			PC_FreeSourceHandle( next );
+		}
+		for ( n = 0; n < 63; n++ ) {
+			PC_FreeSourceHandle( h[n] );
+		}
+	}
 	Finish( NULL );
 }
 
@@ -676,6 +736,8 @@ static void RunExprGoldens( int a ) { (void)a; ExpressionGoldens(); }
 static void RunLive( int a ) { (void)a; LiveTokens(); }
 static void RunConditionals( int a ) { Conditionals( a < 0 ? -a : a, a < 0 ); }
 static void RunHandles( int a ) { (void)a; Handles(); }
+static void RunEmptyDefines( int a ) { (void)a; EmptyDefines(); }
+static void RunRecursive( int a ) { (void)a; RecursiveIncludes(); }
 
 static const testcase_t cases[] = {
 	{ "long source and include names are refused", RunLongNames, 0 },
@@ -700,6 +762,8 @@ static const testcase_t cases[] = {
 	{ "4096 nested conditionals are accepted", RunConditionals, -4096 },
 	{ "80000 nested conditionals are refused", RunConditionals, 80000 },
 	{ "handle ranges and owner-tagged release", RunHandles, 0 },
+	{ "120000 empty definitions are refused before the zone runs out", RunEmptyDefines, 0 },
+	{ "300 recursive includes of a file count against the include budget", RunRecursive, 0 },
 };
 
 static const testcase_t *current;
@@ -713,6 +777,9 @@ int main( void ) {
 	botimport.FS_FOpenFile = FileOpen;
 	botimport.FS_Read = FileRead;
 	botimport.FS_FCloseFile = FileClose;
+#ifdef PS_MEMORY_RESERVE
+	botimport.AvailableMemory = AvailableMemory;
+#endif
 	setvbuf( stdout, NULL, _IONBF, 0 );
 	for ( i = 0; i < (int)( sizeof( cases ) / sizeof( cases[0] ) ); i++ ) {
 		pid = fork();

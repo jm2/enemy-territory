@@ -933,6 +933,18 @@ void Z_ClearZone( memzone_t *zone, int size ) {
 
 /*
 ========================
+Z_AvailableMemory
+
+bytes of the main zone not in use, for callers that must refuse input
+before an allocation fails fatally
+========================
+*/
+int Z_AvailableMemory( void ) {
+	return mainzone->size - mainzone->used;
+}
+
+/*
+========================
 Z_Free
 ========================
 */

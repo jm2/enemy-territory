@@ -139,7 +139,9 @@ typedef struct directive_s
 //the evaluator uses at most 64 values and 64 operators
 #define MAX_EXPRESSION_TOKENS       1024
 //token copies alive at once (definitions, macro arguments, expressions and
-//queued expansion), each about 1.1 KB of the zone
+//queued expansion), each 1088 bytes of the zone on the Mac; legacy menus
+//hold 6122 at their peak.  The zone itself is the tighter bound on the Mac
+//(10 MB): every copy and definition also needs PS_MEMORY_RESERVE to stay free
 #define MAX_LIVE_TOKENS             ( 2 * TOKEN_HEAP_SIZE )
 //macro calls nested inside the arguments of a macro call; each level
 //recurses through PC_ReadDefineParms and PC_ExpandDefine
@@ -212,6 +214,10 @@ int PC_PushIndent( source_t *source, int type, int skip ) {
 
 	if ( source->numindents >= MAX_SOURCE_INDENTS ) {
 		SourceError( source, "more than %d nested conditionals", MAX_SOURCE_INDENTS );
+		return qfalse;
+	} //end if
+	if ( !PS_MemoryAvailable( sizeof( indent_t ) ) ) {
+		SourceError( source, "out of memory for conditionals" );
 		return qfalse;
 	} //end if
 	indent = (indent_t *) GetMemory( sizeof( indent_t ) );
@@ -354,8 +360,8 @@ static void PC_DiscardSourceTokens( source_t *source ) {
 // Changes Globals:		-
 //============================================================================
 static int PC_ReserveToken( source_t *source ) {
-	if ( numtokens >= MAX_LIVE_TOKENS ) {
-		SourceError( source, "preprocessor holds more than %d tokens", MAX_LIVE_TOKENS );
+	if ( numtokens >= MAX_LIVE_TOKENS || !PS_MemoryAvailable( sizeof( token_t ) ) ) {
+		SourceError( source, "preprocessor holds too many tokens (%d)", numtokens );
 		PC_DiscardSourceTokens( source );
 		return qfalse;
 	} //end if
@@ -1210,6 +1216,9 @@ int PC_Directive_include( source_t *source ) {
 		return qfalse;
 #endif //SCREWUP
 	} //end if
+	//every load counts, so repeated recursive includes cannot reload a
+	//file without limit
+	source->numincludes++;
 	for ( depth = 0, s = source->scriptstack; s; s = s->next ) depth++;
 	if ( depth >= MAX_SOURCE_INCLUDE_DEPTH ) {
 		SourceError( source, "more than %d active source files", MAX_SOURCE_INCLUDE_DEPTH );
@@ -1221,7 +1230,6 @@ int PC_Directive_include( source_t *source ) {
 		FreeScript( script );
 		return qtrue;
 	} //end if
-	source->numincludes++;
 	return qtrue;
 } //end of the function PC_Directive_include
 //============================================================================
@@ -1383,6 +1391,10 @@ int PC_Directive_define( source_t *source ) {
 #endif //DEFINEHASHING
 	} //end if
 	  //allocate define
+	if ( !PS_MemoryAvailable( sizeof( define_t ) + strlen( token.string ) + 1 ) ) {
+		SourceError( source, "out of memory for #define %s", token.string );
+		return qfalse;
+	} //end if
 	define = (define_t *) GetMemory( sizeof( define_t ) + strlen( token.string ) + 1 );
 	memset( define, 0, sizeof( define_t ) );
 	define->name = (char *) define + sizeof( define_t );

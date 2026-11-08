@@ -1016,19 +1016,25 @@ int SV_GameSystemCalls( int *args ) {
 
 /*
 ===============
-SV_ShutdownGameProgs
+SV_FreeGameSourceHandles
 
-Called every time a map changes
+The restarted or next game cannot know the preprocessor handles the old one
+left open; free them so they do not hold slots and live tokens
 ===============
 */
 static void SV_FreeGameSourceHandles( void ) {
-	// the restarted or next game cannot know the preprocessor handles the old
-	// one left open; free them so they do not hold slots and live tokens
 	if ( botlib_export ) {
 		botlib_export->PC_FreeSourceHandles( PC_OWNER_GAME );
 	}
 }
 
+/*
+===============
+SV_ShutdownGameProgs
+
+Called every time a map changes
+===============
+*/
 void SV_ShutdownGameProgs( void ) {
 	if ( !gvm ) {
 		return;
