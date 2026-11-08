@@ -9,9 +9,8 @@ covers MacsBug, crashes and logs in more detail.
 
 | File | Use |
 | --- | --- |
-| `ET_Installer.bin` | One-file install: application, game data, and the stage 1 `METParms.txt` and `bringup.cfg` |
+| `ET_Install.img.bin` | The install as a Disk Copy image: application, game data, and the stage 1 `METParms.txt` and `bringup.cfg` |
 | `ET.bin` | The bare application, for redeploying after a rebuild |
-| `ET_Install.img.bin` | The same install as a Disk Copy image, which the Disk Copy in Mac OS 9 mounts |
 | `package.txt` | Commit, whether the tree was modified, `-O` level, whether it has the stage 1 files, and each file's SHA-256 |
 | `symbols/` | `ET.xcoff` and the manifest. Stays on the build machine for crash reports |
 
@@ -24,26 +23,21 @@ the stages pass at `-O0`, `./build_mac.sh package --bringup -DET_OPT=-O2` repeat
 a difference between the two points at the optimizer. `package.txt` records which one a package
 is (`opt=`).
 
-**First install.** Transfer `ET_Installer.bin` in binary mode and decode it with StuffIt Expander.
-Put `ET Installer` on a writable disk and double-click it. It checks a CRC-32 of every file, and
-only when all have passed does it name the result `Enemy Territory`, beside itself. A failed run
-removes what it wrote, and says so if it cannot. A force quit, crash or power cut leaves a folder
-called `ET being unpacked`: delete it and run the installer again. If you switch away while it
-runs, its result waits behind the Finder until you switch back. It refuses to run beside an existing `Enemy Territory`
-folder, so move that first; it never changes one. It needs about 270 MB of free disk beyond the
-installer itself, and you can delete the installer afterwards.
+**First install.** Transfer `ET_Install.img.bin` in binary mode, decode it with StuffIt Expander and
+double-click the result: the Disk Copy 6.3.3 that comes with Mac OS 9.2.2 mounts it, and Toast is
+not needed. Copy the `Enemy Territory` folder off it to a writable disk and run it from there: the
+volume is locked, and the game writes `etkey`, its config and its logs beside itself. If an `Enemy
+Territory` folder is already there, move or rename it first: replacing it loses `etkey`, the config
+and the logs. It needs about 280 MB for the decoded image and 270 MB for the copy; once the image is
+ejected it can be deleted. Under ClassicMac an image built the same way mounted on a double-click,
+the files copied off intact, and stage 1 passed from the copy; it has not been tried on the mini.
+Images built before PR #20 needed Toast: Disk Copy refused them as a bare hybrid volume typed for
+another creator. `ndif_image.py`, shared with the Quake III port, adds what Disk Copy needs. The
+one-file `ET_Installer.bin` of earlier packages is gone: the image does the same job with stock
+software.
 
 **After a rebuild.** Transfer `ET.bin`, decode it with StuffIt Expander, and replace `ET` in the
 folder. It is one file and keeps your `etkey`, config and logs.
-
-**Disk image.** Decode `ET_Install.img.bin` with StuffIt Expander and double-click the result:
-the Disk Copy 6.3.3 that comes with Mac OS 9.2.2 mounts it, and Toast is not needed. Copy the
-`Enemy Territory` folder off it to a writable disk and run it from there: the volume is locked,
-and the game writes `etkey`, its config and its logs beside itself. It needs about 280 MB for the
-decoded image and 270 MB for the copy. Under ClassicMac an image built the same way mounted on a double-click,
-the files copied off intact, and stage 1 passed from the copy; it has not been tried on the mini.
-Images built before this needed Toast: Disk Copy refused them as a bare hybrid volume typed for
-another creator. `ndif_image.py`, shared with the Quake III port, adds what Disk Copy needs.
 
 The tree on disk is:
 

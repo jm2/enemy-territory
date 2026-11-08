@@ -95,17 +95,3 @@ add_custom_command(OUTPUT ET.bin ET.ad %ET.ad
 include("${CMAKE_SOURCE_DIR}/cmake/EtBuildManifest.cmake")
 et_add_build_manifest(ET)
 add_custom_target(ET_APPL ALL DEPENDS ET.bin ET.ad %ET.ad ET.manifest.txt)
-
-# ---- the one-file installer: scripts/installer_pack.py adds the game to it
-add_executable(ETInstaller ${ET_MAC}/et_installer.c)
-target_link_libraries(ETInstaller PRIVATE -lInterfaceLib)
-add_custom_command(OUTPUT ETInstaller.pef
-    COMMAND "${RETRO68_MAKEPEF}" "$<TARGET_FILE:ETInstaller>" -o ETInstaller.pef
-    DEPENDS ETInstaller COMMENT "Converting ETInstaller to PEF" VERBATIM)
-add_custom_command(OUTPUT ETInstaller.bin
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/installer_pack.py" pef-length ETInstaller.pef et_installer_pef.r
-    COMMAND "${RETRO68_REZ}" "${ET_MAC}/et_installer.r" -I "${ET_REZ_INCLUDES}" -I "${CMAKE_BINARY_DIR}"
-        -t APPL -c WfEI --data ETInstaller.pef -o ETInstaller.bin
-    DEPENDS ETInstaller.pef ${ET_MAC}/et_installer.r "${CMAKE_SOURCE_DIR}/scripts/installer_pack.py"
-    COMMENT "Building the installer" VERBATIM)
-add_custom_target(ET_INSTALLER_APPL ALL DEPENDS ETInstaller.bin)
