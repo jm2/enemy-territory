@@ -46,7 +46,7 @@ check
 COMMIT=$(git rev-parse HEAD) || fail "a package records its commit, so it needs a git checkout"
 OPT=$(sed -n 's/^ET_OPT:[A-Z]*=//p' build-mac/CMakeCache.txt)
 
-for container in "$APP.pef" "$APP.bin" "$APP.ad" "build-mac/%ET.ad" "$APP.xcoff" "$APP.manifest.txt" build-mac/ETInstaller.bin; do
+for container in "$APP.pef" "$APP.bin" "$APP.ad" "build-mac/%ET.ad" "$APP.xcoff" "$APP.manifest.txt"; do
     [ -s "$container" ] || fail "$container is missing; build first"
 done
 
@@ -131,15 +131,7 @@ print("Disk Copy image verified")
 N
 rm -f "$RELEASE/ET_Install.img"
 
-# the one-file install, and the bare application for a redeploy
-EXTRA=()
-if [ "$BRINGUP" = 1 ]; then EXTRA=(METParms.txt etmain/bringup.cfg); fi
-FILES=()
-while read -r sum file; do FILES+=("$file"); done < "$SUMS"
-python3 -B scripts/installer_pack.py pack build-mac/ETInstaller.bin "$TEMP/ET Installer" "$TEMP/ET Installer.rsrc" \
-    "$CONTENT/Enemy Territory" "$APP.bin" "${FILES[@]}" "${EXTRA[@]}"
-python3 -B macbinary_encode.py "$TEMP/ET Installer" "$RELEASE/ET_Installer.bin" "APPL" "WfEI" "$TEMP/ET Installer.rsrc"
-python3 -B scripts/installer_pack.py verify "$RELEASE/ET_Installer.bin" "$SUMS" "$APP.bin" "${EXTRA[@]}"
+# the bare application, for a redeploy
 cp "$APP.bin" "$RELEASE/ET.bin"
 rm -rf "$CONTENT" "$TEMP"
 
@@ -151,7 +143,7 @@ cp "$APP.xcoff" "$APP.pef" "$APP.manifest.txt" "$SYMBOLS/"
     echo "opt=$OPT"
     echo "bringup=$BRINGUP"
     sed -n 's/^pef_sha256=/&/p' "$APP.manifest.txt"
-    (cd "$RELEASE" && sha256sum ET_Installer.bin ET.bin ET_Install.img.bin)
+    (cd "$RELEASE" && sha256sum ET.bin ET_Install.img.bin)
 } > "$RELEASE/package.txt"
 cat "$RELEASE/package.txt"
 ls -l "$RELEASE"

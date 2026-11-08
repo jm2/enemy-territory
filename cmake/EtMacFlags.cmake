@@ -9,7 +9,7 @@
 #       dereference carries on and a later NULL check still has to run
 #   -ffp-contract=off: no fused multiply-add, so Pmove matches x86 peers and servers
 #   -fno-strict-aliasing: the engine and mods have it already; this reaches the splines
-#       C++, the console hooks and the installer, which pun floats too
+#       C++ and the console hooks, which pun floats too
 set(ET_OPT "-O2" CACHE STRING "Optimization for the Mac build")
 set(ET_SAFE_OPT "-fwrapv -fno-delete-null-pointer-checks -ffp-contract=off -fno-strict-aliasing")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${ET_OPT} ${ET_SAFE_OPT} -g")

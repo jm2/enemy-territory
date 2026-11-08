@@ -64,7 +64,7 @@ The image is a genisoimage HFS/ISO hybrid, wrapped by `ndif_image.py` as a Disk 
 III's (`4aee5454`), copied verbatim; keep the two the same. Its docstring has the layout, which was
 read back from images Disk Copy 6.3.3 made.
 
-`release_mac/` is rebuilt from nothing each time, and the image and the installer are both read back:
+`release_mac/` is rebuilt from nothing each time, and the image is read back:
 the application must match the build, and the data must match the checksums. `docs/target-run.md` lists the
 output. A plain build needs no game data.
 
@@ -73,7 +73,7 @@ and `cmake/mac_partition.py` fails it if the SIZE minimum cannot hold the linked
 engine's fixed demand with headroom. `retro68_commit` reads `unknown` when `tools/Retro68-src`
 has no git checkout, as it does here, and `retro68_pinned` is then `no`.
 
-`tests/package/run.sh` checks the refusals, the partition arithmetic and the installer format. There is no CI, so run it
+`tests/package/run.sh` checks the refusals, the partition arithmetic and the Disk Copy image. There is no CI, so run it
 by hand after changing a memory default.
 
 `package.txt` records the commit (`commit=`), whether the tree was modified (`tree=`), `ET_OPT`
