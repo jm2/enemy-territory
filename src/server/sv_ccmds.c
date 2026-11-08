@@ -534,6 +534,11 @@ static void SV_MapRestart_f( void ) {
 			isBot = qfalse;
 		}
 
+		// a client still loading has the configstring changes made since
+		// its gamestate only marked: send them ahead of map_restart, as
+		// everyone in the world got them, so CG_MapRestart sees them
+		SV_UpdateClientConfigstrings( client );
+
 		// add the map_restart command
 		SV_AddServerCommand( client, "map_restart\n" );
 
@@ -549,9 +554,7 @@ static void SV_MapRestart_f( void ) {
 			continue;
 		}
 
-		client->state = CS_ACTIVE;
-
-		SV_ClientEnterWorld( client, &client->lastUsercmd );
+		SV_ClientMapRestarted( client );
 	}
 
 	// run another frame to allow things to look at all the players

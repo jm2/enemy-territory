@@ -116,6 +116,30 @@ done
 # by design (odd-pixel vectors; fine on x86 and PPC), so only the alignment check is off.
 "$CC" $FLAGS -fno-sanitize-recover=all -fno-sanitize=alignment tests/security/test_cin.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/cin"
 "$OUT/cin"
+# The server's client-state handling: the real functions alone, their files need the whole engine
+python3 - "$OUT/server.inc" <<'S'
+import sys
+def fn(path,sigs):
+    s=open(path,encoding='latin-1').read(); out=''
+    for sig in sigs:
+        a=s.index('\n'+sig)+1; out+=s[a:s.index('\n}\n',a)+3]
+    return out
+inc=fn('src/server/sv_main.c',['char    *SV_ExpandNewlines( char *in ) {','void SV_AddServerCommand( client_t *client, const char *cmd ) {',
+    'void QDECL SV_SendServerCommand( client_t *cl, const char *fmt, ... ) {'])
+inc+=fn('src/server/sv_init.c',['void SV_SetConfigstring( int index, const char *val ) {','static void SV_SendConfigstring( client_t *client, int index ) {',
+    'void SV_UpdateConfigStrings( void ) {','void SV_UpdateClientConfigstrings( client_t *client ) {','void SV_SetUserinfo( int index, const char *val ) {'])
+inc+=fn('src/server/sv_client.c',['void SV_SendClientGameState( client_t *client ) {','void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd ) {',
+    'static void SV_CloseDownload( client_t *cl ) {','void SV_DoneDownload_f( client_t *cl ) {','void SV_NextDownload_f( client_t *cl ) {',
+    'void SV_CopyClientName( char *dest, const char *src, int destsize ) {','void SV_UserinfoChanged( client_t *cl ) {',
+    'static void SV_ResetPureClient_f( client_t *cl ) {','static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {',
+    'void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {','void SV_ClientMapRestarted( client_t *client ) {',
+    'void SV_WWWDownload_f( client_t *cl ) {'])
+inc+=fn('src/server/sv_bot.c',['int SV_BotAllocateClient( int clientNum ) {'])
+inc+=fn('src/server/sv_ccmds.c',['static void SV_MapRestart_f( void ) {'])
+open(sys.argv[1],'w',encoding='latin-1').write(inc)
+S
+"$CC" $FLAGS "-DSERVER_INC=\"$OUT/server.inc\"" tests/security/test_server_state.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/server"
+"$OUT/server"
 for t in msg; do
     "$CC" $FLAGS tests/security/test_$t.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/$t"
     "$OUT/$t"

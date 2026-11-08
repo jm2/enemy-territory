@@ -79,6 +79,9 @@ int SV_BotAllocateClient( int clientNum ) {
 	cl->gentity = SV_GentityNum( i );
 	cl->gentity->s.number = i;
 	cl->state = CS_ACTIVE;
+	// the slot is not cleared: drop what a client loading in it left
+	cl->gamestateOwed = qfalse;
+	memset( cl->csUpdated, 0, sizeof( cl->csUpdated ) );
 	cl->lastPacketTime = svs.time;
 	cl->netchan.remoteAddress.type = NA_BOT;
 	cl->rate = 16384;

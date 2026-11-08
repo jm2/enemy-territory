@@ -165,6 +165,11 @@ typedef struct client_s {
 	qboolean binaryMessageOverflowed;
 
 	int gamestateMessageNum;                // netchan->outgoingSequence of gamestate
+	qboolean gamestateOwed;                 // made active by map_restart before entering the world on
+											// a gamestate (still downloading or loading); cleared by
+											// the next gamestate sent, or a packet on the current serverId
+	byte csUpdated[MAX_CONFIGSTRINGS];      // changed since the gamestate, while CS_PRIMED;
+											// sent by SV_UpdateClientConfigstrings on entering the world
 	int challenge;
 
 	usercmd_t lastUsercmd;
@@ -379,6 +384,7 @@ qboolean SV_VerifyChallenge( char *challenge );
 void SV_SetConfigstringNoUpdate( int index, const char *val );
 void SV_SetConfigstring( int index, const char *val );
 void SV_UpdateConfigStrings( void );
+void SV_UpdateClientConfigstrings( client_t *client );
 void SV_GetConfigstring( int index, char *buffer, int bufferSize );
 
 void SV_SetUserinfo( int index, const char *val );
@@ -402,8 +408,10 @@ void SV_AuthorizeIpPacket( netadr_t from );
 
 void SV_ExecuteClientMessage( client_t *cl, msg_t *msg );
 void SV_UserinfoChanged( client_t *cl );
+void SV_CopyClientName( char *dest, const char *src, int destsize );
 
 void SV_ClientEnterWorld( client_t *client, usercmd_t *cmd );
+void SV_ClientMapRestarted( client_t *client );
 void SV_FreeClientNetChan( client_t* client );
 void SV_DropClient( client_t *drop, const char *reason );
 
