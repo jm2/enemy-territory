@@ -608,6 +608,11 @@ static void Finish( out_t *o ) {
 	Header( o, ROQ_QUAD_JPEG, 0, 0 );
 	Header( o, ROQ_QUAD_JPEG, 0, 0 );
 }
+static void Filler0( out_t *o, unsigned int n ) {
+	while ( n-- ) {
+		Put8( o, 0 );
+	}
+}
 static void Filler( out_t *o, unsigned int n ) {
 	while ( n-- ) {
 		Put8( o, 0x11 );
@@ -655,14 +660,20 @@ static void CaseDimensions( void ) {
 	static const int dims[][2] = {
 		{ 0, 16 }, { 16, 0 }, { 12, 16 }, { 16, 20 }, { 1, 1 }, { 4, 4 }, { 520, 8 }, { 8, 520 },
 		{ 1024, 256 }, { 8, 32768 }, { 32768, 8 }, { 65535, 65535 }, { 65528, 8 }, { 640, 480 },
-		{ 24, 40 }, { 24, 16 }, { 8, 24 }, { 40, 8 }, { 1024, 8 },     // not powers of two, or too wide
+		{ 24, 40 }, { 24, 16 }, { 8, 24 }, { 40, 8 },                   // not powers of two
+		{ 1024, 8 }, { 8, 1024 }, { 1024, 1024 }, { 2048, 512 }, { 512, 1024 },   // over 512
 	};
 	int i;
 	for ( i = 0; i < (int)( sizeof( dims ) / sizeof( dims[0] ) ); i++ ) {
 		out_t o;
+		/* an all-skip frame long enough for the size, so only the size check can refuse it */
+		unsigned int words = ( (unsigned int)dims[i][0] * dims[i][1] / 64 + 7 ) / 8;
+		if ( words > 65528 / 2 ) {
+			words = 65528 / 2;
+		}
 		Start( &o, dims[i][0], dims[i][1] );
-		Header( &o, ROQ_QUAD_VQ, 2, 0 );
-		Put16( &o, 0 );
+		Header( &o, ROQ_QUAD_VQ, words * 2, 0 );
+		Filler0( &o, words * 2 );
 		Finish( &o );
 		ExpectStopped( o.d, o.len, CIN_loop, "bad frame size accepted" );
 		CHECK( !cinTable[0].buf, "a frame was decoded at a bad size" );
@@ -1146,6 +1157,52 @@ static void CaseWaitLoop( void ) {
 	free( o.d );
 }
 
+/* A loop or handle switch whose reopen fails frees the slot, even where
+ * CIN_RunCinematic would return early (shader not drawn, system movie off screen). */
+static void CaseFailedReopen( void ) {
+	out_t o;
+	int v;
+	Movie( &o, 16, 16, 2, 8 );
+	for ( v = 0; v < 3; v++ ) {
+		int h;
+		ResetAll();
+		SetFile( o.d, o.len );
+		cls.state = CA_DISCONNECTED;
+		h = CIN_PlayCinematic( "r.roq", 0, 0, 64, 64, v == 1 ? CIN_system : 0 );
+		CHECK( h >= 0, "open" );
+		nowMs = cinTable[h].startTime;
+		CIN_RunCinematic( h );
+		failReopen = 1;
+		cin.currentHandle = h + 1;      // another movie ran since: Run reopens this one
+		if ( v == 0 ) {
+			cinTable[h].playonwalls = -2;
+		} else if ( v == 1 ) {
+			cls.state = CA_DISCONNECTED;
+		}
+		CHECK( CIN_RunCinematic( h ) == FMV_EOF, "failed reopen status" );
+		CHECK( !fileOpen && !cinTable[h].fileName[0], "failed reopen kept the slot" );
+	}
+	free( o.d );
+
+	/* an unknown chunk ends a looping movie, and the loop's reopen fails */
+	memset( &o, 0, sizeof( o ) );
+	FileHeader( &o );
+	Header( &o, ZA_SOUND_MONO, 4, 0 );
+	Filler( &o, 4 );
+	Header( &o, 0x1999, 0, 0 );
+	Finish( &o );
+	ResetAll();
+	SetFile( o.d, o.len );
+	failReopen = 1;
+	{
+		play_t r = Play( CIN_loop, 20, 0 );
+		CHECK( r.status == FMV_EOF && !fileOpen && !cinTable[r.handle].fileName[0], "failed loop reopen kept the slot" );
+	}
+	cls.state = CA_DISCONNECTED;
+	CL_handle = -1;
+	free( o.d );
+}
+
 static const struct { const char *name; void ( *fn )( void ); } cases[] = {
 	{ "oversized-first", CaseOversizedFirst },
 	{ "oversized-later", CaseOversizedLater },
@@ -1165,6 +1222,7 @@ static const struct { const char *name; void ( *fn )( void ); } cases[] = {
 	{ "open-header", CaseOpenHeader },
 	{ "reopen-header", CaseReopenHeader },
 	{ "wait-loop", CaseWaitLoop },
+	{ "failed-reopen", CaseFailedReopen },
 };
 
 int main( int argc, char **argv ) {

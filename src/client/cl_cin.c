@@ -1616,6 +1616,10 @@ e_status CIN_RunCinematic( int handle ) {
 		cin.currentHandle = currentHandle;
 		cinTable[currentHandle].status = FMV_EOF;
 		RoQReset();
+		if ( cinTable[currentHandle].status == FMV_EOF ) {
+			RoQShutdown();      // the reopen failed: free the slot before the returns below
+			return FMV_EOF;
+		}
 	}
 
 	if ( cinTable[handle].playonwalls < -1 ) {
