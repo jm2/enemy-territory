@@ -141,3 +141,20 @@ MODELS="tests/security/test_models.c src/renderer/tr_model.c src/renderer/tr_ani
 "$OUT/models"
 "$CC" $FLAGS -fno-sanitize-recover=all -fno-sanitize=shift-base -DMODEL_TEST_SWAP -Isrc/renderer $MODELS "$OUT/q_math_plain.o" -lm -o "$OUT/models_swapped"
 "$OUT/models_swapped"
+# BSP preflight: the real CM_LoadMap and RE_LoadWorldMap on corrupted maps. Set
+# BSP_FILES to a list of .bsp files to also load, truncate and mutate each of them.
+"$CC" $FLAGS tests/security/test_bsp_cm.c src/qcommon/cm_load.c src/qcommon/cm_patch.c src/qcommon/cm_test.c src/qcommon/cm_polylib.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/bsp_cm"
+# R_FindLightmap alone: tr_shader.c needs the whole renderer
+python3 - "$OUT/lightmap.inc" <<'L'
+import sys
+s=open('src/renderer/tr_shader.c',encoding='latin-1').read()
+a=s.index('#define EXTERNAL_LIGHTMAP'); b=s.index('\n}\n',s.index('void R_FindLightmap( int *lightmapIndex ) {'))+3
+open(sys.argv[1],'w',encoding='latin-1').write(s[a:b])
+L
+"$CC" $FLAGS "-DLIGHTMAP_INC=\"$OUT/lightmap.inc\"" tests/security/test_bsp_tr.c src/renderer/tr_curve.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/bsp_tr"
+"$OUT/bsp_cm" | grep -v '^case: \|^    '
+"$OUT/bsp_tr" | grep -v '^case: \|^    '
+if [ -n "${BSP_FILES:-}" ]; then
+    "$OUT/bsp_cm" $BSP_FILES
+    "$OUT/bsp_tr" $BSP_FILES
+fi

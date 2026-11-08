@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 // cmodel.c -- model loading
 
 #include "cm_local.h"
+#include "cm_patch.h"
+#include "bsp_geometry.h"
+#include "bsp_tree.h"
 
 #ifdef BSPC
 
@@ -461,9 +464,11 @@ CMod_LoadEntityString
 =================
 */
 void CMod_LoadEntityString( lump_t *l ) {
-	cm.entityString = Hunk_Alloc( l->filelen, h_high );
+	// the lump need not end in a NUL; the game parses this as a C string
+	cm.entityString = Hunk_Alloc( l->filelen + 1, h_high );
 	cm.numEntityChars = l->filelen;
 	memcpy( cm.entityString, cmod_base + l->fileofs, l->filelen );
+	cm.entityString[l->filelen] = 0;
 }
 
 /*
@@ -599,6 +604,91 @@ unsigned CM_Checksum( dheader_t *header ) {
 
 /*
 ==================
+CM_ValidateBSPPatchGrids
+
+Runs each patch's collision refinement on a scratch grid. Curvature, not
+the source size, decides how far it subdivides, so this is the only way to
+know CM_GeneratePatchCollide will fit. Spans and sizes are already checked.
+==================
+*/
+static const char *CM_ValidateBSPPatchGrids( const byte *buf, const dheader_t *header ) {
+	const byte *surface, *vertices;
+	vec3_t points[MAX_PATCH_VERTS];
+	int i, j, k, count, width, height;
+	const char *error;
+
+	count = header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t );
+	surface = buf + header->lumps[LUMP_SURFACES].fileofs;
+	for ( i = 0 ; i < count ; i++, surface += sizeof( dsurface_t ) ) {
+		if ( BSP_FileWord( surface + offsetof( dsurface_t, surfaceType ) ) != MST_PATCH ) {
+			continue;
+		}
+		width = BSP_FileWord( surface + offsetof( dsurface_t, patchWidth ) );
+		height = BSP_FileWord( surface + offsetof( dsurface_t, patchHeight ) );
+		vertices = buf + header->lumps[LUMP_DRAWVERTS].fileofs +
+				   BSP_FileWord( surface + offsetof( dsurface_t, firstVert ) ) * sizeof( drawVert_t );
+		for ( j = 0 ; j < width * height ; j++ ) {
+			for ( k = 0 ; k < 3 ; k++ ) {
+				points[j][k] = BSP_GeometryFloat( vertices + j * sizeof( drawVert_t ) + k * 4 );
+			}
+		}
+		error = CM_ValidatePatchCollide( width, height, points );
+		if ( error ) {
+			return error;
+		}
+	}
+	return NULL;
+}
+
+/*
+==================
+CM_ValidateBSP
+
+Every lump, cross-lump index, span and patch size the loaders below trust,
+checked on the file buffer before CM_LoadMap changes anything.
+==================
+*/
+static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *header ) {
+	const char *error;
+
+	error = BSP_ValidateHeader( buf, length, header );
+	if ( !error ) {
+		// the direct hunk arrays, including the reserved box hull and entity NUL
+		const bspArrayAllocation_t arrays[] = {
+			{ header->lumps[LUMP_SHADERS].filelen / sizeof( dshader_t ), sizeof( dshader_t ), 0 },
+			{ header->lumps[LUMP_LEAFS].filelen / sizeof( dleaf_t ), sizeof( cLeaf_t ), BOX_LEAFS },
+			{ header->lumps[LUMP_LEAFBRUSHES].filelen / 4, sizeof( int ), BOX_LEAF_BRUSHES },
+			{ header->lumps[LUMP_LEAFSURFACES].filelen / 4, sizeof( int ), 0 },
+			{ header->lumps[LUMP_PLANES].filelen / sizeof( dplane_t ), sizeof( cplane_t ), BOX_PLANES },
+			{ header->lumps[LUMP_BRUSHSIDES].filelen / sizeof( dbrushside_t ), sizeof( cbrushside_t ), BOX_SIDES },
+			{ header->lumps[LUMP_BRUSHES].filelen / sizeof( dbrush_t ), sizeof( cbrush_t ), BOX_BRUSHES },
+			{ header->lumps[LUMP_MODELS].filelen / sizeof( dmodel_t ), sizeof( cmodel_t ), 0 },
+			{ header->lumps[LUMP_NODES].filelen / sizeof( dnode_t ), sizeof( cNode_t ), 0 },
+			{ header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t ), sizeof( cPatch_t * ), 0 },
+			{ header->lumps[LUMP_ENTITIES].filelen, 1, 1 }
+		};
+		error = BSP_ValidateAllocations( arrays, sizeof( arrays ) / sizeof( arrays[0] ) );
+	}
+	if ( !error && header->lumps[LUMP_MODELS].filelen / sizeof( dmodel_t ) > MAX_SUBMODELS ) {
+		error = "MAX_SUBMODELS exceeded";
+	}
+	if ( !error ) {
+		error = BSP_ValidateReferences( buf, header );
+	}
+	if ( !error ) {
+		error = BSP_ValidateTree( buf, header );
+	}
+	if ( !error ) {
+		error = BSP_ValidateGeometry( buf, header, MAX_GRID_SIZE, MAX_PATCH_VERTS );
+	}
+	if ( !error ) {
+		error = CM_ValidateBSPPatchGrids( buf, header );
+	}
+	return error;
+}
+
+/*
+==================
 CM_LoadMap
 
 Loads in the map and all submodels
@@ -606,7 +696,7 @@ Loads in the map and all submodels
 */
 void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 	int             *buf;
-	int i;
+	const char      *error;
 	dheader_t header;
 	int length;
 	static unsigned last_checksum;
@@ -628,11 +718,9 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 		return;
 	}
 
-	// free old stuff
-	memset( &cm, 0, sizeof( cm ) );
-	CM_ClearLevelPatches();
-
 	if ( !name[0] ) {
+		memset( &cm, 0, sizeof( cm ) );
+		CM_ClearLevelPatches();
 		cm.numLeafs = 1;
 		cm.numClusters = 1;
 		cm.numAreas = 1;
@@ -654,18 +742,19 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 		Com_Error( ERR_DROP, "Couldn't load %s", name );
 	}
 
+	// check the whole file before the old map, checksum or hunk is touched
+	error = CM_ValidateBSP( (const byte *)buf, length, &header );
+	if ( error ) {
+		FS_FreeFile( buf );
+		Com_Error( ERR_DROP, "CM_LoadMap: %s: %s", name, error );
+	}
+
 	last_checksum = LittleLong( Com_BlockChecksum( buf, length ) );
 	*checksum = last_checksum;
 
-	header = *(dheader_t *)buf;
-	for ( i = 0 ; i < sizeof( dheader_t ) / 4 ; i++ ) {
-		( (int *)&header )[i] = LittleLong( ( (int *)&header )[i] );
-	}
-
-	if ( header.version != BSP_VERSION ) {
-		Com_Error( ERR_DROP, "CM_LoadMap: %s has wrong version number (%i should be %i)"
-				   , name, header.version, BSP_VERSION );
-	}
+	// free old stuff
+	memset( &cm, 0, sizeof( cm ) );
+	CM_ClearLevelPatches();
 
 	cmod_base = (byte *)buf;
 

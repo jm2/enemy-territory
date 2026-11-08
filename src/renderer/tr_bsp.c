@@ -29,6 +29,9 @@ If you have questions concerning this license or the applicable additional terms
 // tr_map.c
 
 #include "tr_local.h"
+#include "../qcommon/bsp_geometry.h"
+#include "../qcommon/bsp_tree.h"
+#include <float.h>
 
 /*
 
@@ -42,6 +45,7 @@ void RE_LoadWorldMap( const char *name );
 
 static world_t s_worldData;
 static byte        *fileBase;
+static int s_bspFogCount;           // fog lump records; R_LoadFogs runs after the surfaces
 
 int c_subdivisions;
 int c_gridVerts;
@@ -105,7 +109,7 @@ R_ColorShiftLightingBytes
 
 ===============
 */
-static void R_ColorShiftLightingBytes( byte in[4], byte out[4] ) {
+static void R_ColorShiftLightingRGB( const byte in[3], byte out[4] ) {
 	int shift, r, g, b;
 
 	// shift the color data based on overbright range
@@ -130,7 +134,15 @@ static void R_ColorShiftLightingBytes( byte in[4], byte out[4] ) {
 	out[0] = r;
 	out[1] = g;
 	out[2] = b;
-	out[3] = in[3];
+	out[3] = 255;
+}
+
+// geometry colors have alpha; RGB lightmap samples do not, so they must not read a fourth byte
+static void R_ColorShiftLightingBytes( byte in[4], byte out[4] ) {
+	byte alpha = in[3];
+
+	R_ColorShiftLightingRGB( in, out );
+	out[3] = alpha;
 }
 
 /*
@@ -184,7 +196,7 @@ float R_ProcessLightmap( byte **pic, int in_padding, int width, int height, byte
 		}
 	} else {
 		for ( j = 0 ; j < width * height; j++ ) {
-			R_ColorShiftLightingBytes( &( *pic )[j * in_padding], &( *pic_out )[j * 4] );
+			R_ColorShiftLightingRGB( &( *pic )[j * in_padding], &( *pic_out )[j * 4] );
 			( *pic_out )[j * 4 + 3] = 255;
 		}
 	}
@@ -201,7 +213,7 @@ R_LoadLightmaps
 #define LIGHTMAP_SIZE   128
 static void R_LoadLightmaps( lump_t *l ) {
 	byte        *buf, *buf_p, *image_p;
-	int len;
+	int len, sourceCount;
 	MAC_STATIC byte image[LIGHTMAP_SIZE * LIGHTMAP_SIZE * 4];
 	int i /*, j*/;
 	float intensity, maxIntensity = 0;
@@ -222,7 +234,9 @@ static void R_LoadLightmaps( lump_t *l ) {
 	R_SyncRenderThread();
 
 	// create all the lightmaps
-	tr.numLightmaps = len / ( LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3 );
+	// R_ValidateBSP checked the lump holds whole lightmaps, at most MAX_LIGHTMAPS of them
+	sourceCount = len / ( LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3 );
+	tr.numLightmaps = sourceCount;
 	if ( tr.numLightmaps == 1 ) {
 		//FIXME: HACK: maps with only one lightmap turn up fullbright for some reason.
 		//this avoids this, but isn't the correct solution.
@@ -236,7 +250,8 @@ static void R_LoadLightmaps( lump_t *l ) {
 
 	for ( i = 0 ; i < tr.numLightmaps ; i++ ) {
 		// expand the 24 bit on-disk to 32 bit
-		buf_p = buf + i * LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3;
+		// the single-lightmap hack's second texture reuses the only source, not the bytes past it
+		buf_p = buf + ( i < sourceCount ? i : 0 ) * LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3;
 		image_p = image;
 
 		intensity = R_ProcessLightmap( &buf_p, 3, LIGHTMAP_SIZE, LIGHTMAP_SIZE, &image_p );
@@ -360,8 +375,17 @@ R_GetSurfMemory
 void *R_GetSurfMemory( int size ) {
 	byte *retval;
 
+	if ( size < 0 || size > INT_MAX - 31 ) {
+		ri.Error( ERR_DROP, "R_GetSurfMemory: bad size %i", size );
+	}
+
 	// round to cacheline
 	size = ( size + 31 ) & ~31;
+
+	// a surface larger than a whole chunk gets its own block
+	if ( size > SURF_HUNK_MAXSIZE ) {
+		return ri.Hunk_Alloc( size, h_low );
+	}
 
 	surfHunkSize += size;
 	if ( surfHunkSize >= SURF_HUNK_MAXSIZE ) {
@@ -861,10 +885,16 @@ ParseFlare
 
 static void ParseFlare( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, int *indexes ) {
 	srfFlare_t      *flare;
-	int i;
+	int i, fogNum;
 
-	// get fog volume
-	surf->fogIndex = LittleLong( ds->fogNum ) + 1;
+	// get fog volume; q3map leaves flares at fogNum 0 even in maps without fogs.
+	// Keep this clamp: fogIndex fills the sort key's fog bits and becomes
+	// tess.fogNum, which indexes tr.world->fogs.
+	fogNum = LittleLong( ds->fogNum );
+	if ( fogNum < -1 || fogNum >= s_bspFogCount ) {
+		fogNum = -1;
+	}
+	surf->fogIndex = fogNum + 1;
 
 	// get shader
 	surf->shader = ShaderForShaderNum( ds->shaderNum, LIGHTMAP_BY_VERTEX );
@@ -1915,54 +1945,106 @@ static void R_LoadSubmodels( lump_t *l ) {
 
 /*
 =================
-R_SetParent
+R_LeafSurfaceBounds
+
+ydnar: a leaf's surface bounds. The mark only advances on a surface type that
+has bounds, as it always has, so one without them ends the walk early.
 =================
 */
+static void R_LeafSurfaceBounds( mnode_t *node ) {
+	int c;
+	msurface_t      **mark;
+	srfGeneric_t    *gen;
 
-static void R_SetParent( mnode_t *node, mnode_t *parent ) {
-	//  set parent
-	node->parent = parent;
-
-	// handle leaf nodes
-	if ( node->contents != -1 ) {
-		// add node surfaces to bounds
-		if ( node->nummarksurfaces > 0 ) {
-			int c;
-			msurface_t      **mark;
-			srfGeneric_t    *gen;
-
-
-			// add node surfaces to bounds
-			mark = node->firstmarksurface;
-			c = node->nummarksurfaces;
-			while ( c-- )
-			{
-				gen = ( srfGeneric_t* )( **mark ).data;
-				if ( gen->surfaceType != SF_FACE &&
-					 gen->surfaceType != SF_GRID &&
-					 gen->surfaceType != SF_TRIANGLES &&
-					 gen->surfaceType != SF_FOLIAGE ) {
-					continue;
-				}
-				AddPointToBounds( gen->bounds[ 0 ], node->surfMins, node->surfMaxs );
-				AddPointToBounds( gen->bounds[ 1 ], node->surfMins, node->surfMaxs );
-				mark++;
-			}
-		}
-
-		// go back
+	if ( node->nummarksurfaces <= 0 ) {
 		return;
 	}
+	mark = node->firstmarksurface;
+	c = node->nummarksurfaces;
+	while ( c-- )
+	{
+		gen = ( srfGeneric_t* )( **mark ).data;
+		if ( gen->surfaceType != SF_FACE &&
+			 gen->surfaceType != SF_GRID &&
+			 gen->surfaceType != SF_TRIANGLES &&
+			 gen->surfaceType != SF_FOLIAGE ) {
+			continue;
+		}
+		AddPointToBounds( gen->bounds[ 0 ], node->surfMins, node->surfMaxs );
+		AddPointToBounds( gen->bounds[ 1 ], node->surfMins, node->surfMaxs );
+		mark++;
+	}
+}
 
-	// recurse to child nodes
-	R_SetParent( node->children[ 0 ], node );
-	R_SetParent( node->children[ 1 ], node );
+/*
+=================
+R_SetLeafParent
 
-	// ydnar: surface bounds
+A leaf can be shared, by one parent or (when opaque) by several. The last
+parent in walk order wins, as before. Its surface bounds are the same on
+every visit, so they are added on the first one only.
+=================
+*/
+static void R_SetLeafParent( mnode_t *leaf, mnode_t *parent ) {
+	if ( !leaf->parent ) {
+		R_LeafSurfaceBounds( leaf );
+	}
+	leaf->parent = parent;
+}
+
+/*
+=================
+R_SetParents
+
+Sets every parent reachable from the world root and folds surface bounds up
+the tree, children before parents, in the order the old recursive walk used.
+It walks back up by parent pointers instead of recursing, so a deep tree
+cannot overflow the stack: BSP_ValidateTree has given every decision node one
+parent and refused cycles.
+=================
+*/
+static void R_SetParents( mnode_t *root ) {
+	mnode_t *node, *child, *parent;
+
+	node = root;
+	node->parent = NULL;
+
+descend:
+	// node is a decision node whose children are not walked yet
+	child = node->children[ 0 ];
+	if ( child->contents == CONTENTS_NODE ) {
+		child->parent = node;
+		node = child;
+		goto descend;
+	}
+	R_SetLeafParent( child, node );
+
+second:
+	child = node->children[ 1 ];
+	if ( child->contents == CONTENTS_NODE ) {
+		child->parent = node;
+		node = child;
+		goto descend;
+	}
+	R_SetLeafParent( child, node );
+
+finish:
+	// ydnar: surface bounds (child 0's mins twice and not its maxs, as before)
 	AddPointToBounds( node->children[ 0 ]->surfMins, node->surfMins, node->surfMaxs );
 	AddPointToBounds( node->children[ 0 ]->surfMins, node->surfMins, node->surfMaxs );
 	AddPointToBounds( node->children[ 1 ]->surfMins, node->surfMins, node->surfMaxs );
 	AddPointToBounds( node->children[ 1 ]->surfMaxs, node->surfMins, node->surfMaxs );
+
+	parent = node->parent;
+	if ( !parent ) {
+		return;
+	}
+	if ( node == parent->children[ 0 ] ) {
+		node = parent;
+		goto second;
+	}
+	node = parent;
+	goto finish;
 }
 
 /*
@@ -2050,7 +2132,7 @@ static void R_LoadNodesAndLeafs( lump_t *nodeLump, lump_t *leafLump ) {
 	}
 
 	// chain decendants
-	R_SetParent( s_worldData.nodes, NULL );
+	R_SetParents( s_worldData.nodes );
 }
 
 //=============================================================================
@@ -2223,7 +2305,7 @@ static void R_LoadFogs( lump_t *l, lump_t *brushesLump, lump_t *sidesLump ) {
 
 			firstSide = LittleLong( brush->firstSide );
 
-			if ( (unsigned)firstSide > sidesCount - 6 ) {
+			if ( sidesCount < 6 || (unsigned)firstSide > (unsigned)( sidesCount - 6 ) ) {
 				ri.Error( ERR_DROP, "fog brush sideNumber out of range" );
 			}
 
@@ -2393,84 +2475,62 @@ void R_FindLightGridBounds( vec3_t mins, vec3_t maxs ) {
 
 /*
 ================
-R_LoadLightGrid
+R_ParseGridSize
 
+Keeps sscanf's partial-value behavior, but refuses a size the grid cannot divide by.
 ================
 */
-void R_LoadLightGrid( lump_t *l ) {
+static const char *R_ParseGridSize( const char *value, vec3_t size ) {
+	char *end;
+	float number;
 	int i;
-	vec3_t maxs;
-	int numGridPoints;
-	world_t *w;
-//	float	*wMins, *wMaxs;
-	vec3_t wMins, wMaxs;
 
-	w = &s_worldData;
-
-	w->lightGridInverseSize[0] = 1.0 / w->lightGridSize[0];
-	w->lightGridInverseSize[1] = 1.0 / w->lightGridSize[1];
-	w->lightGridInverseSize[2] = 1.0 / w->lightGridSize[2];
-
-//----(SA)	modified
-	R_FindLightGridBounds( wMins, wMaxs );
-//	wMins = w->bmodels[0].bounds[0];
-//	wMaxs = w->bmodels[0].bounds[1];
-//----(SA)	end
-
-	for ( i = 0 ; i < 3 ; i++ ) {
-		w->lightGridOrigin[i] = w->lightGridSize[i] * ceil( wMins[i] / w->lightGridSize[i] );
-		maxs[i] = w->lightGridSize[i] * floor( wMaxs[i] / w->lightGridSize[i] );
-		w->lightGridBounds[i] = ( maxs[i] - w->lightGridOrigin[i] ) / w->lightGridSize[i] + 1;
+	for ( i = 0; i < 3; i++ ) {
+		number = strtof( value, &end );
+		if ( end == value ) {
+			break;
+		}
+		if ( !( number > 0 ) || number > FLT_MAX || 1.0 / (double)number > FLT_MAX ) {
+			return "invalid BSP light grid size";
+		}
+		size[i] = number;
+		value = end;
 	}
-
-	numGridPoints = w->lightGridBounds[0] * w->lightGridBounds[1] * w->lightGridBounds[2];
-
-	if ( l->filelen != numGridPoints * 8 ) {
-		ri.Printf( PRINT_WARNING, "WARNING: light grid mismatch\n" );
-		w->lightGridData = NULL;
-		return;
-	}
-
-	w->lightGridData = ri.Hunk_Alloc( l->filelen, h_low );
-	memcpy( w->lightGridData, ( void * )( fileBase + l->fileofs ), l->filelen );
-
-	// deal with overbright bits
-	for ( i = 0 ; i < numGridPoints ; i++ ) {
-		R_ColorShiftLightingBytes( &w->lightGridData[i * 8], &w->lightGridData[i * 8] );
-		R_ColorShiftLightingBytes( &w->lightGridData[i * 8 + 3], &w->lightGridData[i * 8 + 3] );
-	}
+	return NULL;
 }
 
 /*
 ================
-R_LoadEntities
+R_ParseWorldspawn
+
+Shader remaps and the light grid size from the first entity. The preflight
+runs it with remap off on a private copy; R_LoadEntities runs it for real.
 ================
 */
-void R_LoadEntities( lump_t *l ) {
-	char *p, *token, *s;
+static const char *R_ParseWorldspawn( char *text, vec3_t gridSize, qboolean remap ) {
+	char *p, *end, *token, *s;
 	char keyname[MAX_TOKEN_CHARS];
 	char value[MAX_TOKEN_CHARS];
-	world_t *w;
+	const char *error;
 
-	w = &s_worldData;
-	w->lightGridSize[0] = 64;
-	w->lightGridSize[1] = 64;
-	w->lightGridSize[2] = 128;
+	gridSize[0] = 64;
+	gridSize[1] = 64;
+	gridSize[2] = 128;
 
-	p = ( char * )( fileBase + l->fileofs );
-
-	// store for reference by the cgame
-	w->entityString = ri.Hunk_Alloc( l->filelen + 1, h_low );
-	strcpy( w->entityString, p );
-	w->entityParsePoint = w->entityString;
-
+	p = text;
+	end = text + strlen( text );
 	token = COM_ParseExt( &p, qtrue );
 	if ( !*token || *token != '{' ) {
-		return;
+		return NULL;
 	}
 
 	// only parse the world spawn
 	while ( 1 ) {
+		// an unterminated quote leaves the cursor past the NUL
+		if ( !p || p > end ) {
+			break;
+		}
+
 		// parse key
 		token = COM_ParseExt( &p, qtrue );
 
@@ -2478,6 +2538,10 @@ void R_LoadEntities( lump_t *l ) {
 			break;
 		}
 		Q_strncpyz( keyname, token, sizeof( keyname ) );
+
+		if ( !p || p > end ) {
+			break;
+		}
 
 		// parse value
 		token = COM_ParseExt( &p, qtrue );
@@ -2492,19 +2556,166 @@ void R_LoadEntities( lump_t *l ) {
 		if ( !Q_strncmp( keyname, s, strlen( s ) ) ) {
 			s = strchr( value, ';' );
 			if ( !s ) {
-				ri.Printf( PRINT_WARNING, "WARNING: no semi colon in shaderremap '%s'\n", value );
+				if ( remap ) {
+					ri.Printf( PRINT_WARNING, "WARNING: no semi colon in shaderremap '%s'\n", value );
+				}
 				break;
 			}
 			*s++ = 0;
-			R_RemapShader( value, s, "0" );
+			if ( remap ) {
+				R_RemapShader( value, s, "0" );
+			}
 			continue;
 		}
 		// check for a different grid size
 		if ( !Q_stricmp( keyname, "gridsize" ) ) {
-			sscanf( value, "%f %f %f", &w->lightGridSize[0], &w->lightGridSize[1], &w->lightGridSize[2] );
+			error = R_ParseGridSize( value, gridSize );
+			if ( error ) {
+				return error;
+			}
 			continue;
 		}
 	}
+	return NULL;
+}
+
+typedef struct {
+	vec3_t size, inverseSize, origin;
+	int bounds[3];
+	int numPoints;
+} bspLightGrid_t;
+
+/*
+================
+R_ValidateBSPLightGrid
+
+The light grid R_LoadLightGrid will use, computed with the same float
+operations as before, from the worldspawn gridsize and model 0's bounds.
+A bad gridsize refuses the map; a grid too large to index becomes no grid.
+================
+*/
+static const char *R_ValidateBSPLightGrid( const byte *buffer, const dheader_t *header, bspLightGrid_t *grid ) {
+	const byte *model = buffer + header->lumps[LUMP_MODELS].fileofs;
+	const lump_t *entities = &header->lumps[LUMP_ENTITIES];
+	char *text;
+	const char *error;
+	double origin, maximum;
+	float minQuotient, maxQuotient, maxAligned, count;
+	unsigned int points = 1, capacity = ( INT_MAX - 4096u ) / 8;
+	int i;
+
+	memset( grid, 0, sizeof( *grid ) );
+	text = malloc( entities->filelen + 1 );
+	if ( !text ) {
+		return "BSP entity validation allocation failed";
+	}
+	memcpy( text, buffer + entities->fileofs, entities->filelen );
+	text[entities->filelen] = 0;
+	error = R_ParseWorldspawn( text, grid->size, qfalse );
+	free( text );
+	if ( error ) {
+		return error;
+	}
+	for ( i = 0; i < 3; i++ ) {
+		grid->inverseSize[i] = 1.0 / grid->size[i];
+	}
+	for ( i = 0; i < 3; i++ ) {
+		// R_FindLightGridBounds takes the world model's bounds
+		minQuotient = BSP_GeometryFloat( model + i * 4 ) / grid->size[i];
+		maxQuotient = BSP_GeometryFloat( model + 12 + i * 4 ) / grid->size[i];
+		if ( !( minQuotient >= -FLT_MAX && minQuotient <= FLT_MAX && maxQuotient >= -FLT_MAX && maxQuotient <= FLT_MAX ) ) {
+			goto noGrid;
+		}
+		origin = grid->size[i] * ceil( minQuotient );
+		maximum = grid->size[i] * floor( maxQuotient );
+		if ( !( origin >= -FLT_MAX && origin <= FLT_MAX && maximum >= -FLT_MAX && maximum <= FLT_MAX ) ) {
+			goto noGrid;
+		}
+		grid->origin[i] = (float)origin;
+		maxAligned = (float)maximum;
+		count = ( maxAligned - grid->origin[i] ) / grid->size[i] + 1;
+		if ( !( (double)count <= INT_MAX ) ) {
+			goto noGrid;
+		}
+		grid->bounds[i] = count > 0 ? (int)count : 0;
+	}
+	if ( !grid->bounds[0] || !grid->bounds[1] || !grid->bounds[2] ) {
+		return NULL;
+	}
+	for ( i = 0; i < 3; i++ ) {
+		if ( (unsigned int)grid->bounds[i] > capacity / points ) {
+			goto noGrid;
+		}
+		points *= grid->bounds[i];
+	}
+	grid->numPoints = points;
+	return NULL;
+
+noGrid:
+	// a grid too large to index is no grid: R_LoadLightGrid warns and lights
+	// entities without one, as for a mismatched lump
+	VectorClear( grid->origin );
+	grid->bounds[0] = grid->bounds[1] = grid->bounds[2] = 0;
+	grid->numPoints = 0;
+	return NULL;
+}
+
+/*
+================
+R_LoadLightGrid
+
+================
+*/
+static void R_LoadLightGrid( lump_t *l, const bspLightGrid_t *grid ) {
+	int i;
+	world_t *w;
+
+	w = &s_worldData;
+
+	VectorCopy( grid->size, w->lightGridSize );
+	VectorCopy( grid->inverseSize, w->lightGridInverseSize );
+	VectorCopy( grid->origin, w->lightGridOrigin );
+	for ( i = 0 ; i < 3 ; i++ ) {
+		w->lightGridBounds[i] = grid->bounds[i];
+	}
+
+	// an empty grid is no grid: sampling would read past a zero-byte block
+	if ( !grid->numPoints || l->filelen != grid->numPoints * 8 ) {
+		if ( l->filelen || grid->numPoints ) {
+			ri.Printf( PRINT_WARNING, "WARNING: light grid mismatch\n" );
+		}
+		w->lightGridData = NULL;
+		return;
+	}
+
+	w->lightGridData = ri.Hunk_Alloc( l->filelen, h_low );
+	memcpy( w->lightGridData, ( void * )( fileBase + l->fileofs ), l->filelen );
+
+	// deal with overbright bits
+	for ( i = 0 ; i < grid->numPoints ; i++ ) {
+		R_ColorShiftLightingBytes( &w->lightGridData[i * 8], &w->lightGridData[i * 8] );
+		R_ColorShiftLightingBytes( &w->lightGridData[i * 8 + 3], &w->lightGridData[i * 8 + 3] );
+	}
+}
+
+/*
+================
+R_LoadEntities
+================
+*/
+static void R_LoadEntities( lump_t *l ) {
+	world_t *w;
+
+	w = &s_worldData;
+
+	// store for reference by the cgame; the lump need not end in a NUL
+	w->entityString = ri.Hunk_Alloc( l->filelen + 1, h_low );
+	memcpy( w->entityString, fileBase + l->fileofs, l->filelen );
+	w->entityString[l->filelen] = 0;
+	w->entityParsePoint = w->entityString;
+
+	// R_ValidateBSPLightGrid already refused a bad gridsize
+	R_ParseWorldspawn( w->entityString, w->lightGridSize, qtrue );
 }
 
 /*
@@ -2527,22 +2738,171 @@ qboolean R_GetEntityToken( char *buffer, int size ) {
 
 /*
 =================
+R_ValidateBSPAllocations
+
+The renderer's direct lump arrays, with its own structure sizes.
+=================
+*/
+static const char *R_ValidateBSPAllocations( const dheader_t *header ) {
+	const bspArrayAllocation_t arrays[] = {
+		{ header->lumps[LUMP_SHADERS].filelen / sizeof( dshader_t ), sizeof( dshader_t ), 0 },
+		{ header->lumps[LUMP_PLANES].filelen / sizeof( dplane_t ), 2 * sizeof( cplane_t ), 0 },
+		{ header->lumps[LUMP_FOGS].filelen / sizeof( dfog_t ), sizeof( fog_t ), 1 },
+		{ header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t ), sizeof( msurface_t ), 0 },
+		{ header->lumps[LUMP_LEAFSURFACES].filelen / 4, sizeof( msurface_t * ), 0 },
+		{ header->lumps[LUMP_NODES].filelen / sizeof( dnode_t ) + header->lumps[LUMP_LEAFS].filelen / sizeof( dleaf_t ), sizeof( mnode_t ), 0 },
+		{ header->lumps[LUMP_MODELS].filelen / sizeof( dmodel_t ), sizeof( bmodel_t ), 0 },
+		{ header->lumps[LUMP_ENTITIES].filelen, 1, 1 }
+	};
+
+	// tr.lightmaps is a fixed array
+	if ( header->lumps[LUMP_LIGHTMAPS].filelen / ( LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3 ) > MAX_LIGHTMAPS ) {
+		return "BSP has more than MAX_LIGHTMAPS lightmaps";
+	}
+	// a surface's fog index (fog record + 1) has 5 bits in the draw sort key; 32
+	// would spill into the entity number. q3map2 caps fogs at 30.
+	if ( header->lumps[LUMP_FOGS].filelen / sizeof( dfog_t ) > 31 ) {
+		return "BSP has more than 31 fogs";
+	}
+	// each submodel takes a slot through R_AllocModel, which returns NULL when full
+	if ( tr.numModels < 0 || tr.numModels > MAX_MOD_KNOWN ||
+		 header->lumps[LUMP_MODELS].filelen / sizeof( dmodel_t ) > (unsigned int)( MAX_MOD_KNOWN - tr.numModels ) ) {
+		return "BSP submodels exceed available renderer model slots";
+	}
+	return BSP_ValidateAllocations( arrays, sizeof( arrays ) / sizeof( arrays[0] ) );
+}
+
+/* Adds count elements to a surface size, refusing one past the signed hunk limit. */
+static qboolean R_BSPSurfaceBytes( unsigned int *total, unsigned int count, unsigned int elementSize ) {
+	unsigned int limit = INT_MAX - 4096u;
+
+	if ( *total > limit || count > ( limit - *total ) / elementSize ) {
+		return qfalse;
+	}
+	*total += count * elementSize;
+	return qtrue;
+}
+
+/*
+=================
+R_ValidateBSPGeometry
+
+Shared geometry checks with the renderer's patch storage, then the
+R_GetSurfMemory size each triangle and foliage surface will ask for.
+=================
+*/
+static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *header ) {
+	const byte *record, *shader;
+	unsigned int i, count, type, size, verts, indexes, instances;
+	srfTriangles_t *tri = NULL;
+	srfFoliage_t *foliage = NULL;
+	const char *error;
+
+	error = BSP_ValidateGeometry( buffer, header, MAX_PATCH_SIZE * MAX_PATCH_SIZE, MAX_PATCH_SIZE * MAX_PATCH_SIZE );
+	if ( error ) {
+		return error;
+	}
+	count = header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t );
+	for ( i = 0; i < count; i++ ) {
+		record = buffer + header->lumps[LUMP_SURFACES].fileofs + i * sizeof( dsurface_t );
+		type = BSP_FileWord( record + offsetof( dsurface_t, surfaceType ) );
+		verts = BSP_FileWord( record + offsetof( dsurface_t, numVerts ) );
+		indexes = BSP_FileWord( record + offsetof( dsurface_t, numIndexes ) );
+		size = 0;
+		if ( type == MST_PATCH ) {
+			// ParseMesh skips a nodraw patch before R_SubdividePatchToGrid's ctrl grid
+			shader = buffer + header->lumps[LUMP_SHADERS].fileofs + BSP_FileWord( record + offsetof( dsurface_t, shaderNum ) ) * sizeof( dshader_t );
+			if ( BSP_FileWord( shader + offsetof( dshader_t, surfaceFlags ) ) & SURF_NODRAW ) {
+				continue;
+			}
+			if ( BSP_FileWord( record + offsetof( dsurface_t, patchWidth ) ) > MAX_GRID_SIZE ||
+				 BSP_FileWord( record + offsetof( dsurface_t, patchHeight ) ) > MAX_GRID_SIZE ) {
+				return "BSP patch exceeds the renderer grid";
+			}
+		} else if ( type == MST_PLANAR || type == MST_TRIANGLE_SOUP ) {
+			// ParseTriSurf
+			if ( !R_BSPSurfaceBytes( &size, 1, sizeof( *tri ) ) ||
+				 !R_BSPSurfaceBytes( &size, verts, sizeof( tri->verts[0] ) ) ||
+				 !R_BSPSurfaceBytes( &size, indexes, sizeof( tri->indexes[0] ) ) ) {
+				return "BSP triangle surface too large";
+			}
+		} else if ( type == MST_FOLIAGE ) {
+			// ParseFoliage
+			verts = BSP_FileWord( record + offsetof( dsurface_t, patchHeight ) );
+			instances = BSP_FileWord( record + offsetof( dsurface_t, patchWidth ) );
+			if ( !R_BSPSurfaceBytes( &size, 1, sizeof( *foliage ) ) ||
+				 !R_BSPSurfaceBytes( &size, verts, sizeof( foliage->xyz[0] ) + sizeof( foliage->normal[0] ) +
+									 sizeof( foliage->texCoords[0] ) + sizeof( foliage->lmTexCoords[0] ) ) ||
+				 !R_BSPSurfaceBytes( &size, indexes, sizeof( foliage->indexes[0] ) ) ||
+				 !R_BSPSurfaceBytes( &size, instances, sizeof( foliage->instances[0] ) ) ) {
+				return "BSP foliage surface too large";
+			}
+		}
+	}
+	return NULL;
+}
+
+/*
+=================
+R_ValidateBSP
+
+Every lump, cross-lump index, span, size and light grid the loaders below
+trust, checked on the file buffer before RE_LoadWorldMap changes anything.
+=================
+*/
+static const char *R_ValidateBSP( const byte *buffer, int length, dheader_t *header, bspLightGrid_t *grid ) {
+	const char *error;
+
+	error = BSP_ValidateHeader( buffer, length, header );
+	if ( !error ) {
+		error = R_ValidateBSPAllocations( header );
+	}
+	if ( !error ) {
+		error = BSP_ValidateReferences( buffer, header );
+	}
+	if ( !error ) {
+		error = BSP_ValidateTree( buffer, header );
+	}
+	if ( !error ) {
+		error = R_ValidateBSPGeometry( buffer, header );
+	}
+	if ( !error ) {
+		error = R_ValidateBSPLightGrid( buffer, header, grid );
+	}
+	return error;
+}
+
+/*
+=================
 RE_LoadWorldMap
 
 Called directly from cgame
 =================
 */
 void RE_LoadWorldMap( const char *name ) {
-	int i;
-	dheader_t   *header;
+	int length;
+	dheader_t validatedHeader, *header = &validatedHeader;
+	bspLightGrid_t validatedGrid;
+	const char  *error;
 	byte        *buffer;
 	byte        *startMarker;
-
-	skyboxportal = 0;
 
 	if ( tr.worldMapLoaded ) {
 		ri.Error( ERR_DROP, "ERROR: attempted to redundantly load world map\n" );
 	}
+
+	// load it, and check the whole file before any renderer state changes
+	length = ri.FS_ReadFile( name, (void **)&buffer );
+	if ( !buffer ) {
+		ri.Error( ERR_DROP, "RE_LoadWorldMap: %s not found", name );
+	}
+	error = R_ValidateBSP( buffer, length, header, &validatedGrid );
+	if ( error ) {
+		ri.FS_FreeFile( buffer );
+		ri.Error( ERR_DROP, "RE_LoadWorldMap: %s: %s", name, error );
+	}
+
+	skyboxportal = 0;
 
 	// set default sun direction to be used if it isn't
 	// overridden by a shader
@@ -2568,13 +2928,6 @@ void RE_LoadWorldMap( const char *name ) {
 	VectorNormalize( tr.sunDirection );
 
 	tr.worldMapLoaded = qtrue;
-	tr.worldDir = NULL;
-
-	// load it
-	ri.FS_ReadFile( name, (void **)&buffer );
-	if ( !buffer ) {
-		ri.Error( ERR_DROP, "RE_LoadWorldMap: %s not found", name );
-	}
 
 	// ydnar: set map meta dir
 	tr.worldDir = CopyString( name );
@@ -2593,19 +2946,8 @@ void RE_LoadWorldMap( const char *name ) {
 	startMarker = ri.Hunk_Alloc( 0, h_low );
 	c_gridVerts = 0;
 
-	header = (dheader_t *)buffer;
-	fileBase = (byte *)header;
-
-	i = LittleLong( header->version );
-	if ( i != BSP_VERSION ) {
-		ri.Error( ERR_DROP, "RE_LoadWorldMap: %s has wrong version number (%i should be %i)",
-				  name, i, BSP_VERSION );
-	}
-
-	// swap all the lumps
-	for ( i = 0 ; i < sizeof( dheader_t ) / 4 ; i++ ) {
-		( (int *)header )[i] = LittleLong( ( (int *)header )[i] );
-	}
+	fileBase = buffer;
+	s_bspFogCount = header->lumps[LUMP_FOGS].filelen / sizeof( dfog_t );
 
 	// load into heap
 	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
@@ -2634,7 +2976,7 @@ void RE_LoadWorldMap( const char *name ) {
 	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 	R_LoadEntities( &header->lumps[LUMP_ENTITIES] );
 	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
-	R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID] );
+	R_LoadLightGrid( &header->lumps[LUMP_LIGHTGRID], &validatedGrid );
 	ri.Cmd_ExecuteText( EXEC_NOW, "updatescreen\n" );
 
 	s_worldData.dataSize = (byte *)ri.Hunk_Alloc( 0, h_low ) - startMarker;

@@ -1870,10 +1870,16 @@ void *Hunk_Alloc( int size, ha_pref preference ) {
 	size += sizeof( hunkblock_t );
 #endif
 
+	// a size from a file can be near INT_MAX: refuse it before the rounding
+	// and compare against the room left, so neither sum can overflow
+	if ( size < 0 || size > INT_MAX - 31 ) {
+		Com_Error( ERR_DROP, "Hunk_Alloc failed on %i", size );
+	}
+
 	// round to cacheline
 	size = ( size + 31 ) & ~31;
 
-	if ( hunk_low.temp + hunk_high.temp + size > s_hunkTotal ) {
+	if ( size > s_hunkTotal - hunk_low.temp - hunk_high.temp ) {
 #ifdef HUNK_DEBUG
 		Hunk_Log();
 		Hunk_SmallLog();
