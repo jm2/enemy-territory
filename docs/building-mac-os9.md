@@ -59,6 +59,11 @@ match `mac-data/game-data.sha256`, so a demo pak or another mod release is refus
 build starts. The paks are at `https://mirror.etlegacy.com/etmain/`, and the mod pk3 is in the
 ET: Legacy v2.86.2 release.
 
+The image is a genisoimage HFS/ISO hybrid, wrapped by `ndif_image.py` as a Disk Copy read/write
+(NDIF) image typed `dimg`/`ddsk`, so the Disk Copy in Mac OS 9 mounts it. The script is Quake
+III's (`833d8eb0`), copied verbatim; keep the two the same. Its docstring has the layout, which was
+read back from images Disk Copy 6.3.3 made.
+
 `release_mac/` is rebuilt from nothing each time, and the image and the installer are both read back:
 the application must match the build, and the data must match the checksums. `docs/target-run.md` lists the
 output. A plain build needs no game data.
