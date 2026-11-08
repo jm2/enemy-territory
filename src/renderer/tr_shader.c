@@ -72,7 +72,7 @@ static long generateHashValue( const char *fname ) {
 	hash = 0;
 	i = 0;
 	while ( fname[i] != '\0' ) {
-		letter = tolower( fname[i] );
+		letter = tolower( (unsigned char)fname[i] );
 		if ( letter == '.' ) {
 			break;                          // don't include extension
 		}
@@ -976,8 +976,8 @@ static qboolean ParseStage( shaderStage_t *stage, char **text ) {
 				if ( token[0] == 0 ) {
 					break;
 				}
-				strcat( buffer, token );
-				strcat( buffer, " " );
+				Q_strcat( buffer, sizeof( buffer ), token );
+				Q_strcat( buffer, sizeof( buffer ), " " );
 			}
 
 			ParseTexMod( buffer, stage );
@@ -1445,6 +1445,10 @@ static qboolean ParseShader( char **text ) {
 		}
 		// stage definition
 		else if ( token[0] == '{' ) {
+			if ( s >= MAX_SHADER_STAGES ) {
+				ri.Printf( PRINT_WARNING, "WARNING: more than %i stages in shader '%s'\n", MAX_SHADER_STAGES, shader.name );
+				return qfalse;
+			}
 			if ( !ParseStage( &stages[s], text ) ) {
 				return qfalse;
 			}
@@ -2890,6 +2894,13 @@ void R_FindLightmap( int *lightmapIndex ) {
 	char fileName[ MAX_QPATH ];
 
 
+	// keep the special negative values; anything below them, or past the
+	// lightmap table, is lit by vertex instead
+	if ( *lightmapIndex < LIGHTMAP_2D || *lightmapIndex >= MAX_LIGHTMAPS ) {
+		*lightmapIndex = LIGHTMAP_BY_VERTEX;
+		return;
+	}
+
 	// don't fool with bogus lightmap indexes
 	if ( *lightmapIndex < 0 ) {
 		return;
@@ -2910,7 +2921,7 @@ void R_FindLightmap( int *lightmapIndex ) {
 	R_SyncRenderThread();
 
 	// attempt to load an external lightmap
-	sprintf( fileName, "%s/" EXTERNAL_LIGHTMAP, tr.worldDir, *lightmapIndex );
+	Com_sprintf( fileName, sizeof( fileName ), "%s/" EXTERNAL_LIGHTMAP, tr.worldDir, *lightmapIndex );
 	image = R_FindImageFile( fileName, qfalse, qfalse, GL_CLAMP, qtrue );
 	if ( image == NULL ) {
 		*lightmapIndex = LIGHTMAP_BY_VERTEX;
@@ -3168,6 +3179,11 @@ way to ask for different implicit lighting modes (vertex, lightmap, etc)
 qhandle_t RE_RegisterShaderLightMap( const char *name, int lightmapIndex ) {
 	shader_t    *sh;
 
+	if ( !name ) {
+		Com_Printf( "NULL shader name\n" );
+		return 0;
+	}
+
 	if ( strlen( name ) >= MAX_QPATH ) {
 		Com_Printf( "Shader name exceeds MAX_QPATH\n" );
 		return 0;
@@ -3202,6 +3218,11 @@ way to ask for different implicit lighting modes (vertex, lightmap, etc)
 qhandle_t RE_RegisterShader( const char *name ) {
 	shader_t    *sh;
 
+	if ( !name ) {
+		Com_Printf( "NULL shader name\n" );
+		return 0;
+	}
+
 	if ( strlen( name ) >= MAX_QPATH ) {
 		Com_Printf( "Shader name exceeds MAX_QPATH\n" );
 		return 0;
@@ -3231,6 +3252,11 @@ For menu graphics that should never be picmiped
 */
 qhandle_t RE_RegisterShaderNoMip( const char *name ) {
 	shader_t    *sh;
+
+	if ( !name ) {
+		Com_Printf( "NULL shader name\n" );
+		return 0;
+	}
 
 	if ( strlen( name ) >= MAX_QPATH ) {
 		Com_Printf( "Shader name exceeds MAX_QPATH\n" );

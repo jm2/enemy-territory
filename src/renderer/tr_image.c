@@ -173,7 +173,7 @@ static long generateHashValue( const char *fname ) {
 	hash = 0;
 	i = 0;
 	while ( fname[i] != '\0' ) {
-		letter = tolower( fname[i] );
+		letter = tolower( (unsigned char)fname[i] );
 		if ( letter == '.' ) {
 			break;                          // don't include extension
 		}
@@ -1965,7 +1965,7 @@ static char *CommaParse( char **data_p ) {
 				*data_p = ( char * ) data;
 				return com_token;
 			}
-			if ( len < MAX_TOKEN_CHARS ) {
+			if ( len < MAX_TOKEN_CHARS - 1 ) {
 				com_token[len] = c;
 				len++;
 			}
@@ -2168,6 +2168,11 @@ qhandle_t RE_RegisterSkin( const char *name ) {
 		}
 
 		if ( !Q_stricmpn( token, "md3_", 4 ) ) {
+			if ( skin->numModels >= MAX_PART_MODELS ) {
+				ri.Printf( PRINT_WARNING, "WARNING: more than %i models in skin '%s'\n", MAX_PART_MODELS, name );
+				CommaParse( &text_p );  // skip the model name
+				continue;
+			}
 			// this is specifying a model
 			model = skin->models[ skin->numModels ] = ri.Hunk_Alloc( sizeof( *skin->models[0] ), h_low );
 			Q_strncpyz( model->type, token, sizeof( model->type ) );
@@ -2184,6 +2189,11 @@ qhandle_t RE_RegisterSkin( const char *name ) {
 
 		// parse the shader name
 		token = CommaParse( &text_p );
+
+		if ( skin->numSurfaces >= MD3_MAX_SURFACES ) {
+			ri.Printf( PRINT_WARNING, "WARNING: more than %i surfaces in skin '%s'\n", MD3_MAX_SURFACES, name );
+			continue;
+		}
 
 		surf = skin->surfaces[ skin->numSurfaces ] = ri.Hunk_Alloc( sizeof( *skin->surfaces[0] ), h_low );
 		Q_strncpyz( surf->name, surfName, sizeof( surf->name ) );
@@ -2217,7 +2227,7 @@ void    R_InitSkins( void ) {
 	skin = tr.skins[0] = ri.Hunk_Alloc( sizeof( skin_t ), h_low );
 	Q_strncpyz( skin->name, "<default skin>", sizeof( skin->name )  );
 	skin->numSurfaces = 1;
-	skin->surfaces[0] = ri.Hunk_Alloc( sizeof( *skin->surfaces ), h_low );
+	skin->surfaces[0] = ri.Hunk_Alloc( sizeof( *skin->surfaces[0] ), h_low );
 	skin->surfaces[0]->shader = tr.defaultShader;
 }
 

@@ -64,6 +64,12 @@ mkdir "$OUT/jpeg"
 for f in $JPEG; do "$CC" $FLAGS -fno-sanitize=shift,signed-integer-overflow -c "$f" -o "$OUT/jpeg/$(basename "$f").o"; done
 "$CC" $FLAGS tests/security/test_images.c src/renderer/tr_image_bmp.c src/renderer/tr_image_pcx.c src/renderer/tr_image_tga.c src/renderer/tr_image_jpeg.c "$OUT"/jpeg/*.o src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/images"
 "$OUT/images"
+# Shader and skin parsing: the tests include the real tr_shader.c and tr_image.c, and
+# the linker drops the parts of the renderer they do not reach
+for t in shader skin; do
+    "$CC" $FLAGS -ffunction-sections -fdata-sections tests/security/test_$t.c src/game/q_shared.c src/game/q_math.c -Wl,--gc-sections -lm -o "$OUT/$t"
+    ASAN_OPTIONS=detect_leaks=0 "$OUT/$t"
+done
 for t in msg; do
     "$CC" $FLAGS tests/security/test_$t.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/$t"
     "$OUT/$t"
