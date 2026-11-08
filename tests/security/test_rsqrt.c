@@ -4,7 +4,7 @@
  * the read took four bytes past the float, and the result depended on them.
  * The Mac target's long is 32 bits, so the int read is bit-identical there.
  * One Newton step leaves a relative error under 0.18 %, two well under
- * 0.001 %. Run under ASan, which reports the 8-byte read of a 4-byte float.
+ * 0.001 %. Run under the sanitizers: UBSan's object-size check reports the 8-byte read of a 4-byte float.
  * Adapted from Quake III's tests/q_rsqrt_regression.c (019a396b). */
 #include <math.h>
 #include <stdio.h>
