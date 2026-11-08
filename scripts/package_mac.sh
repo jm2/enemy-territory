@@ -111,7 +111,7 @@ print("image data verified: %d files" % len(expected))
 P
 
 # a Disk Copy read/write image, which the Disk Copy Mac OS 9 ships mounts: as a bare
-# hybrid typed iso /dCpy it needed Toast. ndif_image.py is Quake III's, copied verbatim
+# hybrid typed iso /dCpy it needed Toast. ndif_image.py is Quake III's (4aee5454), copied verbatim
 python3 -B ndif_image.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" "Enemy Territory"
 # read the wrapped file back: the volume byte for byte, typed and described for Disk Copy
 python3 -I -B - "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" <<'N'

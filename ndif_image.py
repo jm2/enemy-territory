@@ -42,7 +42,10 @@ CHUNK_SECTORS = 0x800
 BCEM_VERSION = 10
 KIND_COPY = 2
 KIND_END = 0xFF
-MAX_SECTORS = 1 << 24
+# Offsets and lengths are u32 bytes, so the end marker's offset, sectors * 512,
+# must fit: under 4 GiB. That is tighter than the 24-bit sector field, and
+# looser than HFS, whose volumes stop at 2 GB.
+MAX_SECTORS = (1 << 32) // SECTOR
 
 
 def volume_name_bytes(name):
@@ -64,7 +67,8 @@ def bcem(name, sectors, chunk_sectors=CHUNK_SECTORS):
     """
     raw_name = volume_name_bytes(name)
     if not 0 < sectors < MAX_SECTORS:
-        raise ValueError(f"a volume of {sectors} sectors does not fit NDIF's 24-bit sector field")
+        raise ValueError(f"a volume of {sectors} sectors is 4 GiB or more, "
+                         "past NDIF's 32-bit offsets")
     step = sectors if chunk_sectors is None else chunk_sectors
     if step <= 0:
         raise ValueError("chunk_sectors must be positive")
@@ -126,12 +130,20 @@ def write_image(volume_path, output_path, name, chunk_sectors=CHUNK_SECTORS):
         raise ValueError(f"{volume_path}: {size} bytes is not a whole number of "
                          f"{SECTOR}-byte sectors")
     fork = ndif_resource_fork(name, size // SECTOR, chunk_sectors)
-    with tempfile.TemporaryDirectory() as scratch:
-        fork_path = os.path.join(scratch, "bcem.rsrc")
-        with open(fork_path, "wb") as stream:
-            stream.write(fork)
-        macbinary_encode.encode_macbinary(volume_path, output_path, FILE_TYPE,
-                                          CREATOR, fork_path)
+    # Write beside the output and rename, so a full disk or an interrupted run
+    # never leaves a truncated image under the name people install from.
+    partial = output_path + ".partial"
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            fork_path = os.path.join(scratch, "bcem.rsrc")
+            with open(fork_path, "wb") as stream:
+                stream.write(fork)
+            macbinary_encode.encode_macbinary(volume_path, partial, FILE_TYPE,
+                                              CREATOR, fork_path)
+        os.replace(partial, output_path)
+    finally:
+        if os.path.exists(partial):
+            os.remove(partial)
 
 
 def main(argv=None):
