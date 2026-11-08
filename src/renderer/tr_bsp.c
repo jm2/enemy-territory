@@ -1170,6 +1170,25 @@ void R_FixSharedVertexLodError( void ) {
 
 /*
 ===============
+R_StitchLodError
+
+The LOD error R_StitchPatches' reversed loops give the point they insert:
+errors[index], where index is k + 1. On their first pass k is the last
+point, and retail read one float past the array: usually the zone's trash
+tester, ZONEID, which as a float is a denormal that counts as no error, or
+stale bytes when the zone left a small fragment unsplit. That read is 0
+here; every read inside the array is unchanged.
+===============
+*/
+static float R_StitchLodError( const float *errors, int count, int index ) {
+	if ( index >= count ) {
+		return 0.0f;
+	}
+	return errors[index];
+}
+
+/*
+===============
 R_StitchPatches
 ===============
 */
@@ -1487,7 +1506,7 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 						row = grid2->height - 1;
 					} else { row = 0;}
 					grid2 = R_GridInsertColumn( grid2, l + 1, row,
-												grid1->verts[k - 1 + offset1].xyz, grid1->widthLodError[k + 1] );
+												grid1->verts[k - 1 + offset1].xyz, R_StitchLodError( grid1->widthLodError, grid1->width, k + 1 ) );
 					grid2->lodStitched = qfalse;
 					s_worldData.surfaces[grid2num].data = (void *) grid2;
 					return qtrue;
@@ -1543,7 +1562,7 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 						column = grid2->width - 1;
 					} else { column = 0;}
 					grid2 = R_GridInsertRow( grid2, l + 1, column,
-											 grid1->verts[k - 1 + offset1].xyz, grid1->widthLodError[k + 1] );
+											 grid1->verts[k - 1 + offset1].xyz, R_StitchLodError( grid1->widthLodError, grid1->width, k + 1 ) );
 					if ( !grid2 ) {
 						break;
 					}
@@ -1613,7 +1632,7 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 						row = grid2->height - 1;
 					} else { row = 0;}
 					grid2 = R_GridInsertColumn( grid2, l + 1, row,
-												grid1->verts[grid1->width * ( k - 1 ) + offset1].xyz, grid1->heightLodError[k + 1] );
+												grid1->verts[grid1->width * ( k - 1 ) + offset1].xyz, R_StitchLodError( grid1->heightLodError, grid1->height, k + 1 ) );
 					grid2->lodStitched = qfalse;
 					s_worldData.surfaces[grid2num].data = (void *) grid2;
 					return qtrue;
@@ -1669,7 +1688,7 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 						column = grid2->width - 1;
 					} else { column = 0;}
 					grid2 = R_GridInsertRow( grid2, l + 1, column,
-											 grid1->verts[grid1->width * ( k - 1 ) + offset1].xyz, grid1->heightLodError[k + 1] );
+											 grid1->verts[grid1->width * ( k - 1 ) + offset1].xyz, R_StitchLodError( grid1->heightLodError, grid1->height, k + 1 ) );
 					grid2->lodStitched = qfalse;
 					s_worldData.surfaces[grid2num].data = (void *) grid2;
 					return qtrue;

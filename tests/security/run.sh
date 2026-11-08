@@ -176,6 +176,9 @@ a=s.index('#define EXTERNAL_LIGHTMAP'); b=s.index('\n}\n',s.index('void R_FindLi
 open(sys.argv[1],'w',encoding='latin-1').write(s[a:b])
 L
 "$CC" $FLAGS "-DLIGHTMAP_INC=\"$OUT/lightmap.inc\"" tests/security/test_bsp_tr.c src/renderer/tr_curve.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/bsp_tr"
+# R_StitchPatches alone, its grid inserts stubbed, with exact-size LOD error arrays
+"$CC" $FLAGS -fno-sanitize-recover=all -ffunction-sections -fdata-sections tests/security/test_bsp_stitch.c src/game/q_shared.c src/game/q_math.c -Wl,--gc-sections -lm -o "$OUT/bsp_stitch"
+"$OUT/bsp_stitch"
 "$OUT/bsp_cm" | grep -v '^case: \|^    '
 "$OUT/bsp_tr" | grep -v '^case: \|^    '
 if [ -n "${BSP_FILES:-}" ]; then

@@ -93,13 +93,8 @@ static void *TestHunk( int size ) {
 	return p;
 }
 
-/* R_StitchPatches reads heightLodError[k + 1] (and widthLodError[k + 1]) in its
- * reversed loops, one float past the array when k is the last row; Q3 and Q3A
- * have it too, and retail radar.bsp reaches it. Only the real-map run allows
- * that one float, so the corrupted-map cases stay strict. */
-static int zSlack;
 static int realMaps;    // set while loading real maps over and over
-void *Z_Malloc( int size ) { return calloc( 1, ( size ? size : 1 ) + zSlack ); }
+void *Z_Malloc( int size ) { return calloc( 1, size ? size : 1 ); }
 void Z_Free( void *p ) { free( p ); }
 
 /* The file: exactly the advertised bytes, with no terminating NUL past them. */
@@ -803,7 +798,6 @@ static int RunRealMaps( int argc, char **argv, int mutations ) {
 	pid_t pid;
 	int status;
 
-	zSlack = sizeof( float );
 	realMaps = 1;
 	for ( i = 1; i < argc; i++ ) {
 		if ( !LoadFile( argv[i] ) ) {
