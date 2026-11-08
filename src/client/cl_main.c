@@ -214,8 +214,10 @@ void CL_AddReliableCommand( const char *cmd ) {
 	int index;
 
 	// if we would be losing an old command that hasn't been acknowledged,
-	// we must drop the connection
-	if ( clc.reliableSequence - clc.reliableAcknowledge > MAX_RELIABLE_COMMANDS ) {
+	// we must drop the connection. MAX_RELIABLE_COMMANDS unacknowledged ones
+	// fill every slot, and one more would overwrite the oldest, which packets
+	// then send under its number (Quake III 81449c7f, ioquake3)
+	if ( clc.reliableSequence - clc.reliableAcknowledge >= MAX_RELIABLE_COMMANDS ) {
 		Com_Error( ERR_DROP, "Client command overflow" );
 	}
 	clc.reliableSequence++;
@@ -1043,10 +1045,9 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	// send it a few times in case one is dropped
 	if ( cls.state >= CA_CONNECTED ) {
 		// no room after a command overflow, which is how an ERR_DROP gets here: a
-		// second overflow would be fatal, and the queue has wrapped over its oldest
-		// command, so a packet would carry the wrong text under that number. Send
-		// nothing and let the server time us out (Quake III 1f6cc686, 65ef8292).
-		if ( clc.reliableSequence - clc.reliableAcknowledge <= MAX_RELIABLE_COMMANDS ) {
+		// second overflow would be fatal, so send nothing and let the server time
+		// us out (Quake III 1f6cc686, 65ef8292, 81449c7f)
+		if ( clc.reliableSequence - clc.reliableAcknowledge < MAX_RELIABLE_COMMANDS ) {
 			CL_AddReliableCommand( "disconnect" );
 			CL_WritePacket();
 			CL_WritePacket();
