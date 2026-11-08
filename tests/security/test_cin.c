@@ -7,6 +7,9 @@
  * VQ before QUAD_INFO, oversized audio, short codebooks, VQ and motion past their
  * buffers, packets past the data read, truncation at every length, and mutations.
  *
+ * The model compares exact pixels, and it drifts under x87 floating point (-m32
+ * without SSE). Build the test for SSE or 64-bit.
+ *
  *   test_cin            run everything
  *   test_cin golden     print one digest per decoded frame and audio chunk
  *   test_cin case NAME  run one hostile case (for showing the original tree fails)
@@ -57,12 +60,15 @@ void Com_Memset( void *d, const int v, const size_t c ) { memset( d, v, c ); }
 void Com_Memcpy( void *d, const void *s, const size_t c ) { memcpy( d, s, c ); }
 #undef vsnprintf
 int Q_vsnprintf( char *d, int n, const char *f, va_list a ) { return vsnprintf( d, n, f, a ); }
-int CL_ScaledMilliseconds( void ) { return (int)nowMs; }
+static unsigned int nowStep;    // advance the clock on every read, for CL_PlayCinematic_f's wait
+int CL_ScaledMilliseconds( void ) { nowMs += nowStep; return (int)nowMs; }
 void Con_Close( void ) {}
 void S_StopAllSounds( void ) {}
 void S_Update( void ) {}
-char *Cmd_Argv( int arg ) { return ""; }
-char *Cvar_VariableString( const char *name ) { return ""; }
+static char *cmdArgs[3] = { "", "", "" };
+char *Cmd_Argv( int arg ) { return arg < 3 ? cmdArgs[arg] : ""; }
+static int nextmapReads;        // RoQShutdown's system-movie side effects
+char *Cvar_VariableString( const char *name ) { nextmapReads += !strcmp( name, "nextmap" ); return ""; }
 void Cvar_Set( const char *name, const char *value ) {}
 void Cbuf_ExecuteText( int when, const char *text ) {}
 int QDECL VM_Call( vm_t *vm, int callNum, ... ) { return 0; }
@@ -73,20 +79,24 @@ void Hunk_FreeTempMemory( void *p ) { free( p ); }
 /* the movie file: an exact-size allocation, so ASan sees any read past it */
 static byte *fileData;
 static int fileLen, filePos, fileOpen, opens, closes, failReopen;
+static int advertised;          // a stat length other than the bytes readable, if set
+static int readable;            // bytes readable in this open
+static int reopenLen = 10;      // failReopen 2: bytes left when the file is reopened
 
 int FS_FOpenFileRead( const char *name, fileHandle_t *f, qboolean unique ) {
 	if ( fileOpen ) {
 		Fail( "file opened twice" );
 	}
-	if ( !fileData || ( opens && failReopen ) ) {
+	if ( !fileData || ( opens && failReopen == 1 ) ) {
 		*f = 0;
 		return -1;
 	}
+	readable = ( opens && failReopen == 2 ) ? reopenLen : fileLen;    // 2: the file shrinks before a reopen
 	opens++;
 	fileOpen = 1;
 	filePos = 0;
 	*f = 1;
-	return fileLen;
+	return advertised ? advertised : fileLen;
 }
 void FS_FCloseFile( fileHandle_t f ) {
 	CHECK( f == 1 && fileOpen, "close of a file not open" );
@@ -94,7 +104,7 @@ void FS_FCloseFile( fileHandle_t f ) {
 	closes++;
 }
 int FS_Read( void *buffer, int len, fileHandle_t f ) {
-	int n = fileLen - filePos;
+	int n = readable - filePos;
 	if ( !f ) {
 		return 0;
 	}
@@ -120,6 +130,7 @@ static void Touch( const byte *p, int n ) {
 	memcpy( sink, p, n );       // ASan checks the whole range
 }
 static void StubDrawStretchRaw( int x, int y, int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty ) {
+	CHECK( cols > 0 && rows > 0 && !( cols & ( cols - 1 ) ) && !( rows & ( rows - 1 ) ), "RE_StretchRaw would drop: size not a power of 2" );
 	Touch( data, cols * rows * 4 );
 }
 static void StubUploadCinematic( int w, int h, int cols, int rows, const byte *data, int client, qboolean dirty ) {
@@ -439,7 +450,7 @@ static void ResetAll( void ) {
 	currentHandle = -1;
 	CL_handle = -1;
 	fileOpen = 0;
-	opens = closes = failReopen = 0;
+	opens = closes = failReopen = advertised = 0;
 	numAudio = 0;
 }
 
@@ -521,7 +532,7 @@ static play_t ExpectStopped( const byte *d, int len, int bits, const char *what 
 
 static void ValidMovies( void ) {
 	static const int sizes[][3] = {
-		{ 64, 64, 8 }, { 24, 40, 6 }, { 128, 32, 6 }, { 8, 8, 4 }, { 256, 256, 4 },
+		{ 64, 64, 8 }, { 32, 64, 6 }, { 128, 32, 6 }, { 8, 8, 4 }, { 256, 256, 4 },
 		{ 512, 256, 3 }, { 512, 512, 3 }, { 16, 512, 3 }, { 512, 8, 3 },
 	};
 	int i, sw;
@@ -562,7 +573,7 @@ static void ValidMovies( void ) {
 }
 
 static void Golden( void ) {
-	static const int sizes[][3] = { { 64, 64, 8 }, { 24, 40, 6 }, { 128, 32, 6 }, { 512, 512, 3 } };
+	static const int sizes[][3] = { { 64, 64, 8 }, { 32, 64, 6 }, { 128, 32, 6 }, { 512, 512, 3 } };
 	int i;
 	out_t o;
 	golden = 1;
@@ -644,6 +655,7 @@ static void CaseDimensions( void ) {
 	static const int dims[][2] = {
 		{ 0, 16 }, { 16, 0 }, { 12, 16 }, { 16, 20 }, { 1, 1 }, { 4, 4 }, { 520, 8 }, { 8, 520 },
 		{ 1024, 256 }, { 8, 32768 }, { 32768, 8 }, { 65535, 65535 }, { 65528, 8 }, { 640, 480 },
+		{ 24, 40 }, { 24, 16 }, { 8, 24 }, { 40, 8 }, { 1024, 8 },     // not powers of two, or too wide
 	};
 	int i;
 	for ( i = 0; i < (int)( sizeof( dims ) / sizeof( dims[0] ) ); i++ ) {
@@ -665,7 +677,8 @@ static void CaseDimensions( void ) {
 		Header( &o, ROQ_QUAD_VQ, 2, 0 );
 		Put16( &o, 0 );
 		Finish( &o );
-		ExpectStopped( o.d, o.len, 0, "short quad info accepted" );
+		ExpectStopped( o.d, o.len, CIN_loop, "short quad info accepted" );
+		CHECK( !cinTable[0].buf, "short quad info decoded a frame" );
 		free( o.d );
 	}
 }
@@ -709,12 +722,12 @@ static void CaseVqBeforeInfo( void ) {
 		Header( &b, ROQ_QUAD_HANG, 65536, 0 );
 		fileOpen = 0;              // the stub serves one file; keep a's position aside
 		{
-			byte *keep = fileData; int keepLen = fileLen, keepPos = filePos;
+			byte *keep = fileData; int keepLen = fileLen, keepPos = filePos, keepReadable = readable;
 			fileData = NULL;
 			SetFile( b.d, b.len );
 			CHECK( CIN_PlayCinematic( "b.roq", 0, 0, 64, 64, 0 ) < 0, "b opened" );
 			free( fileData );
-			fileData = keep; fileLen = keepLen; filePos = keepPos;
+			fileData = keep; fileLen = keepLen; filePos = keepPos; readable = keepReadable;
 		}
 		fileOpen = 1;
 		nowMs += 34;
@@ -904,7 +917,7 @@ static void Truncations( void ) {
 	out_t o;
 	int len, bits;
 	audioDiv = 50;
-	Movie( &o, 24, 16, 4, 31 );
+	Movie( &o, 32, 16, 4, 31 );
 	audioDiv = 1;
 	for ( len = 0; len <= o.len; len++ ) {
 		for ( bits = 0; bits <= CIN_loop; bits += CIN_loop ) {
@@ -926,7 +939,7 @@ static void Mutations( int count ) {
 	int i, k;
 	audioDiv = 20;
 	Movie( &base[0], 32, 32, 4, 41 );
-	Movie( &base[1], 24, 16, 3, 42 );
+	Movie( &base[1], 32, 16, 3, 42 );
 	Movie( &base[2], 512, 512, 2, 43 );
 	audioDiv = 1;
 	rngState = 2024;
@@ -960,6 +973,179 @@ static void Mutations( int count ) {
 	}
 }
 
+/* An audio-only movie (no VQ frame, so no buf) is stopped straight after it opens, or
+ * while it loops as a shader would: its file is closed and its slot freed each time. */
+static void CaseStopEarly( void ) {
+	out_t o = { 0 };
+	int i, h;
+	FileHeader( &o );
+	for ( i = 0; i < 4; i++ ) {
+		Header( &o, ZA_SOUND_MONO, 16, 0 );
+		Filler( &o, 16 );
+	}
+	Finish( &o );
+	ResetAll();
+	SetFile( o.d, o.len );
+	for ( i = 0; i < 3 * MAX_VIDEO_HANDLES; i++ ) {
+		h = CIN_PlayCinematic( "early.roq", 0, 0, 64, 64, ( i & 1 ) ? CIN_loop | CIN_shader : 0 );
+		CHECK( h >= 0, "open" );
+		if ( i & 1 ) {
+			int k;
+			for ( k = 0; k < 10; k++ ) {
+				nowMs += 100;
+				CIN_RunCinematic( h );
+			}
+			CHECK( !cinTable[h].buf, "audio-only movie made a frame" );
+		}
+		CHECK( CIN_StopCinematic( h ) == FMV_EOF, "stop status" );
+		CHECK( !fileOpen && !cinTable[h].fileName[0], "stop before the first frame leaked the file or slot" );
+	}
+	free( o.d );
+}
+
+/* After a movie ends, its handle neither reopens the file nor repeats cleanup. */
+static void CaseStaleHandle( void ) {
+	out_t o;
+	play_t r;
+	int h, before;
+	Movie( &o, 16, 16, 2, 6 );
+	ResetAll();
+	SetFile( o.d, o.len );
+	cls.state = CA_DISCONNECTED;
+	r = Play( CIN_system, 50, 0 );     // system movie: shutdown has side effects
+	h = r.handle;
+	CHECK( r.frames == 2 && r.status == FMV_EOF, "a finished movie returns FMV_EOF" );
+	CHECK( !fileOpen && !cinTable[h].fileName[0] && nextmapReads == 1, "first shutdown" );
+	before = opens;
+	cin.currentHandle = h + 1;          // as if another movie had run since
+	CHECK( CIN_RunCinematic( h ) == FMV_EOF && opens == before && !fileOpen, "a stopped handle reopened its movie" );
+	cls.state = CA_CINEMATIC;
+	CHECK( CIN_StopCinematic( h ) == FMV_EOF && nextmapReads == 1, "a stopped handle repeated its cleanup" );
+	cls.state = CA_DISCONNECTED;
+	nextmapReads = 0;
+	CL_handle = -1;
+	free( o.d );
+}
+
+/* Stat length past the bytes readable: a short payload read stops, it is not taken as EOF
+ * (which would loop). */
+static void CaseShortRead( void ) {
+	out_t o = { 0 };
+	FileHeader( &o );
+	Header( &o, ROQ_QUAD_INFO, 8, 0 );
+	Put16( &o, 16 ); Put16( &o, 16 ); Put16( &o, 8 ); Put16( &o, 4 );
+	Header( &o, ROQ_QUAD_JPEG, 100, 0 );
+	Filler( &o, 50 );
+	ResetAll();
+	SetFile( o.d, o.len );
+	advertised = o.len + 1000;
+	Play( CIN_loop, 20, 0 );
+	CHECK( opens == 1 && !fileOpen && !cinTable[0].fileName[0], "short read not refused" );
+	free( o.d );
+}
+
+/* A packet child ending on the end of the data read leaves no room for the next header:
+ * refused (no loop). A plain last chunk with no header after it is the end of the movie
+ * (loops). The first chunk is 16 bytes, so the engine's byte count lets the last one play. */
+static void CaseTrailingHeader( void ) {
+	out_t o = { 0 };
+	int at;
+	FileHeader( &o );
+	at = Begin( &o, ROQ_PACKET, 1 );
+	Header( &o, ROQ_QUAD_JPEG, 16, 0 );
+	Filler( &o, 16 );
+	End( &o, at );
+	Header( &o, ROQ_QUAD_JPEG, 0, 0 );
+	/* the child's payload runs 8 bytes past its packet, to the end of the data read */
+	o.d[16 + 2] = 24;
+	Finish( &o );
+	ExpectStopped( o.d, o.len, CIN_loop, "packet child over the next header" );
+	free( o.d );
+
+	memset( &o, 0, sizeof( o ) );
+	FileHeader( &o );
+	Header( &o, ROQ_QUAD_JPEG, 16, 0 );
+	Filler( &o, 16 );
+	Header( &o, ZA_SOUND_MONO, 4, 0 );
+	Filler( &o, 4 );
+	{
+		play_t r = PlayBytes( o.d, o.len, CIN_loop, 6 );
+		CHECK( opens >= 2 && r.audio >= 2, "a last chunk without a header after it did not loop" );
+	}
+	free( o.d );
+}
+
+/* A packet child larger than what is left of the packet: refused before it plays. */
+static void CasePacketChild( void ) {
+	out_t o = { 0 };
+	play_t r;
+	int at;
+	FileHeader( &o );
+	at = Begin( &o, ROQ_PACKET, 1 );
+	Header( &o, ZA_SOUND_STEREO, 200, 0 );
+	Filler( &o, 100 );
+	End( &o, at );
+	Filler( &o, 200 );
+	Finish( &o );
+	r = PlayBytes( o.d, o.len, CIN_loop, 20 );
+	CHECK( r.audio == 0 && opens == 1 && !fileOpen, "packet child past its data played" );
+	free( o.d );
+}
+
+/* A file shorter than its 16-byte header, though it starts with the RoQ id */
+static void CaseOpenHeader( void ) {
+	out_t o = { 0 };
+	int len;
+	FileHeader( &o );
+	Header( &o, ROQ_QUAD_HANG, 0, 0 );
+	for ( len = 2; len < 16; len++ ) {
+		ExpectOpenRefused( o.d, len, "short header accepted" );
+	}
+	free( o.d );
+}
+
+/* The file shrinks to 15 bytes before a loop reopens it. Its first chunk is empty, so
+ * nothing after the header would notice: the header read itself must stop it. */
+static void CaseReopenHeader( void ) {
+	out_t o = { 0 };
+	play_t r;
+	FileHeader( &o );
+	Header( &o, ROQ_QUAD_HANG, 0, 0 );
+	Header( &o, ZA_SOUND_MONO, 16, 0 );
+	Filler( &o, 16 );
+	Finish( &o );
+	ResetAll();
+	SetFile( o.d, o.len );
+	failReopen = 2;
+	reopenLen = 15;
+	r = Play( CIN_loop, 50, 0 );
+	reopenLen = 10;
+	CHECK( r.audio == 1 && opens == 2 && !fileOpen && !cinTable[r.handle].fileName[0], "short header on reopen" );
+	free( o.d );
+}
+
+/* "cinematic x.roq 2": a looping movie with no frame must not hold the wait loop. */
+static void CaseWaitLoop( void ) {
+	out_t o = { 0 };
+	FileHeader( &o );
+	Header( &o, ZA_SOUND_MONO, 16, 0 );
+	Filler( &o, 16 );
+	Finish( &o );
+	ResetAll();
+	SetFile( o.d, o.len );
+	cmdArgs[1] = "x.roq"; cmdArgs[2] = "2";
+	cls.state = CA_DISCONNECTED;
+	nowStep = 7;
+	CL_PlayCinematic_f();               // returns
+	nowStep = 0;
+	cmdArgs[1] = cmdArgs[2] = "";
+	CHECK( opens >= 2, "the movie did not loop" );
+	SCR_StopCinematic();
+	cls.state = CA_DISCONNECTED;
+	nextmapReads = 0;
+	free( o.d );
+}
+
 static const struct { const char *name; void ( *fn )( void ); } cases[] = {
 	{ "oversized-first", CaseOversizedFirst },
 	{ "oversized-later", CaseOversizedLater },
@@ -971,6 +1157,14 @@ static const struct { const char *name; void ( *fn )( void ); } cases[] = {
 	{ "motion", CaseMotion },
 	{ "packets", CasePackets },
 	{ "reopen", CaseReopen },
+	{ "stop-early", CaseStopEarly },
+	{ "stale-handle", CaseStaleHandle },
+	{ "short-read", CaseShortRead },
+	{ "trailing-header", CaseTrailingHeader },
+	{ "packet-child", CasePacketChild },
+	{ "open-header", CaseOpenHeader },
+	{ "reopen-header", CaseReopenHeader },
+	{ "wait-loop", CaseWaitLoop },
 };
 
 int main( int argc, char **argv ) {

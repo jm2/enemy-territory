@@ -139,6 +139,7 @@ typedef struct {
 	int playonwalls;
 	byte*               buf;
 	long drawX, drawY;
+	int passes;                                         // times RoQReset has restarted it
 } cin_cache;
 
 static cinematics_t cin;
@@ -1132,10 +1133,12 @@ static qboolean readQuadInfo( byte *qData ) {
 		return qfalse;
 	}
 
-	// whole 8x8 groups only: setupQuad and the VQ blitter assume five quads per group
+	// whole 8x8 groups only: setupQuad and the VQ blitter assume five quads per group.
+	// Powers of two only: RE_StretchRaw drops the game on any other size.
 	xsize = qData[0] + qData[1] * 256;
 	ysize = qData[2] + qData[3] * 256;
-	if ( !xsize || !ysize || ( xsize & 7 ) || ( ysize & 7 ) || xsize > ROQ_MAX_WIDTH || ysize > ROQ_MAX_HEIGHT ) {
+	if ( xsize < 8 || ysize < 8 || ( xsize & ( xsize - 1 ) ) || ( ysize & ( ysize - 1 ) )
+		 || xsize > ROQ_MAX_WIDTH || ysize > ROQ_MAX_HEIGHT ) {
 		return qfalse;
 	}
 
@@ -1284,6 +1287,7 @@ static void RoQReset() {
 		RoQ_Refuse( "bad header on reopen" );
 		return;
 	}
+	cinTable[currentHandle].passes++;
 	cinTable[currentHandle].status = FMV_LOOPED;
 }
 
@@ -1567,16 +1571,15 @@ SCR_StopCinematic
 */
 e_status CIN_StopCinematic( int handle ) {
 
-	if ( handle < 0 || handle >= MAX_VIDEO_HANDLES || cinTable[handle].status == FMV_EOF ) {
+	// a handle already shut down has no name: it is not closed again
+	if ( handle < 0 || handle >= MAX_VIDEO_HANDLES || !cinTable[handle].fileName[0] || cinTable[handle].status == FMV_EOF ) {
 		return FMV_EOF;
 	}
 	currentHandle = handle;
 
 	Com_DPrintf( "trFMV::stop(), closing %s\n", cinTable[currentHandle].fileName );
 
-	if ( !cinTable[currentHandle].buf ) {
-		return FMV_EOF;
-	}
+	// no buf check: a movie stopped before its first frame must still close its file
 
 	if ( cinTable[currentHandle].alterGameState ) {
 		if ( cls.state != CA_CINEMATIC ) {
@@ -1603,7 +1606,8 @@ e_status CIN_RunCinematic( int handle ) {
 	int start = 0;
 	int thisTime = 0;
 
-	if ( handle < 0 || handle >= MAX_VIDEO_HANDLES || cinTable[handle].status == FMV_EOF ) {
+	// a handle already shut down has no name: it is not reopened
+	if ( handle < 0 || handle >= MAX_VIDEO_HANDLES || !cinTable[handle].fileName[0] || cinTable[handle].status == FMV_EOF ) {
 		return FMV_EOF;
 	}
 
@@ -1663,10 +1667,10 @@ e_status CIN_RunCinematic( int handle ) {
 		}
 		if ( cinTable[currentHandle].status == FMV_EOF ) {
 			RoQShutdown();
+			return FMV_EOF;
 		}
 	}
 
-	// RoQShutdown sets currentHandle to -1
 	return cinTable[handle].status;
 }
 
@@ -1703,6 +1707,7 @@ int CIN_PlayCinematic( const char *arg, int x, int y, int w, int h, int systemBi
 	cin.currentHandle = currentHandle;
 
 	strcpy( cinTable[currentHandle].fileName, name );
+	cinTable[currentHandle].buf = NULL;     // no frame yet; the slot may hold an old movie's
 
 	cinTable[currentHandle].ROQSize = 0;
 	cinTable[currentHandle].ROQSize = FS_FOpenFileRead( cinTable[currentHandle].fileName, &cinTable[currentHandle].iFile, qtrue );
@@ -1804,7 +1809,7 @@ void CIN_DrawCinematic( int handle ) {
 		return;
 	}
 
-	if ( !cinTable[handle].buf ) {
+	if ( !cinTable[handle].buf || !cinTable[handle].fileName[0] ) {
 		return;
 	}
 
@@ -1904,10 +1909,14 @@ void CL_PlayCinematic_f( void ) {
 
 	CL_handle = CIN_PlayCinematic( arg, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, bits );
 	if ( CL_handle >= 0 ) {
-		// wait for first frame (load codebook and sound); RoQShutdown clears CL_handle
+		int passes = cinTable[CL_handle].passes;
+
+		// wait for first frame (load codebook and sound); RoQShutdown clears CL_handle.
+		// A looping movie that starts again without a frame has none to wait for.
 		do {
 			SCR_RunCinematic();
-		} while ( CL_handle >= 0 && cinTable[CL_handle].buf == NULL && cinTable[CL_handle].status == FMV_PLAY );
+		} while ( CL_handle >= 0 && cinTable[CL_handle].buf == NULL && cinTable[CL_handle].status == FMV_PLAY
+				  && cinTable[CL_handle].passes == passes );
 	}
 }
 
@@ -1934,7 +1943,7 @@ void SCR_StopCinematic( void ) {
 
 void CIN_UploadCinematic( int handle ) {
 	if ( handle >= 0 && handle < MAX_VIDEO_HANDLES ) {
-		if ( !cinTable[handle].buf ) {
+		if ( !cinTable[handle].buf || !cinTable[handle].fileName[0] ) {
 			return;
 		}
 		if ( cinTable[handle].playonwalls <= 0 && cinTable[handle].dirty ) {
