@@ -70,19 +70,20 @@ that reply too.
 ## Quake III engine commits since the copy point
 
 Quake III's non-Mac commits after `72dfd69f`, the point `src/mac9` was first copied from, checked
-against this tree on 2026-11-08. The Mac layer itself is synced separately (to `496b52ee`).
+against this tree on 2026-11-08 (`git log --no-merges 72dfd69f..HEAD -- code ':!code/mac'`). The Mac layer itself is synced separately (to `496b52ee`).
 
 | Q3A | Here |
 | --- | --- |
 | `bd45aa07`, `a5580ba9` CVE-2002-0059, `blens` freed once | Already here, from zlib 1.1.4 (`80830f8`, before Q3A's). `tl` and `td` are not set to NULL before `inflate_trees_dynamic` as in Q3A, and need not be: they are read only after it returns `Z_OK`, which sets both |
 | `e0368a99` temporary hunk size checked before the arithmetic | Already here (`1167cf6`, before Q3A's) |
-| `dc614e10` JPEG scan components to their own planes, CVE-2013-6629 | Already here: rows for the reordered scan and the duplicate component above |
+| `dc614e10` JPEG scan components to their own planes, CVE-2013-6629 | Already here (`jdcoefct.c:190`, `jdmarker.c:311`), the rows for the reordered scan and the duplicate component above |
 | `3eff444f` old gamestates rewriting a listen server's cvars | Already here (`4bf204e`) |
 | `1f6cc686` no `disconnect` queued into a full command queue | Already here (`4bf204e`) |
 | `65ef8292` no disconnect packets with a wrapped queue | Ported (PR #16) |
-| `83514210` ADPCM painting wraps at the end of a sound | The wrap is already here (`fc15827`). Q3A also resets the scratch chunk index on the wrap; here the index keeps counting, which costs at most a repeated decode, since an index still names one chunk |
+| `83514210` ADPCM painting wraps at the end of a sound | The wrap is already here: id's paint loop had it, and `fc15827` added it to the first walk along the chain. Q3A also resets the scratch chunk index on the wrap; here the index keeps counting, which costs at most a repeated decode, since an index still names one chunk |
 | `241e767d` no print for an empty shader name | Does not apply: ET never added the check that printed |
-| `cb934e88`, `7582058f` id's update and authorize hosts, `com_authServer` | The hosts: already here. `AUTHORIZE_SUPPORT` is not defined, so no CD key is sent anywhere. With `ET_STATIC_MODULES`, `cl_motd` is 0, auto-update is off and the master is `master.etlegacy.com`. The master-list half is ported with `3f7881d7` (PR #17) |
-| `70d2a8c4` `teamleader` sized as a name | Does not apply to the Mac build: Quake III game code. ET's `src/botai` has the same 32-byte field and writes its terminator one past it (`ai_cmd.c:1037`), but neither ET's own game module nor its bots are built, and `legacy` has neither |
-| `05f2071c` bots hanging the server on a spawn point | Does not apply: Quake III game code, and `legacy` has no bots |
-| `efab18d9` `AAS_AreaVolume`, `9a39aa4c`, `756caaa4` optimized AAS files | Do not apply: `legacy` has no bots and no `BOTLIB_LOAD_MAP` trap (`legacy/src/game/g_public.h` keeps the setup traps only as dummies), so no AAS file is read. Only botlib's script preprocessor runs, for the menus (see Not done) |
+| `cb934e88`, `7582058f` id's update and authorize hosts, `com_authServer` | Nothing is asked of id's or Activision's hosts. `AUTHORIZE_SUPPORT` is not defined anywhere, so no CD key is sent and a challenge is answered at once; there is no `com_authServer` to protect. With `ET_STATIC_MODULES` (the Mac and host builds) `cl_motd` is 0, so its `etmaster.idsoftware.com` is never looked up, the auto-update checks return at once, and the master is `master.etlegacy.com`. Ported in PR #17 (`58d4073`, from Q3A `3f7881d7` and these): every `sv_masterN` resolved, only masters asked may answer. Ported in PR #19: a port in `sv_masterN` kept for heartbeats, whose `strstr` arguments were reversed |
+| `70d2a8c4` `teamleader` sized as a name | Does not apply to the Mac build: Quake III game code. ET's `src/botai` has the same 32-byte field and writes its terminator one past it (`ai_cmd.c:1037`, fixed in Q3A by `18aa471f`), but neither ET's own game module nor its bots are built, and `legacy` has neither |
+| `05f2071c` bots hanging the server on a spawn point | Does not apply: Quake III game code. `legacy`'s only bots, Omni-bot, are not built (`FEATURE_OMNIBOT` is in no `legacy/static/*.defines`), and its spawn selection has no retry loop |
+| `efab18d9` `AAS_AreaVolume`, `9a39aa4c`, `756caaa4` optimized AAS files | Do not apply: botlib is linked, but an AAS file is loaded only through `BOTLIB_LOAD_MAP` (`sv_game.c:566`), and `legacy` has no such trap (`legacy/src/game/g_public.h` keeps the setup traps only as dummies), so no AAS file is read. Only botlib's script preprocessor runs, for the menus (see Not done) |
+| `18aa471f` `-O2` by default | ET's own (PR #14, `--bringup` for `-O0` in PR #15). Its two code changes: the `teamleader` write is the `70d2a8c4` row. It aligns `tess` for R_Init's `tess.xyz` warning; here `tess.xyz` points at the separate `tess_xyz` array, so that would not help, and the warning is harmless: no SIMD code reads it |
