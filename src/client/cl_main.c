@@ -2221,6 +2221,18 @@ void CL_ServersResponsePacket( netadr_t from, msg_t *msg ) {
 
 	Com_Printf( "CL_ServersResponsePacket\n" );
 
+	// connectionless, so from anyone: only a master globalservers asked may
+	// fill the list (Quake III 3f7881d7)
+	for ( i = 0; i < CL_MAX_MASTER_SERVERS; i++ ) {
+		if ( cls.masterServers[i].type == NA_IP && NET_CompareAdr( from, cls.masterServers[i] ) ) {
+			break;
+		}
+	}
+	if ( i == CL_MAX_MASTER_SERVERS ) {
+		Com_DPrintf( "getserversResponse from %s, which was not asked\n", NET_AdrToString( from ) );
+		return;
+	}
+
 	if ( cls.numglobalservers == -1 ) {
 		// state to detect lack of servers or lack of response
 		cls.numglobalservers = 0;
@@ -2278,14 +2290,9 @@ void CL_ServersResponsePacket( netadr_t from, msg_t *msg ) {
 		}
 	}
 
-	if ( cls.masterNum == 0 ) {
-		count = cls.numglobalservers;
-		max = MAX_GLOBAL_SERVERS;
-	} else {
-		// shut up compiler
-		count = 0;
-		max = 1;
-	}
+	// every master fills the global list: the legacy menus ask each sv_masterN
+	count = cls.numglobalservers;
+	max = MAX_GLOBAL_SERVERS;
 
 	for ( i = 0; i < numservers && count < max; i++ ) {
 		// build net address
@@ -2298,7 +2305,7 @@ void CL_ServersResponsePacket( netadr_t from, msg_t *msg ) {
 	}
 
 	// if getting the global list and there are too many servers
-	if ( cls.masterNum == 0 && count >= max ) {
+	if ( count >= max ) {
 		for (; i < numservers && cls.numGlobalServerAddresses < MAX_GLOBAL_SERVERS; i++ ) {
 			serverAddress_t *addr;
 			// just store the addresses in an additional list
@@ -2311,12 +2318,8 @@ void CL_ServersResponsePacket( netadr_t from, msg_t *msg ) {
 		}
 	}
 
-	if ( cls.masterNum == 0 ) {
-		cls.numglobalservers = count;
-		total = count + cls.numGlobalServerAddresses;
-	} else {
-		total = cls.numglobalservers = 0;
-	}
+	cls.numglobalservers = count;
+	total = count + cls.numGlobalServerAddresses;
 
 	Com_Printf( "%d servers parsed (total %d)\n", numservers, total );
 }
@@ -4221,7 +4224,8 @@ void CL_GlobalServers_f( void ) {
 	netadr_t to;
 	int i;
 	int count;
-	char        *buffptr;
+	int masterNum;
+	const char  *master;
 	char command[1024];
 
 	if ( Cmd_Argc() < 3 ) {
@@ -4229,32 +4233,55 @@ void CL_GlobalServers_f( void ) {
 		return;
 	}
 
-	cls.masterNum = atoi( Cmd_Argv( 1 ) );
+	masterNum = atoi( Cmd_Argv( 1 ) );
+	if ( masterNum < 0 || masterNum >= CL_MAX_MASTER_SERVERS ) {
+		Com_Printf( "globalservers: master %d is not 0 to %d\n", masterNum, CL_MAX_MASTER_SERVERS - 1 );
+		return;
+	}
+
+	// the legacy menus ask each sv_masterN that is set. Only the first was ever
+	// resolved: any other was sent to an address never filled in
+	master = Cvar_VariableString( va( "sv_master%d", masterNum + 1 ) );
+	if ( !master[0] && masterNum == 0 ) {
+		master = MASTER_SERVER_NAME;
+	}
+	if ( !master[0] ) {
+		Com_Printf( "globalservers: sv_master%d is not set\n", masterNum + 1 );
+		return;
+	}
 
 	Com_Printf( "Requesting servers from the master...\n" );
 
+	Com_Memset( &to, 0, sizeof( to ) );
+	cls.masterServers[masterNum].type = NA_BAD;
+	if ( !NET_StringToAdr( master, &to ) || to.type != NA_IP ) {
+		Com_Printf( "Couldn't resolve %s\n", master );
+		return;
+	}
+	// NET_StringToAdr keeps a port given in the name
+	if ( !strchr( master, ':' ) ) {
+		to.port = BigShort( PORT_MASTER );
+	}
+	// only this address may answer with a server list
+	cls.masterServers[masterNum] = to;
+	cls.masterNum = masterNum;
+
 	// reset the list, waiting for response
 	// -1 is used to distinguish a "no response"
+	cls.numglobalservers = -1;
+	cls.pingUpdateSource = AS_GLOBAL;
 
-	if ( cls.masterNum == 0 ) {
-		NET_StringToAdr( MASTER_SERVER_NAME, &to );
-		cls.numglobalservers = -1;
-		cls.pingUpdateSource = AS_GLOBAL;
-	}
-	to.type = NA_IP;
-	to.port = BigShort( PORT_MASTER );
-
-	sprintf( command, "getservers %s", Cmd_Argv( 2 ) );
+	Com_sprintf( command, sizeof( command ), "getservers %s", Cmd_Argv( 2 ) );
 
 	// tack on keywords
-	buffptr = command + strlen( command );
 	count   = Cmd_Argc();
-	for ( i = 3; i < count; i++ )
-		buffptr += sprintf( buffptr, " %s", Cmd_Argv( i ) );
+	for ( i = 3; i < count; i++ ) {
+		Q_strcat( command, sizeof( command ), va( " %s", Cmd_Argv( i ) ) );
+	}
 
 	// if we are a demo, automatically add a "demo" keyword
 	if ( Cvar_VariableValue( "fs_restrict" ) ) {
-		buffptr += sprintf( buffptr, " demo" );
+		Q_strcat( command, sizeof( command ), " demo" );
 	}
 
 	NET_OutOfBandPrint( NS_SERVER, to, "%s", command );
