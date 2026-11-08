@@ -116,6 +116,13 @@ done
 # by design (odd-pixel vectors; fine on x86 and PPC), so only the alignment check is off.
 "$CC" $FLAGS -fno-sanitize-recover=all -fno-sanitize=alignment tests/security/test_cin.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/cin"
 "$OUT/cin"
+# BSP preflight: the real CM_LoadMap on corrupted maps. Set
+# BSP_FILES to a list of .bsp files to also load, truncate and mutate each of them.
+"$CC" $FLAGS tests/security/test_bsp_cm.c src/qcommon/cm_load.c src/qcommon/cm_patch.c src/qcommon/cm_test.c src/qcommon/cm_polylib.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/bsp_cm"
+"$OUT/bsp_cm" | grep -v '^case: \|^    '
+if [ -n "${BSP_FILES:-}" ]; then
+    "$OUT/bsp_cm" $BSP_FILES
+fi
 for t in msg; do
     "$CC" $FLAGS tests/security/test_$t.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/$t"
     "$OUT/$t"
