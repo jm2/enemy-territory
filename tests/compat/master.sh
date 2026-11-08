@@ -1,10 +1,12 @@
 #!/bin/bash
 # globalservers against two fake masters on loopback, and a third host that answers
-# unasked. Only the two masters' lists may reach the client's list.
+# unasked. Only the two masters' lists may reach the client's list, and a server both
+# list appears once: 3 + 3 entries, one shared, make 5.
 # Usage: CLIENT=./et_host tests/compat/master.sh   (et_host copied into run/base)
+# Logs land in $ET_DATA/compat-master. Exits 1 if a check fails.
 HERE=$(cd "$(dirname "$0")" && pwd)
 ET_DATA=${ET_DATA:-$HOME/et-data}
-R=$ET_DATA/run; O=$ET_DATA/compat-out; rm -rf "$O"; mkdir -p "$O/clhome/.etwolf/legacy"
+R=$ET_DATA/run; O=$ET_DATA/compat-master; rm -rf "$O"; mkdir -p "$O/clhome/.etwolf/legacy"
 cat > "$O/clhome/.etwolf/legacy/master.cfg" <<'C'
 set sv_master1 127.0.0.1:27950
 set sv_master2 127.0.0.1:27951
@@ -23,7 +25,7 @@ def entry(a, b, c, d, port):
 def reply(entries):
     return b'\xff\xff\xff\xffgetserversResponse' + b''.join(entries) + b'\\EOT\0\0\0'
 lists = {27950: [entry(10, 0, 0, i, 27960) for i in range(1, 4)],
-         27951: [entry(10, 0, 1, i, 27960) for i in range(1, 3)]}
+         27951: [entry(10, 0, 1, i, 27960) for i in range(1, 3)] + [entry(10, 0, 0, 1, 27960)]}
 socks = {}
 for port in lists:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.bind(('127.0.0.1', port)); s.settimeout(0.1); socks[port] = s
@@ -41,7 +43,7 @@ while time.time() < end:
         rogue.sendto(reply([entry(6, 6, 6, i, 27960) for i in range(1, 51)]), addr)
         log.write('rogue answered %s\n' % (addr,)); log.flush()
 P
-exec env CLIENT="${CLIENT:-./et_host}" \
+env CLIENT="${CLIENT:-./et_host}" \
  bwrap --unshare-all --die-with-parent --new-session \
  --ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin --symlink usr/sbin /sbin \
  --ro-bind /etc/alternatives /etc/alternatives --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache \
@@ -62,3 +64,12 @@ timeout 90 $CLIENT +set fs_basepath /base +set fs_homepath /clhome/.etwolf +set 
 echo "client exit $?" >>/out/client.log
 kill $M 2>/dev/null; wait $M 2>/dev/null
 exit 0'
+
+L=$O/client.log; fail=0
+check() { if eval "$2"; then echo "ok: $1"; else echo "FAIL: $1"; fail=1; fi; }
+check "both masters asked" '[ "$(grep -c "asked by" "$O/masters.log")" = 2 ]'
+check "both lists parsed, the shared server once" '[ "$(grep -a "servers parsed" "$L" | tail -1)" = "3 servers parsed (total 5)" ]'
+check "both unasked replies refused" '[ "$(grep -a -c "which was not asked" "$L")" = 2 ]'
+check "an unset master is not asked" 'grep -a -q "sv_master3 is not set" "$L"'
+check "a master out of range is not asked" 'grep -a -q "master 7 is not 0 to 4" "$L"'
+exit $fail

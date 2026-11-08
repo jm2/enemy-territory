@@ -345,7 +345,7 @@ typedef struct {
 
 	int masterNum;
 	// where globalservers sent getservers, by master number: only these may
-	// answer with a server list (Quake III 3f7881d7). NA_BAD for none.
+	// answer with a server list (Quake III 3f7881d7). Any type but NA_IP is none.
 	netadr_t masterServers[CL_MAX_MASTER_SERVERS];
 
 	// update server info

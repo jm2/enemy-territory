@@ -2209,6 +2209,31 @@ void CL_InitServerInfo( serverInfo_t *server, serverAddress_t *address ) {
 
 /*
 ===================
+CL_GlobalServerListed
+
+Whether an address is already in the global list or its overflow
+===================
+*/
+static qboolean CL_GlobalServerListed( const serverAddress_t *address, int count ) {
+	int i;
+
+	for ( i = 0; i < count; i++ ) {
+		const netadr_t *adr = &cls.globalServers[i].adr;
+		if ( adr->port == address->port && !memcmp( adr->ip, address->ip, 4 ) ) {
+			return qtrue;
+		}
+	}
+	for ( i = 0; i < cls.numGlobalServerAddresses; i++ ) {
+		const serverAddress_t *listed = &cls.globalServerAddresses[i];
+		if ( listed->port == address->port && !memcmp( listed->ip, address->ip, 4 ) ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+/*
+===================
 CL_ServersResponsePacket
 ===================
 */
@@ -2252,7 +2277,9 @@ void CL_ServersResponsePacket( netadr_t from, msg_t *msg ) {
 		}
 		while ( buffptr < buffend );
 
-		if ( buffptr >= buffend - 6 ) {
+		// six bytes of address and the separator after them; lengths, not a
+		// pointer before the buffer (Quake III 3f7881d7)
+		if ( buffend - buffptr <= 6 ) {
 			break;
 		}
 
@@ -2284,8 +2311,8 @@ void CL_ServersResponsePacket( netadr_t from, msg_t *msg ) {
 			break;
 		}
 
-		// parse out EOT
-		if ( buffptr[1] == 'E' && buffptr[2] == 'O' && buffptr[3] == 'T' ) {
+		// parse out EOT, not reading past the packet
+		if ( buffend - buffptr > 3 && buffptr[1] == 'E' && buffptr[2] == 'O' && buffptr[3] == 'T' ) {
 			break;
 		}
 	}
@@ -2294,27 +2321,18 @@ void CL_ServersResponsePacket( netadr_t from, msg_t *msg ) {
 	count = cls.numglobalservers;
 	max = MAX_GLOBAL_SERVERS;
 
-	for ( i = 0; i < numservers && count < max; i++ ) {
-		// build net address
-		//serverInfo_t *server = (cls.masterNum == 0) ? &cls.globalServers[count] : &cls.mplayerServers[count];
-		serverInfo_t *server = &cls.globalServers[count];
-
-		CL_InitServerInfo( server, &addresses[i] );
-		// advance to next slot
-		count++;
-	}
-
-	// if getting the global list and there are too many servers
-	if ( count >= max ) {
-		for (; i < numservers && cls.numGlobalServerAddresses < MAX_GLOBAL_SERVERS; i++ ) {
-			serverAddress_t *addr;
-			// just store the addresses in an additional list
-			addr = &cls.globalServerAddresses[cls.numGlobalServerAddresses++];
-			addr->ip[0] = addresses[i].ip[0];
-			addr->ip[1] = addresses[i].ip[1];
-			addr->ip[2] = addresses[i].ip[2];
-			addr->ip[3] = addresses[i].ip[3];
-			addr->port  = addresses[i].port;
+	for ( i = 0; i < numservers; i++ ) {
+		// two masters often list the same server
+		if ( CL_GlobalServerListed( &addresses[i], count ) ) {
+			continue;
+		}
+		if ( count < max ) {
+			CL_InitServerInfo( &cls.globalServers[count++], &addresses[i] );
+		} else if ( cls.numGlobalServerAddresses < MAX_GLOBAL_SERVERS ) {
+			// too many servers: just store the addresses in an additional list
+			cls.globalServerAddresses[cls.numGlobalServerAddresses++] = addresses[i];
+		} else {
+			break;
 		}
 	}
 
@@ -4252,6 +4270,13 @@ void CL_GlobalServers_f( void ) {
 
 	Com_Printf( "Requesting servers from the master...\n" );
 
+	// a master whose cvar was cleared may no longer answer
+	for ( i = 1; i < CL_MAX_MASTER_SERVERS; i++ ) {
+		if ( !Cvar_VariableString( va( "sv_master%d", i + 1 ) )[0] ) {
+			cls.masterServers[i].type = NA_BAD;
+		}
+	}
+
 	Com_Memset( &to, 0, sizeof( to ) );
 	cls.masterServers[masterNum].type = NA_BAD;
 	if ( !NET_StringToAdr( master, &to ) || to.type != NA_IP ) {
@@ -4261,10 +4286,12 @@ void CL_GlobalServers_f( void ) {
 	// NET_StringToAdr keeps a port given in the name
 	if ( !strchr( master, ':' ) ) {
 		to.port = BigShort( PORT_MASTER );
+	} else if ( !to.port ) {
+		Com_Printf( "globalservers: no port in %s\n", master );
+		return;
 	}
 	// only this address may answer with a server list
 	cls.masterServers[masterNum] = to;
-	cls.masterNum = masterNum;
 
 	// reset the list, waiting for response
 	// -1 is used to distinguish a "no response"
