@@ -216,7 +216,10 @@ void CL_AddReliableCommand( const char *cmd ) {
 	// if we would be losing an old command that hasn't been acknowledged,
 	// we must drop the connection. MAX_RELIABLE_COMMANDS unacknowledged ones
 	// fill every slot, and one more would overwrite the oldest, which packets
-	// then send under its number (Quake III 81449c7f, ioquake3)
+	// then send under its number (Quake III 81449c7f, ioquake3). At exactly
+	// MAX_RELIABLE_COMMANDS the newest still takes the slot of the last one
+	// acknowledged, which decodes the server's packets until the next ack, as
+	// in ioquake3; only a dead connection gets that far
 	if ( clc.reliableSequence - clc.reliableAcknowledge >= MAX_RELIABLE_COMMANDS ) {
 		Com_Error( ERR_DROP, "Client command overflow" );
 	}
