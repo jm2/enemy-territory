@@ -187,7 +187,10 @@ int R_ComputeLOD( trRefEntity_t *ent ) {
 
 		frame = ( md3Frame_t * )( ( ( unsigned char * ) tr.currentModel->model.md3[0] ) + tr.currentModel->model.md3[0]->ofsFrames );
 
-		frame += ent->e.frame;
+		// the frame is only checked against the chosen LOD later
+		if ( ent->e.frame > 0 && ent->e.frame < tr.currentModel->model.md3[0]->numFrames ) {
+			frame += ent->e.frame;
+		}
 
 		radius = RadiusFromBounds( frame->bounds[0], frame->bounds[1] );
 
@@ -402,8 +405,15 @@ void R_AddMD3Surfaces( trRefEntity_t *ent ) {
 		} else if ( surface->numShaders <= 0 ) {
 			shader = tr.defaultShader;
 		} else {
+			int skinNum;
+
+			// skinNum comes from the game; wrap a negative one into range (Q3A 7c146117)
+			skinNum = ent->e.skinNum % surface->numShaders;
+			if ( skinNum < 0 ) {
+				skinNum += surface->numShaders;
+			}
 			md3Shader = ( md3Shader_t * )( (byte *)surface + surface->ofsShaders );
-			md3Shader += ent->e.skinNum % surface->numShaders;
+			md3Shader += skinNum;
 			shader = tr.shaders[ md3Shader->shaderIndex ];
 		}
 

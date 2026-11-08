@@ -85,6 +85,25 @@ static int totalrv, totalrt, totalv, totalt;    //----(SA)
 
 //-----------------------------------------------------------------------------
 
+/*
+=============
+R_MDSFrame
+
+Frame numbers come from the game's animation data, not the MDS, so clamp them
+to the frames the loader validated.
+=============
+*/
+static mdsFrame_t *R_MDSFrame( const mdsHeader_t *header, int frameNum ) {
+	if ( frameNum >= header->numFrames ) {
+		frameNum = header->numFrames - 1;
+	}
+	if ( frameNum < 0 ) {
+		frameNum = 0;
+	}
+	return ( mdsFrame_t * )( (byte *)header + header->ofsFrames +
+							 frameNum * (int)( sizeof( mdsFrame_t ) - sizeof( mdsBoneFrameCompressed_t ) + header->numBones * sizeof( mdsBoneFrameCompressed_t ) ) );
+}
+
 static float ProjectRadius( float r, vec3_t location ) {
 	float pr;
 	float dist;
@@ -141,13 +160,11 @@ R_CullModel
 static int R_CullModel( mdsHeader_t *header, trRefEntity_t *ent ) {
 	vec3_t bounds[2];
 	mdsFrame_t  *oldFrame, *newFrame;
-	int i, frameSize;
-
-	frameSize = (int) ( sizeof( mdsFrame_t ) - sizeof( mdsBoneFrameCompressed_t ) + header->numBones * sizeof( mdsBoneFrameCompressed_t ) );
+	int i;
 
 	// compute frame pointers
-	newFrame = ( mdsFrame_t * )( ( byte * ) header + header->ofsFrames + ent->e.frame * frameSize );
-	oldFrame = ( mdsFrame_t * )( ( byte * ) header + header->ofsFrames + ent->e.oldframe * frameSize );
+	newFrame = R_MDSFrame( header, ent->e.frame );
+	oldFrame = R_MDSFrame( header, ent->e.oldframe );
 
 	// cull bounding sphere ONLY if this is not an upscaled entity
 	if ( !ent->e.nonNormalizedAxes ) {
@@ -274,7 +291,7 @@ static int R_ComputeFogNum( mdsHeader_t *header, trRefEntity_t *ent ) {
 	}
 
 	// FIXME: non-normalized axis issues
-	mdsFrame = ( mdsFrame_t * )( ( byte * ) header + header->ofsFrames + ( sizeof( mdsFrame_t ) + sizeof( mdsBoneFrameCompressed_t ) * ( header->numBones - 1 ) ) * ent->e.frame );
+	mdsFrame = R_MDSFrame( header, ent->e.frame );
 	VectorAdd( ent->e.origin, mdsFrame->localOrigin, localOrigin );
 	for ( i = 1 ; i < tr.world->numfogs ; i++ ) {
 		fog = &tr.world->fogs[i];
@@ -1037,14 +1054,10 @@ void R_CalcBones( mdsHeader_t *header, const refEntity_t *refent, int *boneList,
 
 	frameSize = (int) ( sizeof( mdsFrame_t ) + ( header->numBones - 1 ) * sizeof( mdsBoneFrameCompressed_t ) );
 
-	frame = ( mdsFrame_t * )( (byte *)header + header->ofsFrames +
-							  refent->frame * frameSize );
-	torsoFrame = ( mdsFrame_t * )( (byte *)header + header->ofsFrames +
-								   refent->torsoFrame * frameSize );
-	oldFrame = ( mdsFrame_t * )( (byte *)header + header->ofsFrames +
-								 refent->oldframe * frameSize );
-	oldTorsoFrame = ( mdsFrame_t * )( (byte *)header + header->ofsFrames +
-									  refent->oldTorsoFrame * frameSize );
+	frame = R_MDSFrame( header, refent->frame );
+	torsoFrame = R_MDSFrame( header, refent->torsoFrame );
+	oldFrame = R_MDSFrame( header, refent->oldframe );
+	oldTorsoFrame = R_MDSFrame( header, refent->oldTorsoFrame );
 
 	//
 	// lerp all the needed bones (torsoParent is always the first bone in the list)
@@ -1221,6 +1234,10 @@ void RB_SurfaceAnim( mdsSurface_t *surface ) {
 	if ( render_count > surface->numVerts ) {
 		render_count = surface->numVerts;
 	}
+	// keep vertex 0, so the collapse map is only read where the loader checked it
+	if ( render_count < 1 && surface->numVerts > 0 ) {
+		render_count = 1;
+	}
 
 	RB_CheckOverflow( render_count, surface->numTriangles );
 
@@ -1345,7 +1362,7 @@ void RB_SurfaceAnim( mdsSurface_t *surface ) {
 				qglEnd();
 
 				// connect to our parent if it's valid
-				if ( validBones[boneInfo[*boneRefs].parent] ) {
+				if ( boneInfo[*boneRefs].parent >= 0 && validBones[boneInfo[*boneRefs].parent] ) {
 					qglLineWidth( 2 );
 					qglBegin( GL_LINES );
 					qglColor3f( .6,.6,.6 );
@@ -1416,6 +1433,9 @@ void RB_SurfaceAnim( mdsSurface_t *surface ) {
 /*
 ===============
 R_RecursiveBoneListAdd
+
+The loader requires every bone's parent to come before it, so this ends
+after at most numBones (<= MDS_MAX_BONES) calls and boneList cannot overflow.
 ===============
 */
 void R_RecursiveBoneListAdd( int bi, int *boneList, int *numBones, mdsBoneInfo_t *boneInfoList ) {
@@ -1446,6 +1466,9 @@ int R_GetBoneTag( orientation_t *outTag, mdsHeader_t *mds, int startTagIndex, co
 	if ( startTagIndex > mds->numTags ) {
 		memset( outTag, 0, sizeof( *outTag ) );
 		return -1;
+	}
+	if ( startTagIndex < 0 ) {
+		startTagIndex = 0;
 	}
 
 	// find the correct tag

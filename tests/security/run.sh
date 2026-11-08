@@ -127,3 +127,13 @@ for sep in "'/'" "':'"; do
     "$CC" $FLAGS "-DTEST_PATH_SEP=$sep" "-DBEGINDL_INC=\"$OUT/begindl.inc\"" tests/security/test_clparse.c src/client/cl_parse.c src/qcommon/cvar.c src/qcommon/fs_path.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/clparse"
     "$OUT/clparse"
 done
+# The model loaders and the bone, mesh and surface code that trusts them. Q_rsqrt
+# reads a float through a 64-bit long on the host only, so q_math.c gets no
+# sanitizer here. The second build makes LittleLong and friends swap, as on the
+# big-endian target; LongSwap shifts a byte into the sign bit by design.
+MODELS="tests/security/test_models.c src/renderer/tr_model.c src/renderer/tr_animation_mds.c src/renderer/tr_animation_mdm.c src/renderer/tr_mesh.c src/renderer/tr_cmesh.c src/renderer/tr_surface.c"
+"$CC" $FLAGS -fno-sanitize=all -c src/game/q_math.c -o "$OUT/q_math_plain.o"
+"$CC" $FLAGS -fno-sanitize-recover=all -Isrc/renderer $MODELS "$OUT/q_math_plain.o" -lm -o "$OUT/models"
+"$OUT/models"
+"$CC" $FLAGS -fno-sanitize-recover=all -fno-sanitize=shift-base -DMODEL_TEST_SWAP -Isrc/renderer $MODELS "$OUT/q_math_plain.o" -lm -o "$OUT/models_swapped"
+"$OUT/models_swapped"

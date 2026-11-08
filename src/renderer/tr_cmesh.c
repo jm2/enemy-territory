@@ -324,6 +324,14 @@ void R_AddMDCSurfaces( trRefEntity_t *ent ) {
 
 	header = tr.currentModel->model.mdc[lod];
 
+	// each LOD is a separate file, which may have fewer frames than the first
+	if ( ent->e.frame >= header->numFrames || ent->e.oldframe >= header->numFrames ) {
+		ri.Printf( PRINT_DEVELOPER, "R_AddMDCSurfaces: no such frame %d to %d for '%s' LOD %d\n",
+				   ent->e.oldframe, ent->e.frame, tr.currentModel->name, lod );
+		ent->e.frame = 0;
+		ent->e.oldframe = 0;
+	}
+
 	//
 	// cull the entire model if merged bounding box of both frames
 	// is outside the view frustum.
@@ -394,8 +402,15 @@ void R_AddMDCSurfaces( trRefEntity_t *ent ) {
 		} else if ( surface->numShaders <= 0 ) {
 			shader = tr.defaultShader;
 		} else {
+			int skinNum;
+
+			// skinNum comes from the game; wrap a negative one into range (Q3A 7c146117)
+			skinNum = ent->e.skinNum % surface->numShaders;
+			if ( skinNum < 0 ) {
+				skinNum += surface->numShaders;
+			}
 			md3Shader = ( md3Shader_t * )( (byte *)surface + surface->ofsShaders );
-			md3Shader += ent->e.skinNum % surface->numShaders;
+			md3Shader += skinNum;
 			shader = tr.shaders[ md3Shader->shaderIndex ];
 		}
 
