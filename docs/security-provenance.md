@@ -73,7 +73,6 @@ it, and what has not been done. A cross-build proves only that code compiles.
   reviewed against this tree yet.
 - `sv_userInfoFloodProtect` (`f5258c7d`) and the other server-side ETL fixes matter only for a
   listen server and are not ported.
-- BSP and cinematic loaders take pk3 content from a server, and are not hardened
 - BSP loaders take pk3 content from a server, and are not hardened
   yet. Shader and skin text has its array bounds only: Q3A's checks of non-finite numbers,
   fallback state and its brace recovery are not ported. `inflate` itself is zlib 1.1.3 with the fix above and has only had the mutation test. Q3A has a long validation series (`docs/review-*`
