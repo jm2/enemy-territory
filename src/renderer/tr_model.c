@@ -151,6 +151,7 @@ qhandle_t RE_RegisterModel( const char *name ) {
 	qboolean loaded;
 	qhandle_t hModel;
 	int numLoaded;
+	int firstIdent = 0, firstLod = -1;
 	int length;
 	char filename[1024];
 
@@ -271,6 +272,20 @@ qhandle_t RE_RegisterModel( const char *name ) {
 			goto fail;
 		}
 
+		// md3[] and mdc[] share storage and mod->type names one format, so all
+		// LODs must match. The base file decides: a coarser LOD of the other
+		// format is skipped, or dropped when the base turns out to differ.
+		if ( firstLod >= 0 && ident != firstIdent ) {
+			ri.Printf( PRINT_WARNING, "RE_RegisterModel: %s mixes MD3 and MDC levels of detail\n", name );
+			if ( lod != 0 ) {
+				ri.FS_FreeFile( buf );
+				continue;
+			}
+			memset( &mod->model, 0, sizeof( mod->model ) );
+			mod->dataSize = 0;
+			firstLod = -1;
+			numLoaded = 0;
+		}
 		if ( ident == MD3_IDENT ) {
 			loaded = R_LoadMD3( mod, lod, buf, length, name );
 		} else {
@@ -287,7 +302,10 @@ qhandle_t RE_RegisterModel( const char *name ) {
 				break;
 			}
 		} else {
-			mod->numLods++;
+			if ( firstLod < 0 ) {
+				firstLod = lod;
+				firstIdent = ident;
+			}
 			numLoaded++;
 			// if we have a valid model and are biased
 			// so that we won't see any higher detail ones,
@@ -302,20 +320,19 @@ qhandle_t RE_RegisterModel( const char *name ) {
 
 	if ( numLoaded ) {
 		// duplicate into higher lod spots that weren't
-		// loaded, in case the user changes r_lodbias on the fly
-		for ( lod-- ; lod >= 0 ; lod-- ) {
-			mod->numLods++;
-			// Ridah, mesh compression
-			//	this check for mod->md3[0] could leave mod->md3[0] == 0x0000000 if r_lodbias is set to anything except '0'
-			//	which causes trouble in tr_mesh.c in R_AddMD3Surfaces() and other locations since it checks md3[0]
-			//	for various things.
-			if ( ident == MD3_IDENT ) { //----(SA)	modified
-//			if (mod->md3[0])		//----(SA)	end
-				mod->model.md3[lod] = mod->model.md3[lod + 1];
-			} else {
+		// loaded, in case the user changes r_lodbias on the fly.
+		// The renderer may pick any slot below numLods, so fill every one:
+		// a missing LOD between two that loaded, the slot of a refused LOD,
+		// and those below it all take the next coarser LOD that loaded.
+		mod->numLods = firstLod + 1;
+		for ( lod = firstLod - 1 ; lod >= 0 ; lod-- ) {
+			if ( firstIdent == MD3_IDENT ) {
+				if ( !mod->model.md3[lod] ) {
+					mod->model.md3[lod] = mod->model.md3[lod + 1];
+				}
+			} else if ( !mod->model.mdc[lod] ) {
 				mod->model.mdc[lod] = mod->model.mdc[lod + 1];
 			}
-			// done.
 		}
 
 		return mod->index;
@@ -1340,11 +1357,6 @@ static qboolean R_LoadMDC( model_t *mod, int lod, void *buffer, int length, cons
 	LL( mod->model.mdc[lod]->numSkins );
 
 
-	if ( mod->model.mdc[lod]->numFrames < 1 ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMDC: %s has no frames\n", mod_name );
-		return qfalse;
-	}
-
 	// swap all the frames
 	frame = ( md3Frame_t * )( (byte *)mod->model.mdc[lod] + mod->model.mdc[lod]->ofsFrames );
 	for ( i = 0 ; i < mod->model.mdc[lod]->numFrames ; i++, frame++ ) {
@@ -1525,11 +1537,6 @@ static qboolean R_LoadMD3( model_t *mod, int lod, void *buffer, int length, cons
 	LL( mod->model.md3[lod]->ofsSurfaces );
 	LL( mod->model.md3[lod]->ofsEnd );
 
-	if ( mod->model.md3[lod]->numFrames < 1 ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMD3: %s has no frames\n", mod_name );
-		return qfalse;
-	}
-
 	if ( strstr( mod->name,"sherman" ) || strstr( mod->name, "mg42" ) ) {
 		fixRadius = qtrue;
 	}
@@ -1703,11 +1710,6 @@ static qboolean R_LoadMDS( model_t *mod, void *buffer, int length, const char *m
 	mds->lodBias = LittleFloat( mds->lodBias );
 	mds->lodScale = LittleFloat( mds->lodScale );
 	LL( mds->torsoParent );
-
-	if ( mds->numFrames < 1 ) {
-		ri.Printf( PRINT_WARNING, "R_LoadMDS: %s has no frames\n", mod_name );
-		return qfalse;
-	}
 
 	if ( LittleLong( 1 ) != 1 ) {
 		// swap all the frames

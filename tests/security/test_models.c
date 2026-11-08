@@ -724,15 +724,23 @@ static void Set16( model_t_ *m, int at, int v ) {
 /* ---------------------------------------------------------------- runtime */
 
 /*
-Drive what the renderer does with a loaded model: tags at odd frames and start
-indexes, surface submission and vertex generation at several LODs. skeleton is
-the MDX handle an MDM is paired with.
+Drive what the renderer does with a loaded model: tags, surface submission and
+vertex generation at several LODs. skeleton is the MDX handle an MDM is paired
+with. Frames and tag start indexes come from the game, not the model; they stay
+in range for every model unless oddInputs is set, so a case that fails on the
+old code fails at its own model, not at the game's numbers.
 */
+static int oddInputs;
+
 static void Exercise( qhandle_t h, qhandle_t skeleton, qhandle_t otherSkeleton ) {
-	static const int frames[][2] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 2, 1 }, { -1, 0 }, { 5000, 1 },
-									 { 0x7fffffff, (int)0x80000000 }, { -7, -7 } };
+	static const int oddFrames[][2] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 2, 1 }, { -1, 0 }, { 5000, 1 },
+										{ 0x7fffffff, (int)0x80000000 }, { -7, -7 } };
+	static const int saneFrames[][2] = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 1 } };
 	static const char *tagNames[] = { "tag_a", "tag_b", "tag_none" };
 	static const int starts[] = { 0, 1, -3, 100 };
+	const int ( *frames )[2] = oddInputs ? oddFrames : saneFrames;
+	int numPairs = oddInputs ? (int)ARRAY_LEN( oddFrames ) : (int)ARRAY_LEN( saneFrames );
+	int numStarts = oddInputs ? (int)ARRAY_LEN( starts ) : 2;
 	model_t *mod = R_GetModelByHandle( h );
 	trRefEntity_t ent;
 	orientation_t o;
@@ -744,7 +752,7 @@ static void Exercise( qhandle_t h, qhandle_t skeleton, qhandle_t otherSkeleton )
 		CHECK( 0, "error escaped while rendering: %s", lastMessage );
 		return;
 	}
-	for ( pass = 0; pass < 2 * (int)ARRAY_LEN( frames ); pass++ ) {
+	for ( pass = 0; pass < 2 * numPairs; pass++ ) {
 		pair = pass / 2;
 		memset( &ent, 0, sizeof( ent ) );
 		AxisClear( ent.e.axis );
@@ -756,17 +764,18 @@ static void Exercise( qhandle_t h, qhandle_t skeleton, qhandle_t otherSkeleton )
 		}
 		ent.e.frame = frames[pair][0];
 		ent.e.oldframe = frames[pair][1];
-		ent.e.torsoFrame = frames[( pair + 3 ) % ARRAY_LEN( frames )][0];
-		ent.e.oldTorsoFrame = frames[( pair + 3 ) % ARRAY_LEN( frames )][1];
+		ent.e.torsoFrame = frames[( pair + 3 ) % numPairs][0];
+		ent.e.oldTorsoFrame = frames[( pair + 3 ) % numPairs][1];
 		ent.e.backlerp = pair & 1 ? 0.25f : 0;
 		ent.e.torsoBacklerp = pair & 2 ? 0.5f : 0;
-		ent.e.reFlags = ( pass & 1 ) ? REFLAG_FORCE_LOD : pair == 4 ? REFLAG_DEAD_LOD : 0;
-		ent.e.renderfx = pair == 6 ? RF_WRAP_FRAMES : 0;
+		ent.e.reFlags = ( pass & 1 ) ? REFLAG_FORCE_LOD : pair == 2 ? REFLAG_DEAD_LOD : 0;
+		ent.e.renderfx = pair == 3 ? RF_WRAP_FRAMES : 0;
 		r_lodbias->value = ( pass & 1 ) ? 4 : 0;   // drop skeletal LOD to the collapse map
 		r_lodbias->integer = 0;
 
-		for ( i = 0; i < (int)ARRAY_LEN( tagNames ); i++ ) {
-			for ( j = 0; j < (int)ARRAY_LEN( starts ); j++ ) {
+		// a tag lookup on a skeleton is the game's mistake, so it is an odd input too
+		for ( i = 0; i < (int)ARRAY_LEN( tagNames ) && ( oddInputs || mod->type != MOD_MDX ); i++ ) {
+			for ( j = 0; j < numStarts; j++ ) {
 				R_LerpTag( &o, &ent.e, tagNames[i], starts[j] );
 			}
 		}
@@ -905,7 +914,10 @@ static void CaseTruncation( void ) {
 	}
 }
 
-#define MUTATE( kind, what, stmt ) do { model_t_ m; Build( &m, kind ); stmt; ExpectRefuse( kind, &m, what ); } while ( 0 )
+/* MODEL_TEST_ONLY=N runs only the Nth malformed model of a case, to show each one alone */
+static int mutateIndex, onlyIndex = -1;
+#define MUTATE( kind, what, stmt ) do { if ( onlyIndex < 0 || onlyIndex == mutateIndex ) { model_t_ m; Build( &m, kind ); stmt; \
+	if ( onlyIndex >= 0 ) printf( "  %s\n", what ); ExpectRefuse( kind, &m, what ); } mutateIndex++; } while ( 0 )
 
 static void CaseMD3( void ) {
 	MUTATE( K_MD3, "end past file", Set32( &m, offsetof( md3Header_t, ofsEnd ), m.length + 4 ) );
@@ -1064,8 +1076,64 @@ static void CaseLodFrames( void ) {
 		h = Register( kind == K_MD3 ? "models/test.md3" : "models/test.mdc" );
 		CHECK( h && R_GetModelByHandle( h )->numLods > 1, "model with a coarser LOD did not load" );
 		if ( h ) {
+			oddInputs = 1;      // frame 2 is in range for LOD 0 only
 			Exercise( h, skeleton, skeleton );
+			oddInputs = 0;
 		}
+	}
+}
+
+/*
+LOD sets: md3[] and mdc[] are one union, so an MD3 base with an MDC LOD (or the
+reverse) must not leave one format's data under the other's type; missing and
+refused LODs must not leave a NULL slot the renderer can pick.
+*/
+static void CaseLodMix( void ) {
+	static const struct {
+		const char *what, *base;
+		const char *files[3];     // name, with its kind taken from the extension; 't' marks a truncated file
+		int type, numLods;
+	} sets[] = {
+		{ "MDC base, MD3 LOD", "models/test.mdc", { "models/test.mdc", "models/test_1.md3" }, MOD_MDC, 1 },
+		{ "MD3 base, MDC LOD", "models/test.md3", { "models/test.md3", "models/test_1.mdc" }, MOD_MESH, 1 },
+		{ "MD3 with an MDC LOD between", "models/test.md3", { "models/test.md3", "models/test_1.mdc", "models/test_2.md3" }, MOD_MESH, 3 },
+		{ "MD3 with LODs 1 and 2 missing", "models/test.md3", { "models/test.md3", "models/test_3.md3" }, MOD_MESH, 4 },
+		{ "MDC with LODs 1 and 2 missing", "models/test.mdc", { "models/test.mdc", "models/test_3.mdc" }, MOD_MDC, 4 },
+		{ "MD3 with a bad LOD 1", "models/test.md3", { "models/test.md3", "models/test_1.md3t", "models/test_2.md3" }, MOD_MESH, 3 },
+	};
+	int i, j, lod;
+
+	for ( i = 0; i < (int)ARRAY_LEN( sets ); i++ ) {
+		model_t_ m, x;
+		qhandle_t h;
+		model_t *mod;
+
+		ResetRenderer();
+		BuildMDX( &x, 3 );
+		AddFile( "models/skel.mdx", x.data, x.length );
+		skeleton = Register( "models/skel.mdx" );
+		for ( j = 0; j < 3 && sets[i].files[j]; j++ ) {
+			char name[MAX_QPATH];
+			int truncated;
+			Q_strncpyz( name, sets[i].files[j], sizeof( name ) );
+			truncated = name[strlen( name ) - 1] == 't';
+			if ( truncated ) {
+				name[strlen( name ) - 1] = 0;
+			}
+			Build( &m, name[strlen( name ) - 1] == 'c' ? K_MDC : K_MD3 );
+			AddFile( name, m.data, truncated ? m.length / 2 : m.length );
+		}
+		h = Register( sets[i].base );
+		mod = R_GetModelByHandle( h );
+		CHECK( h && mod->type == sets[i].type && mod->numLods == sets[i].numLods,
+			   "%s: handle %d type %d lods %d", sets[i].what, h, mod->type, mod->numLods );
+		if ( !h ) {
+			continue;
+		}
+		for ( lod = 0; lod < mod->numLods; lod++ ) {
+			CHECK( mod->model.md3[lod], "%s: LOD %d of %d is empty", sets[i].what, lod, mod->numLods );
+		}
+		Exercise( h, skeleton, skeleton );
 	}
 }
 
@@ -1203,10 +1271,25 @@ static void FuzzSynthetic( int iterations ) {
 	}
 }
 
+/* the game's frame numbers and tag start indexes past every model */
+static void CaseRuntime( void ) {
+	model_t_ m;
+	int kind;
+
+	oddInputs = 1;
+	for ( kind = K_MD3; kind <= K_MDX; kind++ ) {
+		Build( &m, kind );
+		ExpectLoad( kind, &m, "valid, odd frames" );
+	}
+	oddInputs = 0;
+}
+
 static void CaseFuzz( void ) {
+	oddInputs = 1;
 	fuzzLoaded = fuzzRefused = 0;
 	FuzzSynthetic( getenv( "MODEL_TEST_FUZZ" ) ? atoi( getenv( "MODEL_TEST_FUZZ" ) ) : 4000 );
 	printf( "  synthetic fuzz: %d loaded, %d refused\n", fuzzLoaded, fuzzRefused );
+	oddInputs = 0;
 }
 
 /* ---------------------------------------------------------------- retail */
@@ -1318,7 +1401,9 @@ static const struct {
 	{ "mdx", CaseMDX },
 	{ "pairing", CasePairing },
 	{ "lodframes", CaseLodFrames },
+	{ "lodmix", CaseLodMix },
 	{ "overlap", CaseOverlap },
+	{ "runtime", CaseRuntime },
 	{ "fuzz", CaseFuzz },
 };
 
@@ -1352,6 +1437,9 @@ int main( int argc, char **argv ) {
 	swapMode = 1;
 #endif
 	verbose = getenv( "MODEL_TEST_VERBOSE" ) != NULL;
+	if ( getenv( "MODEL_TEST_ONLY" ) ) {
+		onlyIndex = atoi( getenv( "MODEL_TEST_ONLY" ) );
+	}
 	ri.Printf = StubPrintf;
 	ri.Error = StubError;
 	ri.Hunk_Alloc = StubHunkAlloc;
@@ -1379,6 +1467,7 @@ int main( int argc, char **argv ) {
 	}
 	if ( argc > 3 && !strcmp( argv[1], "fuzz" ) ) {
 		int iterations = atoi( argv[2] );
+		oddInputs = 1;
 		if ( getenv( "MODEL_TEST_SKELETON" ) ) {
 			skeletonData = ReadWhole( getenv( "MODEL_TEST_SKELETON" ), &skeletonLength );
 		}
