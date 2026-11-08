@@ -47,8 +47,9 @@ int main( void ) {
 	if ( strcmp( clc.reliableCommands[( clc.reliableAcknowledge + 1 ) & ( MAX_RELIABLE_COMMANDS - 1 )], "cmd0" ) ) {
 		fprintf( stderr, "FAIL: oldest overwritten\n" ); return 1;
 	}
-	// one acknowledged makes room for one
+	// one acknowledged makes room for one, and CL_Disconnect sees it
 	clc.reliableAcknowledge++;
+	if ( !( DISCONNECT_GUARD ) ) { fprintf( stderr, "FAIL: CL_Disconnect would not queue with room\n" ); return 1; }
 	if ( setjmp( dropped ) ) { fprintf( stderr, "FAIL: no room after an ack\n" ); return 1; }
 	CL_AddReliableCommand( "after ack" );
 	printf( "reliable command tests passed\n" );

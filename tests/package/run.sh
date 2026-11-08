@@ -2,6 +2,7 @@
 # package_mac.sh must refuse missing or wrong game data before a long build starts.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+export TMPDIR="${TMPDIR:-/var/tmp}"
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 fails=0
