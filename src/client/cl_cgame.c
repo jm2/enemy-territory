@@ -545,6 +545,10 @@ void CL_ShutdownCGame( void ) {
 	VM_Call( cgvm, CG_SHUTDOWN );
 	VM_Free( cgvm );
 	cgvm = NULL;
+	// free the preprocessor handles it left open (a .weap after an error)
+	if ( botlib_export ) {
+		botlib_export->PC_FreeSourceHandles( PC_OWNER_CGAME );
+	}
 }
 
 static int  FloatAsInt( float f ) {
@@ -887,7 +891,7 @@ int CL_CgameSystemCalls( int *args ) {
 	case CG_PC_ADD_GLOBAL_DEFINE:
 		return botlib_export->PC_AddGlobalDefine( VMA( 1 ) );
 	case CG_PC_LOAD_SOURCE:
-		return botlib_export->PC_LoadSourceHandle( VMA( 1 ) );
+		return botlib_export->PC_LoadSourceHandle( VMA( 1 ), PC_OWNER_CGAME );
 	case CG_PC_FREE_SOURCE:
 		return botlib_export->PC_FreeSourceHandle( args[1] );
 	case CG_PC_READ_TOKEN:

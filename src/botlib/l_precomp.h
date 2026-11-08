@@ -104,6 +104,11 @@ typedef struct source_s
 	define_t *defines;                      //list with macro definitions
 	define_t **definehash;                  //hash chain with defines
 	indent_t *indentstack;                  //stack with indents
+	int tokenwork;                          //macro expansion copies since the last script token
+	int numincludes;                        //files included over the life of the source
+	int numindents;                         //conditionals open on indentstack
+	int argdepth;                           //macro calls nested in macro arguments
+	int memoryerror;                        //an allocation failed: every later read fails
 	int skip;                               // > 0 if skipping conditional code
 	token_t token;                          //last read token
 } source_t;
@@ -159,7 +164,8 @@ void QDECL SourceError( source_t *source, char *str, ... );
 void QDECL SourceWarning( source_t *source, char *str, ... );
 
 //
-int PC_LoadSourceHandle( const char *filename );
+int PC_LoadSourceHandle( const char *filename, int owner );
+void PC_FreeSourceHandles( int owner );
 int PC_FreeSourceHandle( int handle );
 int PC_ReadTokenHandle( int handle, struct pc_token_s *pc_token );
 int PC_SourceFileAndLine( int handle, char *filename, int *line );

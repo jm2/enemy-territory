@@ -200,6 +200,11 @@ typedef struct botlib_import_s
 	void ( *FreeMemory )( void *ptr );
 	void ( *FreeZoneMemory )( void );
 	void        *( *HunkAlloc )( int size );
+	//bytes still free where GetMemory allocates
+	int ( *AvailableMemory )( void );
+	//GetMemory that returns NULL instead of a fatal error when no free block
+	//is large enough
+	void        *( *TryGetMemory )( int size );
 	//file system access
 	int ( *FS_FOpenFile )( const char *qpath, fileHandle_t *file, fsMode_t mode );
 	int ( *FS_Read )( void *buffer, int len, fileHandle_t f );
@@ -439,6 +444,12 @@ typedef struct ai_export_s
 	int ( *GeneticParentsAndChildSelection )( int numranks, float *ranks, int *parent1, int *parent2, int *child );
 } ai_export_t;
 
+//modules whose PC traps open preprocessor handles; each module's handles are
+//freed when its VM shuts down or restarts, and only those
+#define PC_OWNER_GAME       1
+#define PC_OWNER_CGAME      2
+#define PC_OWNER_UI         3
+
 //bot AI library imported functions
 typedef struct botlib_export_s
 {
@@ -460,11 +471,13 @@ typedef struct botlib_export_s
 	//sets a C-like define returns BLERR_
 	int ( *PC_AddGlobalDefine )( char *string );
 	void ( *PC_RemoveAllGlobalDefines )( void );
-	int ( *PC_LoadSourceHandle )( const char *filename );
+	int ( *PC_LoadSourceHandle )( const char *filename, int owner );
 	int ( *PC_FreeSourceHandle )( int handle );
 	int ( *PC_ReadTokenHandle )( int handle, pc_token_t *pc_token );
 	int ( *PC_SourceFileAndLine )( int handle, char *filename, int *line );
 	void ( *PC_UnreadLastTokenHandle )( int handle );
+	//frees the handles a PC_OWNER_ module left open
+	void ( *PC_FreeSourceHandles )( int owner );
 
 	//start a frame in the bot library
 	int ( *BotLibStartFrame )( float time );

@@ -444,3 +444,44 @@ void PrintMemoryLabels( void ) {
 } //end of the function PrintMemoryLabels
 
 #endif
+//===========================================================================
+// allocates like GetMemory, but returns NULL instead of a fatal error when
+// the zone has no block that large; for the script preprocessor, whose
+// input comes from pk3s
+//
+// Parameter:			-
+// Returns:				-
+// Changes Globals:		-
+//===========================================================================
+void *TryGetMemory( unsigned long size ) {
+#ifndef MEMORYMANEGER
+	void *ptr;
+	unsigned long int *memid;
+
+	if ( botimport.TryGetMemory ) {
+		ptr = botimport.TryGetMemory( size + sizeof( unsigned long int ) );
+		if ( !ptr ) {
+			return NULL;
+		}
+		memid = (unsigned long int *) ptr;
+		*memid = MEM_ID;
+		return (unsigned long int *) ( (char *) ptr + sizeof( unsigned long int ) );
+	} //end if
+#endif //MEMORYMANEGER
+	return GetMemory( size );
+} //end of the function TryGetMemory
+//===========================================================================
+//
+// Parameter:			-
+// Returns:				-
+// Changes Globals:		-
+//===========================================================================
+void *TryGetClearedMemory( unsigned long size ) {
+	void *ptr;
+
+	ptr = TryGetMemory( size );
+	if ( ptr ) {
+		memset( ptr, 0, size );
+	}
+	return ptr;
+} //end of the function TryGetClearedMemory

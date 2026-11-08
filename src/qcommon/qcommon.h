@@ -966,6 +966,8 @@ void *S_Malloc( int size );         // NOT 0 filled memory only for small alloca
 #endif
 void Z_Free( void *ptr );
 void Z_FreeTags( int tag );
+int Z_AvailableMemory( void );
+void *Z_TryTagMalloc( int size, int tag );
 void Z_LogHeap( void );
 
 void Hunk_Clear( void );

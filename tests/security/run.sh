@@ -182,3 +182,20 @@ if [ -n "${BSP_FILES:-}" ]; then
     "$OUT/bsp_cm" $BSP_FILES
     "$OUT/bsp_tr" $BSP_FILES
 fi
+# the botlib preprocessor that reads menus, characters and weapons from pk3s, on
+# the real zone allocator: its file needs the whole engine
+python3 - "$OUT/zone.inc" <<'B'
+import sys
+s=open('src/qcommon/common.c',encoding='latin-1').read()
+a=s.index('#define ZONEID')
+e='void *Z_TryTagMalloc( int size, int tag ) {' if 'void *Z_TryTagMalloc(' in s else 'void *Z_TagMalloc( int size, int tag ) {'
+b=s.index('\n}\n',s.index(e))+3
+h=('#define HAVE_Z_TRY 1\n' if 'Z_TryTagMalloc' in s[a:b] else '')+('#define HAVE_Z_AVAILABLE 1\n' if 'Z_AvailableMemory' in s[a:b] else '')
+q=open('src/qcommon/qcommon.h',encoding='latin-1').read()
+c=q.index('typedef enum {\n\tTAG_FREE,'); d=q.index('} memtag_t;',c)+len('} memtag_t;\n')
+open(sys.argv[1],'w',encoding='latin-1').write(h+q[c:d]+s[a:b])
+B
+# the zone rounds blocks to 4 bytes, as the 32-bit target needs; a 64-bit host
+# would flag its 8-byte pointers in them
+"$CC" $FLAGS -fno-sanitize=alignment "-DZONE_INC=\"$OUT/zone.inc\"" tests/security/test_botlib_precomp.c src/botlib/l_precomp.c src/botlib/l_script.c src/botlib/l_memory.c src/game/q_shared.c src/game/q_math.c -pthread -lm -o "$OUT/botlib_precomp"
+"$OUT/botlib_precomp"

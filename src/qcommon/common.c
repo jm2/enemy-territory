@@ -933,6 +933,18 @@ void Z_ClearZone( memzone_t *zone, int size ) {
 
 /*
 ========================
+Z_AvailableMemory
+
+bytes of the main zone not in use, for callers that must refuse input
+before an allocation fails fatally
+========================
+*/
+int Z_AvailableMemory( void ) {
+	return mainzone->size - (int)sizeof( memzone_t ) - mainzone->used;
+}
+
+/*
+========================
 Z_Free
 ========================
 */
@@ -1036,6 +1048,7 @@ Z_TagMalloc
 */
 
 memblock_t *debugblock; // RF, jusy so we can track a block to find out when it's getting trashed
+static qboolean z_tryAlloc;     // Z_TryTagMalloc: answer NULL instead of a fatal error
 
 #ifdef ZONE_DEBUG
 void *Z_TagMallocDebug( int size, int tag, char *label, char *file, int line ) {
@@ -1070,6 +1083,9 @@ void *Z_TagMalloc( int size, int tag ) {
 
 	do {
 		if ( rover == start ) {
+			if ( z_tryAlloc ) {
+				return NULL;
+			}
 #ifdef ZONE_DEBUG
 			Z_LogHeap();
 #endif
@@ -1120,6 +1136,24 @@ void *Z_TagMalloc( int size, int tag ) {
 	*( int * )( (byte *)base + base->size - 4 ) = ZONEID;
 
 	return ( void * )( (byte *)base + sizeof( memblock_t ) );
+}
+
+/*
+========================
+Z_TryTagMalloc
+
+Z_TagMalloc that returns NULL when no free block is large enough, for
+callers that refuse their input instead (the zone can be fragmented, so
+free bytes alone do not promise a block)
+========================
+*/
+void *Z_TryTagMalloc( int size, int tag ) {
+	void *ptr;
+
+	z_tryAlloc = qtrue;
+	ptr = Z_TagMalloc( size, tag );
+	z_tryAlloc = qfalse;
+	return ptr;
 }
 
 /*

@@ -1315,6 +1315,23 @@ int FileLength( FILE *fp ) {
 // Changes Globals:		-
 //============================================================================
 int COM_Compress( char *data_p );
+//============================================================================
+// true when size bytes can be taken and PS_MEMORY_RESERVE still stays free,
+// so that input is refused before an allocation fails fatally (the Mac zone
+// is 10 MB)
+//
+// Parameter:				-
+// Returns:					-
+// Changes Globals:		-
+//============================================================================
+int PS_MemoryAvailable( int size ) {
+#ifdef BOTLIB
+	if ( botimport.AvailableMemory && botimport.AvailableMemory() - size < PS_MEMORY_RESERVE ) {
+		return qfalse;
+	}
+#endif
+	return qtrue;
+} //end of the function PS_MemoryAvailable
 script_t *LoadScriptFile( const char *filename ) {
 #ifdef BOTLIB
 	fileHandle_t fp;
@@ -1327,13 +1344,25 @@ script_t *LoadScriptFile( const char *filename ) {
 	script_t *script;
 
 #ifdef BOTLIB
+	//refuse a name that doesn't fit instead of opening a shortened one
 	if ( strlen( basefolder ) ) {
+		if ( strlen( basefolder ) + 1 + strlen( filename ) >= sizeof( pathname ) ) {
+			return NULL;
+		}
 		Com_sprintf( pathname, sizeof( pathname ), "%s/%s", basefolder, filename );
 	} else {
+		if ( strlen( filename ) >= sizeof( pathname ) ) {
+			return NULL;
+		}
 		Com_sprintf( pathname, sizeof( pathname ), "%s", filename );
 	}
 	length = botimport.FS_FOpenFile( pathname, &fp, FS_READ );
 	if ( !fp ) {
+		return NULL;
+	}
+	if ( length < 0 || !PS_MemoryAvailable( sizeof( script_t ) + length + 1 ) ) {
+		botimport.Print( PRT_ERROR, "%s: not enough memory to load the script\n", pathname );
+		botimport.FS_FCloseFile( fp );
 		return NULL;
 	}
 #else
@@ -1345,7 +1374,17 @@ script_t *LoadScriptFile( const char *filename ) {
 	length = FileLength( fp );
 #endif
 
+#ifdef BOTLIB
+	//the file comes from a pk3: no memory refuses it rather than ending the game
+	buffer = TryGetClearedMemory( sizeof( script_t ) + length + 1 );
+	if ( !buffer ) {
+		botimport.Print( PRT_ERROR, "%s: not enough memory to load the script\n", pathname );
+		botimport.FS_FCloseFile( fp );
+		return NULL;
+	} //end if
+#else
 	buffer = GetClearedMemory( sizeof( script_t ) + length + 1 );
+#endif
 	script = (script_t *) buffer;
 	memset( script, 0, sizeof( script_t ) );
 	strcpy( script->filename, filename );
@@ -1364,6 +1403,15 @@ script_t *LoadScriptFile( const char *filename ) {
 	script->line = 1;
 	script->lastline = 1;
 	//
+#if defined( BOTLIB ) && defined( PUNCTABLE )
+	script->punctuationtable = (punctuation_t **) TryGetMemory( 256 * sizeof( punctuation_t * ) );
+	if ( !script->punctuationtable ) {
+		botimport.Print( PRT_ERROR, "%s: not enough memory to load the script\n", pathname );
+		botimport.FS_FCloseFile( fp );
+		FreeScript( script );
+		return NULL;
+	} //end if
+#endif
 	SetScriptPunctuations( script, NULL );
 	//
 #ifdef BOTLIB
