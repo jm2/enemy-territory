@@ -1156,7 +1156,7 @@ int CL_UISystemCalls( int *args ) {
 		botlib_export->PC_RemoveAllGlobalDefines();
 		return 0;
 	case UI_PC_LOAD_SOURCE:
-		return botlib_export->PC_LoadSourceHandle( VMA( 1 ) );
+		return botlib_export->PC_LoadSourceHandle( VMA( 1 ), PC_OWNER_UI );
 	case UI_PC_FREE_SOURCE:
 		return botlib_export->PC_FreeSourceHandle( args[1] );
 	case UI_PC_READ_TOKEN:
@@ -1251,6 +1251,10 @@ void CL_ShutdownUI( void ) {
 	VM_Call( uivm, UI_SHUTDOWN );
 	VM_Free( uivm );
 	uivm = NULL;
+	// free the preprocessor handles it left open (a .menu after an error)
+	if ( botlib_export ) {
+		botlib_export->PC_FreeSourceHandles( PC_OWNER_UI );
+	}
 }
 
 /*

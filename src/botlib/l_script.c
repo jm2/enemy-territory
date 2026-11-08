@@ -1327,9 +1327,16 @@ script_t *LoadScriptFile( const char *filename ) {
 	script_t *script;
 
 #ifdef BOTLIB
+	//refuse a name that doesn't fit instead of opening a shortened one
 	if ( strlen( basefolder ) ) {
+		if ( strlen( basefolder ) + 1 + strlen( filename ) >= sizeof( pathname ) ) {
+			return NULL;
+		}
 		Com_sprintf( pathname, sizeof( pathname ), "%s/%s", basefolder, filename );
 	} else {
+		if ( strlen( filename ) >= sizeof( pathname ) ) {
+			return NULL;
+		}
 		Com_sprintf( pathname, sizeof( pathname ), "%s", filename );
 	}
 	length = botimport.FS_FOpenFile( pathname, &fp, FS_READ );
