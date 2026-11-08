@@ -325,28 +325,28 @@ static char *CalculateGUID(const char *key)
 	return hash;
 }
 
+// filename is a path under fs_homepath (FS_SV_*), such as "etmain/etkey". Going
+// through FS_ReadFile instead searched the pk3s first, so a downloaded pk3 holding
+// an etkey entry chose cl_guid.
 char *Com_MD5FileETCompat(const char *filename)
 {
-	char key[19] = { 0 };
-	char *buffer;
-	int  len;
+	char         key[19] = { 0 };
+	char         buffer[28];
+	fileHandle_t f;
+	int          len;
 
-	len = FS_ReadFile(filename, ( void ** ) &buffer);
-	if (buffer)
+	len = FS_SV_FOpenFileRead(filename, &f);
+	if (!f)
 	{
-		if (len >= 28)
-		{
-			int i;
-
-			for (i = 0; i < 18; i++)
-			{
-				key[i] = buffer[i + 10];
-			}
-
-			FS_FreeFile(buffer);
-
-			return CalculateGUID(key);
-		}
+		return NULL;
 	}
-	return NULL;
+	if (len < (int)sizeof(buffer) || FS_Read(buffer, sizeof(buffer), f) != (int)sizeof(buffer))
+	{
+		FS_FCloseFile(f);
+		return NULL;
+	}
+	FS_FCloseFile(f);
+	memcpy(key, buffer + 10, 18);
+
+	return CalculateGUID(key);
 }
