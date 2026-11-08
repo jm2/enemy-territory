@@ -110,7 +110,9 @@ with open(image, "rb") as stream:
 print("image data verified: %d files" % len(expected))
 P
 
-python3 macbinary_encode.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" "iso " "dCpy"
+# a Disk Copy read/write image, which the Disk Copy Mac OS 9 ships mounts: as a bare
+# hybrid typed iso /dCpy it needed Toast. ndif_image.py is Quake III's, copied verbatim
+python3 ndif_image.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" "Enemy Territory"
 rm -f "$RELEASE/ET_Install.img"
 
 # the one-file install, and the bare application for a redeploy
