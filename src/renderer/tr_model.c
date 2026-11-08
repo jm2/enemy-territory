@@ -321,9 +321,10 @@ qhandle_t RE_RegisterModel( const char *name ) {
 	if ( numLoaded ) {
 		// duplicate into higher lod spots that weren't
 		// loaded, in case the user changes r_lodbias on the fly.
-		// The renderer may pick any slot below numLods, so fill every one:
-		// a missing LOD between two that loaded, the slot of a refused LOD,
-		// and those below it all take the next coarser LOD that loaded.
+		// The renderer may pick any slot below numLods, so fill every one: a
+		// missing LOD between two that loaded takes the next coarser LOD that
+		// loaded. A refused LOD still stops the finer ones below it loading
+		// (as before), and those slots are filled the same way.
 		mod->numLods = firstLod + 1;
 		for ( lod = firstLod - 1 ; lod >= 0 ; lod-- ) {
 			if ( firstIdent == MD3_IDENT ) {
