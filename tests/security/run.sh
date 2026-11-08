@@ -112,6 +112,10 @@ for t in shader skin; do
     "$CC" $FLAGS -ffunction-sections -fdata-sections tests/security/test_$t.c src/game/q_shared.c src/game/q_math.c -Wl,--gc-sections -lm -o "$OUT/$t"
     ASAN_OPTIONS=detect_leaks=0 "$OUT/$t"
 done
+# The RoQ decoder, cl_cin.c included whole. Its motion copies move unaligned doubles
+# by design (odd-pixel vectors; fine on x86 and PPC), so only the alignment check is off.
+"$CC" $FLAGS -fno-sanitize-recover=all -fno-sanitize=alignment tests/security/test_cin.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/cin"
+"$OUT/cin"
 for t in msg; do
     "$CC" $FLAGS tests/security/test_$t.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/$t"
     "$OUT/$t"
