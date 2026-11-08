@@ -23,6 +23,8 @@ Q3_TEST_EXTRACT '^static int[[:space:]]+Sys_AppendStartupText[[:space:]]*[(]' \
     "$Q3_TEST_ROOT/src/mac9/mac_main.c" "$Q3_TEST_DIR/mac_startup_extracted.c"
 Q3_TEST_EXTRACT '^static int[[:space:]]+Sys_ReadStartupFile[[:space:]]*[(]' \
     "$Q3_TEST_ROOT/src/mac9/mac_main.c" "$Q3_TEST_DIR/mac_startup_extracted.c"
+Q3_TEST_EXTRACT '^static void[[:space:]]+Sys_MaskStartupSecrets[[:space:]]*[(]' \
+    "$Q3_TEST_ROOT/src/mac9/mac_main.c" "$Q3_TEST_DIR/mac_startup_extracted.c"
 Q3_TEST_EXTRACT '^void[[:space:]]+Com_ParseCommandLine[[:space:]]*[(]' \
     "$Q3_TEST_ROOT/src/qcommon/common.c" "$Q3_TEST_DIR/com_command_line_extracted.c"
 Q3_TEST_EXTRACT '^qboolean[[:space:]]+Com_SafeMode[[:space:]]*[(]' \

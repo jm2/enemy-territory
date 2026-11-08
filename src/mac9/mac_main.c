@@ -1436,6 +1436,60 @@ static void Sys_Heartbeat( void ) {
 	frames = 0;
 }
 
+/*
+==================
+Sys_MaskStartupSecrets
+
+Overwrites, in the NUL-terminated line, what follows any word naming a
+password cvar (rconpassword, g_password, sv_privatePassword, ...) up to the
+end of its console line with '*': "set" takes every remaining word as the
+value. Console lines end where Com_ParseCommandLine splits them, at a line
+break or a '+' outside quotes. Quotes and spaces are kept. The startup
+command line goes to etboot.log and the crash report, which people attach
+to bug reports.
+==================
+*/
+static void Sys_MaskStartupSecrets( char *line ) {
+	char		*p;
+	char		*word;
+	qboolean	inQuote;
+	qboolean	masking;
+
+	inQuote = qfalse;
+	masking = qfalse;
+	p = line;
+	while ( *p ) {
+		if ( *p == '\n' || *p == '\r' || ( *p == '+' && !inQuote ) ) {
+			masking = qfalse;
+			p++;
+			continue;
+		}
+		if ( *p == '"' ) {
+			inQuote = !inQuote;
+			p++;
+			continue;
+		}
+		if ( (unsigned char)*p <= ' ' ) {
+			p++;
+			continue;
+		}
+		if ( masking ) {
+			*p++ = '*';
+			continue;
+		}
+		word = p;
+		while ( (unsigned char)*p > ' ' && *p != '"' && !( *p == '+' && !inQuote ) ) {
+			p++;
+		}
+		for ( ; word + 8 <= p ; word++ ) {
+			if ( !Q_stricmpn( word, "password", 8 ) ) {
+				masking = qtrue;
+				break;
+			}
+		}
+	}
+}
+
 int main( int argc, char **argv ) {
     int i;
     static char commandLine[MAC_COMMAND_LINE_SIZE];
@@ -1522,7 +1576,13 @@ int main( int argc, char **argv ) {
             Sys_LogPrintf( "main: startup parameters read from %s\n", path );
         }
     }
-    Sys_LogPrintf( "main: command line: %s\n", commandLine );
+    {
+        static char logged[MAC_COMMAND_LINE_SIZE];
+
+        Q_strncpyz( logged, commandLine, sizeof( logged ) );
+        Sys_MaskStartupSecrets( logged );
+        Sys_LogPrintf( "main: command line: %s\n", logged );
+    }
     if ( strstr( commandLine, "sys_bootlog 0" ) ) {
         Sys_BootLogClose();
     }

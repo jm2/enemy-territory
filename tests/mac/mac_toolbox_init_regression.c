@@ -554,6 +554,17 @@ int main( int argc, char **argv ) {
 	Check( !strcmp( comInitCommandLine, "+set fs_game mymod\nsafe\n" ), "the file reaches Com_Init" );
 	Check( strstr( ring, "main: startup parameters read from" ) != NULL, "the crash ring has the file's path" );
 
+	/* ET: password values are masked in the logged command line only */
+	result = RunMain( "password parameters", 0, NULL,
+		"+set g_password my secret phrase\r\n+set rconpassword x\r\n+set fs_game legacy\r\n", 0 );
+	Check( result == -1, "Com_Init is reached" );
+	Check( !strcmp( comInitCommandLine, "+set g_password my secret phrase\n+set rconpassword x\n+set fs_game legacy\n" ),
+		"the real command line reaches Com_Init unmasked" );
+	Check( strstr( ring, "main: command line: +set g_password ** ****** ******\n+set rconpassword *\n+set fs_game legacy\n" )
+		!= NULL, "the logged command line has the password values masked" );
+	Check( strstr( ring, "secret" ) == NULL && strstr( ring, "phrase" ) == NULL,
+		"no part of the password reaches the log" );
+
 	/* the log and crash handler start before the file, which can turn them off */
 	Check( EventIndex( "Sys_BootLogClose" ) < 0 && EventIndex( "Sys_RemoveCrashHandler" ) < 0,
 		"the log and crash handler stay on by default" );
