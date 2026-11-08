@@ -126,6 +126,40 @@ static int LoaderAccept( const char *name ) {
 			}
 		}
 		printf( "     %s: %d nodes, tree digest %08x\n", name, s_worldData.numnodes, h );
+		// every grid after stitching: its size, points and LOD errors. A denormal
+		// error (retail's read of the zone's trash tester) counts as 0, as it does
+		// in RB_SurfaceGrid's `error <= lodError`
+		{
+			int grids = 0, j, count;
+			float e;
+			h = 2166136261u;
+			for ( i = 0; i < s_worldData.numsurfaces; i++ ) {
+				srfGridMesh_t *g = (srfGridMesh_t *)s_worldData.surfaces[i].data;
+				if ( g->surfaceType != SF_GRID ) {
+					continue;
+				}
+				grids++;
+				for ( j = 0; j < 2 + g->width + g->height + g->width * g->height * 3; j++ ) {
+					if ( j < 2 ) {
+						count = j ? g->height : g->width;
+						b = (const byte *)&count;
+					} else if ( j < 2 + g->width + g->height ) {
+						e = j < 2 + g->width ? g->widthLodError[j - 2] : g->heightLodError[j - 2 - g->width];
+						if ( e > -FLT_MIN && e < FLT_MIN ) {
+							e = 0;
+						}
+						b = (const byte *)&e;
+					} else {
+						count = j - 2 - g->width - g->height;
+						b = (const byte *)&g->verts[count / 3].xyz[count % 3];
+					}
+					for ( k = 0; k < 4; k++ ) {
+						h = ( h ^ b[k] ) * 16777619u;
+					}
+				}
+			}
+			printf( "     %s: %d grids, patch digest %08x\n", name, grids, h );
+		}
 	}
 	if ( !strcmp( name, "maps/previous.bsp" ) ) {
 		// the unmutated fixture, as the unfixed loader also builds it
