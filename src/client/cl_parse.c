@@ -176,6 +176,12 @@ void CL_DeltaEntity( msg_t *msg, clSnapshot_t *frame, int newnum, entityState_t 
 					 qboolean unchanged ) {
 	entityState_t   *state;
 
+	// a frame holds at most the whole ring; more would overwrite the entities
+	// later frames delta from
+	if ( frame->numEntities >= MAX_PARSE_ENTITIES ) {
+		Com_Error( ERR_DROP, "CL_DeltaEntity: too many entities in snapshot" );
+	}
+
 	// save the parsed entity state into the big circular buffer so
 	// it can be used as the source for a later delta
 	state = &cl.parseEntities[cl.parseEntitiesNum & ( MAX_PARSE_ENTITIES - 1 )];
@@ -593,8 +599,14 @@ void CL_SystemInfoChanged( void ) {
 			Com_Printf( S_COLOR_YELLOW "WARNING: server sent an invalid fs_game\n" );
 			continue;
 		}
+		// A cvar the server creates is CVAR_SERVER_CREATED, so this or a later
+		// server may set it again, and CVAR_ROM until something registers it
 		flags = Cvar_Flags( key );
-		if ( flags != -1 && !( flags & ( CVAR_SYSTEMINFO | CVAR_USER_CREATED ) ) &&
+		if ( flags == -1 ) {
+			Cvar_Get( key, value, CVAR_SERVER_CREATED | CVAR_ROM );
+			continue;
+		}
+		if ( !( flags & ( CVAR_SYSTEMINFO | CVAR_SERVER_CREATED | CVAR_USER_CREATED ) ) &&
 			 Q_stricmp( key, "g_synchronousClients" ) && Q_stricmp( key, "pmove_fixed" ) &&
 			 Q_stricmp( key, "pmove_msec" ) ) {
 			Com_DPrintf( S_COLOR_YELLOW "WARNING: server is not allowed to set %s\n", key );
@@ -724,6 +736,8 @@ void CL_ParseDownload( msg_t *msg ) {
 	int size;
 	unsigned char data[MAX_MSGLEN];
 	int block;
+	char url[MAX_OSPATH];
+	char tempOSPath[MAX_OSPATH];
 
 	if ( !*cls.downloadTempName ) {
 		Com_Printf( "Server sending download, but no download was requested\n" );
@@ -739,43 +753,45 @@ void CL_ParseDownload( msg_t *msg ) {
 	if ( block == -1 ) {
 		if ( !clc.bWWWDl ) {
 			// server is sending us a www download
+			// The URL is the server's: keep it out of downloadName and
+			// downloadTempName, which the UDP path later writes and renames under
 			Q_strncpyz( cls.originalDownloadName, cls.downloadName, sizeof( cls.originalDownloadName ) );
-			Q_strncpyz( cls.downloadName, MSG_ReadString( msg ), sizeof( cls.downloadName ) );
+			Q_strncpyz( url, MSG_ReadString( msg ), sizeof( url ) );
 			clc.downloadSize = MSG_ReadLong( msg );
 			clc.downloadFlags = MSG_ReadLong( msg );
 			if ( clc.downloadFlags & ( 1 << DL_FLAG_URL ) ) {
 #ifdef ET_STATIC_MODULES
 				// no browser here, so say why rather than quit without a word
-				Com_Error( ERR_DROP, "This server wants a pak fetched from %s", cls.downloadName );
+				Com_Error( ERR_DROP, "This server wants a pak fetched from %s", url );
 #endif
-				Sys_OpenURL( cls.downloadName, qtrue );
+				Sys_OpenURL( url, qtrue );
 				Cbuf_ExecuteText( EXEC_APPEND, "quit\n" );
 				CL_AddReliableCommand( "wwwdl bbl8r" ); // not sure if that's the right msg
 				clc.bWWWDlAborting = qtrue;
 				return;
 			}
 			Cvar_SetValue( "cl_downloadSize", clc.downloadSize );
-			Com_DPrintf( "Server redirected download: %s\n", cls.downloadName );
+			Com_DPrintf( "Server redirected download: %s\n", url );
 			clc.bWWWDl = qtrue; // activate wwwdl client loop
 			CL_AddReliableCommand( "wwwdl ack" );
 			// make sure the server is not trying to redirect us again on a bad checksum
 			if ( strstr( clc.badChecksumList, va( "@%s", cls.originalDownloadName ) ) ) {
-				Com_Printf( "refusing redirect to %s by server (bad checksum)\n", cls.downloadName );
+				Com_Printf( "refusing redirect to %s by server (bad checksum)\n", url );
 				CL_AddReliableCommand( "wwwdl fail" );
 				clc.bWWWDlAborting = qtrue;
 				return;
 			}
-			// make downloadTempName an OS path
-			Q_strncpyz( cls.downloadTempName, FS_BuildOSPath( Cvar_VariableString( "fs_homepath" ), cls.downloadTempName, "" ), sizeof( cls.downloadTempName ) );
-			cls.downloadTempName[strlen( cls.downloadTempName ) - 1] = '\0';
-			if ( !DL_BeginDownload( cls.downloadTempName, cls.downloadName, com_developer->integer ) ) {
+			// the www download writes to the OS path of downloadTempName
+			Q_strncpyz( tempOSPath, FS_BuildOSPath( Cvar_VariableString( "fs_homepath" ), cls.downloadTempName, "" ), sizeof( tempOSPath ) );
+			tempOSPath[strlen( tempOSPath ) - 1] = '\0';
+			if ( !DL_BeginDownload( tempOSPath, url, com_developer->integer ) ) {
 				// setting bWWWDl to false after sending the wwwdl fail doesn't work
 				// not sure why, but I suspect we have to eat all remaining block -1 that the server has sent us
 				// still leave a flag so that CL_WWWDownload is inactive
 				// we count on server sending us a gamestate to start up clean again
 				CL_AddReliableCommand( "wwwdl fail" );
 				clc.bWWWDlAborting = qtrue;
-				Com_Printf( "Failed to initialize download for '%s'\n", cls.downloadName );
+				Com_Printf( "Failed to initialize download for '%s'\n", url );
 				// bbl8r below would have the server drop us, with no UDP fallback
 				return;
 			}
@@ -817,6 +833,13 @@ void CL_ParseDownload( msg_t *msg ) {
 
 	MSG_ReadData( msg, data, size );
 
+	// After a redirect the server sends no blocks until it resends the gamestate
+	// (CL_InitDownloads clears these), so a block now is not for this download
+	if ( clc.bWWWDl || clc.bWWWDlAborting ) {
+		Com_DPrintf( "CL_ParseDownload: ignoring block %d during a www download\n", block );
+		return;
+	}
+
 	if ( clc.downloadBlock != block ) {
 		Com_DPrintf( "CL_ParseDownload: Expected block %d, got %d\n", clc.downloadBlock, block );
 		return;
@@ -851,8 +874,12 @@ void CL_ParseDownload( msg_t *msg ) {
 			FS_FCloseFile( clc.download );
 			clc.download = 0;
 
-			// rename the file
-			FS_SV_Rename( cls.downloadTempName, cls.downloadName );
+			// rename the file, to a name CL_BeginDownload accepted
+			if ( FS_CheckDownloadName( cls.downloadName ) ) {
+				FS_SV_Rename( cls.downloadTempName, cls.downloadName );
+			} else {
+				Com_Printf( "WARNING: refusing a download with an unsafe name\n" );
+			}
 		}
 		*cls.downloadTempName = *cls.downloadName = 0;
 		Cvar_Set( "cl_downloadName", "" );
@@ -903,6 +930,12 @@ CL_ParseBinaryMessage
 */
 void CL_ParseBinaryMessage( msg_t *msg ) {
 	int size;
+
+	// bytes past svc_EOF before the cgame is loaded (during a download, say)
+	// would reach VM_Call( NULL ), which is ERR_FATAL
+	if ( !cgvm ) {
+		return;
+	}
 
 	MSG_BeginReadingUncompressed( msg );
 

@@ -287,6 +287,17 @@ cvar_t *Cvar_Get( const char *var_name, const char *var_value, int flags ) {
 			cvar_modifiedFlags |= flags;
 		}
 
+		// only the client's systeminfo parse creates CVAR_SERVER_CREATED, and a
+		// registration takes a server-created cvar over: its flags decide from
+		// now on, so the CVAR_ROM that kept the player off the server's copy goes
+		if ( var->flags & CVAR_SERVER_CREATED ) {
+			if ( !( flags & CVAR_SERVER_CREATED ) ) {
+				var->flags &= ~( CVAR_SERVER_CREATED | CVAR_ROM );
+			}
+		} else {
+			flags &= ~CVAR_SERVER_CREATED;
+		}
+
 		var->flags |= flags;
 		// only allow one non-empty reset string without a warning
 		if ( !var->resetString[0] ) {
@@ -988,7 +999,7 @@ basically a slightly modified Cvar_Get for the interpreted modules
 void    Cvar_Register( vmCvar_t *vmCvar, const char *varName, const char *defaultValue, int flags ) {
 	cvar_t  *cv;
 
-	cv = Cvar_Get( varName, defaultValue, flags );
+	cv = Cvar_Get( varName, defaultValue, flags & ~CVAR_SERVER_CREATED );
 	if ( !vmCvar ) {
 		return;
 	}
