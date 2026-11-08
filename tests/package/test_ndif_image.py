@@ -131,9 +131,9 @@ class NdifImageTests(unittest.TestCase):
         self.assertNotIn('"iso " "dCpy"', script)
         self.assertNotIn(".dsk", script)
         # no output of an earlier package can survive into this one (Quake III's 4aee5454
-        # removes them one by one; this rebuilds the folder), and it happens first
+        # removes them one by one; this rebuilds the folder) before anything is staged in it
         self.assertIn('rm -rf "$RELEASE"', script)
-        self.assertLess(script.index('rm -rf "$RELEASE"'), script.index("ndif_image.py"))
+        self.assertLess(script.index('rm -rf "$RELEASE"'), script.index('mkdir -p "$CONTENT'))
 
 
 if __name__ == "__main__":
