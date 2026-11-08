@@ -851,7 +851,8 @@ int CL_UISystemCalls( int *args ) {
 		return 0;
 
 	case UI_CVAR_CREATE:
-		Cvar_Get( VMA( 1 ), VMA( 2 ), args[3] );
+		// through Cvar_Register, so the UI cannot claim CVAR_SERVER_CREATED (as Quake III's port)
+		Cvar_Register( NULL, VMA( 1 ), VMA( 2 ), args[3] );
 		return 0;
 
 	case UI_CVAR_INFOSTRINGBUFFER:

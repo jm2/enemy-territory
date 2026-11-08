@@ -1852,10 +1852,11 @@ game directory.
 qboolean CL_BeginDownload( const char *localName, const char *remoteName ) {
 
 	// lengths as the Quake III port's CL_BeginDownload: both names must fit
-	// whole, or a truncated copy would lose the .pk3 checked here
+	// whole, or a truncated copy would lose the .pk3 checked here. MAX_QPATH, not
+	// the buffer sizes: FS_BuildOSPath joins the name to fs_homepath within
+	// MAX_OSPATH and cuts what does not fit, and originalDownloadName is MAX_QPATH
 	if ( !FS_CheckDownloadName( localName ) || !FS_CheckDownloadName( remoteName ) ||
-		 strlen( localName ) + 4 >= sizeof( cls.downloadTempName ) ||
-		 strlen( localName ) >= sizeof( cls.downloadName ) || strlen( remoteName ) >= MAX_OSPATH ) {
+		 strlen( localName ) + 4 >= MAX_QPATH || strlen( remoteName ) >= MAX_QPATH ) {
 		Com_Printf( "WARNING: refusing a download with an unsafe name\n" );
 		return qfalse;
 	}
