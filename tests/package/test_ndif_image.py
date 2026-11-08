@@ -1,4 +1,4 @@
-"""ndif_image.py, as Quake III's tests/test_packaging_tools.py NdifImageTests (833d8eb0)."""
+"""ndif_image.py, as Quake III's tests/test_packaging_tools.py NdifImageTests (4aee5454)."""
 import contextlib
 import io
 import struct
@@ -6,10 +6,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 import mac_app  # noqa: E402
+import macbinary_encode  # noqa: E402
 import ndif_image  # noqa: E402
 
 # The 'bcem' resource Disk Copy 6.3.3 wrote for its own 2.5 MB read/write
@@ -88,8 +90,39 @@ class NdifImageTests(unittest.TestCase):
                 self.assertEqual(status, 1)
                 self.assertIn(message, stderr.getvalue())
                 self.assertFalse(output.exists())
-        with self.assertRaisesRegex(ValueError, "24-bit"):
-            ndif_image.bcem("Enemy Territory", 1 << 24)
+        # the end marker's offset, sectors * 512, must fit in 32 bits
+        ndif_image.bcem("Enemy Territory", (1 << 23) - 1)
+        with self.assertRaisesRegex(ValueError, "4 GiB"):
+            ndif_image.bcem("Enemy Territory", 1 << 23)
+
+    def test_failed_encode_leaves_no_image(self):
+        volume, output = self.write_volume(4)
+        output.write_bytes(b"previous image")
+
+        def half_written(source, destination, *args):
+            Path(destination).write_bytes(b"truncated")
+            raise OSError(28, "No space left on device")
+
+        with mock.patch.object(macbinary_encode, "encode_macbinary", half_written):
+            with self.assertRaises(OSError):
+                ndif_image.write_image(str(volume), str(output), "Enemy Territory")
+
+        self.assertEqual(output.read_bytes(), b"previous image")
+        self.assertEqual(sorted(p.name for p in output.parent.iterdir()),
+                         sorted([output.name, volume.name]))
+
+    def test_resource_fork_layout_is_exact(self):
+        fork = ndif_image.ndif_resource_fork("Enemy Territory", 2960)
+        data_offset, map_offset, data_length, map_length = struct.unpack_from(">IIII", fork, 0)
+        self.assertEqual(data_offset, 256)
+        self.assertEqual(map_offset, data_offset + data_length)
+        self.assertEqual(len(fork), map_offset + map_length)
+        # the map starts with a copy of the header
+        self.assertEqual(fork[map_offset:map_offset + 16], fork[:16])
+        type_list, name_list = struct.unpack_from(">HH", fork, map_offset + 24)
+        self.assertEqual(type_list, 28)
+        names = fork[map_offset + name_list:]
+        self.assertEqual(names, bytes([15]) + b"Enemy Territory")
 
     def test_package_writes_the_ndif_image(self):
         script = (REPO / "scripts" / "package_mac.sh").read_text()
