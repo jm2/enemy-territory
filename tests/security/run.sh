@@ -21,6 +21,20 @@ open(sys.argv[1],'w',encoding='latin-1').write(s[a:b])
 P
 "$CC" $FLAGS "-DOFFICIAL_INC=\"$OUT/official.inc\"" tests/security/test_official.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/official"
 "$OUT/official"
+# CL_AddReliableCommand alone: its file needs the whole client
+python3 - "$OUT/reliable.inc" <<'R'
+import sys
+s=open('src/client/cl_main.c',encoding='latin-1').read()
+a=s.index('void CL_AddReliableCommand( const char *cmd ) {'); b=s.index('\n}\n',a)+3
+# CL_Disconnect's guard, as the real code has it, for the test to evaluate
+c=s.index('void CL_Disconnect( qboolean showMainMenu ) {'); d=s.index('\n}\n',c)
+g=s.index('if ( clc.reliableSequence - clc.reliableAcknowledge',c)
+assert g<d, 'CL_Disconnect has no command queue guard'
+guard=s[g+len('if '):s.index(' {',g)]
+open(sys.argv[1],'w',encoding='latin-1').write(s[a:b]+'#define DISCONNECT_GUARD %s\n' % guard)
+R
+"$CC" $FLAGS "-DRELIABLE_INC=\"$OUT/reliable.inc\"" tests/security/test_reliable.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/reliable"
+"$OUT/reliable"
 # GetWavinfo alone: its file needs the sound system
 python3 - "$OUT/wav.inc" <<'W'
 import sys
