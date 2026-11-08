@@ -261,9 +261,8 @@ static void Donedl( void ) {
 	/* map_restart made it active while it was downloading: it is owed one */
 	cl = &svs.clients[CONNECTED];
 	cl->state = CS_CONNECTED;
-	cl->gamestateOwed = ( cl->state != CS_ACTIVE );    /* as SV_MapRestart_f */
-	cl->state = CS_ACTIVE;
-	SV_ClientEnterWorld( cl, &cl->lastUsercmd );
+	SV_ClientMapRestarted( cl );
+	CHECK( cl->state == CS_ACTIVE && cl->gamestateOwed );
 	before = cl->netchan.outgoingSequence;
 	SV_DoneDownload_f( cl );
 	CHECK( cl->state == CS_PRIMED && gamestates == 2 && cl->gamestateMessageNum == before && !cl->gamestateOwed );
@@ -273,7 +272,8 @@ static void Donedl( void ) {
 
 	/* a client already in the world at map_restart owes nothing */
 	cl = &svs.clients[ACTIVE];
-	cl->gamestateOwed = ( cl->state != CS_ACTIVE );
+	SV_ClientMapRestarted( cl );
+	CHECK( cl->state == CS_ACTIVE && !cl->gamestateOwed );
 	SV_DoneDownload_f( cl );
 	CHECK( cl->state == CS_ACTIVE && gamestates == 2 );
 	puts( "server state: in-game donedl ignored" );
@@ -413,20 +413,87 @@ static void Restarts( void ) {
 	Packet( cl, sv.restartedServerId - 1, qtrue );
 	CHECK( gamestates == i && cl->state == CS_ACTIVE );    /* master: a gamestate */
 
-	/* vdr leaves a client in the world without a cp: its usercmds wait for the cp */
+	/* unless map_restart made it active while it still needed one: then a
+	   dropped gamestate is resent */
+	cl->gamestateOwed = qtrue;
+	Packet( cl, sv.restartedServerId - 1, qfalse );
+	CHECK( gamestates == i + 1 && cl->state == CS_PRIMED && !cl->gamestateOwed );
+	SV_ClientEnterWorld( cl, &cl->lastUsercmd );
+
+	/* vdr then cp, as vid_restart sends them, plays on */
 	SV_ResetPureClient_f( cl );
 	CHECK( !cl->gotCP );
+	cl->gotCP = qtrue;    /* SV_VerifyPaks_f */
+	cl->pureAuthentic = 1;
 	i = gamestates;
 	first = begins[ACTIVE];
 	thinks = 0;
 	Packet( cl, sv.serverId, qtrue );
-	CHECK( gamestates == i && cl->state == CS_ACTIVE && begins[ACTIVE] == first && !thinks );    /* master: a gamestate */
-	cl->gotCP = qtrue;
-	cl->pureAuthentic = 1;
+	CHECK( thinks == 1 && cl->state == CS_ACTIVE && begins[ACTIVE] == first && gamestates == i );
+
+	/* vdr with no cp: no gamestate (master: a second ClientBegin), and the
+	   client is dropped as ETL does instead of left frozen */
+	SV_ResetPureClient_f( cl );
+	thinks = 0;
 	Packet( cl, sv.serverId, qtrue );
-	CHECK( thinks == 1 && cl->state == CS_ACTIVE && begins[ACTIVE] == first );
+	CHECK( gamestates == i && begins[ACTIVE] == first && !thinks );
+	CHECK( cl->state == CS_ZOMBIE && dropReason[ACTIVE] && !strcmp( dropReason[ACTIVE], "Cannot validate pure client!" ) );
 	pure.integer = 0;
 	puts( "server state: map_restart, serverId and vdr keep the gamestate debt" );
+}
+
+/* A www download that fails or has a bad checksum falls back with a new
+   gamestate, but only for a client not yet in the world. */
+static void Wwwdl( const char *how ) {
+	client_t *cl;
+	int i;
+
+	Reset();
+	/* while connecting: the fallback gets its gamestate */
+	cl = &svs.clients[PRIMED];
+	cl->bWWWDl = qtrue;
+	argv1 = "ack";
+	SV_WWWDownload_f( cl );
+	argv1 = how;
+	SV_WWWDownload_f( cl );
+	CHECK( gamestates == 1 && cl->state == CS_PRIMED && cl->bFallback && !cl->bWWWing );
+
+	/* in the world, having asked for a download: none */
+	cl = &svs.clients[ACTIVE];
+	cl->bWWWDl = qtrue;
+	argv1 = "ack";
+	SV_WWWDownload_f( cl );
+	argv1 = how;
+	SV_WWWDownload_f( cl );
+	CHECK( gamestates == 1 && cl->state == CS_ACTIVE && !dropReason[ACTIVE] );    /* master: a gamestate */
+
+	/* made active by map_restart mid-download: owed one */
+	SV_ClientMapRestarted( &svs.clients[CONNECTED] );
+	cl = &svs.clients[CONNECTED];
+	CHECK( cl->state == CS_ACTIVE && cl->gamestateOwed );
+	cl->bWWWDl = qtrue;
+	argv1 = "ack";
+	SV_WWWDownload_f( cl );
+	argv1 = how;
+	SV_WWWDownload_f( cl );
+	CHECK( gamestates == 2 && cl->state == CS_PRIMED && !cl->gamestateOwed );
+	argv1 = "";
+	for ( i = 0; i < CLIENTS; i++ ) {
+		svs.clients[i].bWWWDl = svs.clients[i].bFallback = qfalse;
+	}
+	printf( "server state: wwwdl %s falls back with a gamestate only before the world\n", how );
+}
+
+/* A bot takes a slot a loading client left without clearing it. */
+static void Bots( void ) {
+	client_t *cl = &svs.clients[CONNECTED];
+	Reset();
+	cl->state = CS_FREE;
+	cl->gamestateOwed = qtrue;
+	cl->csUpdated[CS_PLAYERS] = 1;
+	CHECK( SV_BotAllocateClient( 0 ) == CONNECTED );
+	CHECK( cl->state == CS_ACTIVE && !cl->gamestateOwed && !cl->csUpdated[CS_PLAYERS] );
+	puts( "server state: a bot's slot keeps no gamestate debt or marks" );
 }
 
 int main( void ) {
@@ -442,6 +509,9 @@ int main( void ) {
 	Donedl();
 	Names();
 	Restarts();
+	Wwwdl( "fail" );
+	Wwwdl( "chkfail" );
+	Bots();
 	puts( "server state: all passed" );
 	return 0;
 }

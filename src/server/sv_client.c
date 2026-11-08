@@ -893,8 +893,12 @@ void SV_WWWDownload_f( client_t *cl ) {
 		*cl->downloadName = 0;
 		cl->bWWWing = qfalse;
 		cl->bFallback = qtrue;
-		// send a reconnect
-		SV_SendClientGameState( cl );
+		// send a reconnect, but not to a client already in the world: it can
+		// ask for a download, and a new gamestate would run ClientBegin for
+		// it again (SV_DoneDownload_f)
+		if ( cl->state != CS_ACTIVE || cl->gamestateOwed ) {
+			SV_SendClientGameState( cl );
+		}
 		return;
 	} else if ( !Q_stricmp( subcmd, "chkfail" ) )        {
 		Com_Printf( "WARNING: client '%s' reports that the redirect download for '%s' had wrong checksum.\n", cl->name, cl->downloadName );
@@ -903,8 +907,12 @@ void SV_WWWDownload_f( client_t *cl ) {
 		*cl->downloadName = 0;
 		cl->bWWWing = qfalse;
 		cl->bFallback = qtrue;
-		// send a reconnect
-		SV_SendClientGameState( cl );
+		// send a reconnect, but not to a client already in the world: it can
+		// ask for a download, and a new gamestate would run ClientBegin for
+		// it again (SV_DoneDownload_f)
+		if ( cl->state != CS_ACTIVE || cl->gamestateOwed ) {
+			SV_SendClientGameState( cl );
+		}
 		return;
 	}
 
@@ -1723,7 +1731,12 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 	// (SV_DoneDownload_f). Its usercmds wait for the cp instead. A client
 	// map_restart made active before its cp sends the cp ahead of its first
 	// usercmd on the new serverId, which the netchan keeps resending.
+	// A client in the world that still sends no cp is dropped as ETL does:
+	// an honest one sends it ahead of its usercmds.
 	if ( sv_pure->integer != 0 && cl->pureAuthentic == 0 && !cl->gotCP ) {
+		if ( cl->state == CS_ACTIVE ) {
+			SV_DropClient( cl, "Cannot validate pure client!" );
+		}
 		return;
 	}
 

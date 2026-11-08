@@ -132,7 +132,9 @@ inc+=fn('src/server/sv_client.c',['void SV_SendClientGameState( client_t *client
     'static void SV_CloseDownload( client_t *cl ) {','void SV_DoneDownload_f( client_t *cl ) {','void SV_NextDownload_f( client_t *cl ) {',
     'void SV_CopyClientName( char *dest, const char *src, int destsize ) {','void SV_UserinfoChanged( client_t *cl ) {',
     'static void SV_ResetPureClient_f( client_t *cl ) {','static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {',
-    'void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {','void SV_ClientMapRestarted( client_t *client ) {'])
+    'void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {','void SV_ClientMapRestarted( client_t *client ) {',
+    'void SV_WWWDownload_f( client_t *cl ) {'])
+inc+=fn('src/server/sv_bot.c',['int SV_BotAllocateClient( int clientNum ) {'])
 inc+=fn('src/server/sv_ccmds.c',['static void SV_MapRestart_f( void ) {'])
 open(sys.argv[1],'w',encoding='latin-1').write(inc)
 S

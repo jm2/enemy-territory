@@ -698,6 +698,8 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 					// when we get the next packet from a connected client,
 					// the new gamestate will be sent
 					svs.clients[i].state = CS_CONNECTED;
+					// marks for the old level mean nothing to the new one
+					memset( svs.clients[i].csUpdated, 0, sizeof( svs.clients[i].csUpdated ) );
 				} else {
 					client_t        *client;
 					sharedEntity_t  *ent;
