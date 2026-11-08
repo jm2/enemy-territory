@@ -303,6 +303,9 @@ typedef struct {
 	unsigned short port;
 } serverAddress_t;
 
+// sv_master1 to sv_master5, as the server and the legacy menus have them
+#define CL_MAX_MASTER_SERVERS 5
+
 typedef struct {
 	connstate_t state;              // connection status
 	int keyCatchers;                // bit flags
@@ -341,6 +344,9 @@ typedef struct {
 	int pingUpdateSource;       // source currently pinging or updating
 
 	int masterNum;
+	// where globalservers sent getservers, by master number: only these may
+	// answer with a server list (Quake III 3f7881d7). Any type but NA_IP is none.
+	netadr_t masterServers[CL_MAX_MASTER_SERVERS];
 
 	// update server info
 	netadr_t updateServer;

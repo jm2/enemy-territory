@@ -22,5 +22,8 @@ GUIDCHECK=0 tests/compat/run.sh                              # run B
 CLGUID=0123456789ABCDEF0123456789ABCDEF tests/compat/run.sh  # run C
 ```
 
+`tests/compat/master.sh` runs `globalservers` against two fake masters and a host that answers
+unasked, with no server, and checks the list. Its logs land in `$ET_DATA/compat-master`.
+
 `CLIENT=./et_host` runs a build of this tree instead of the retail client, with
 `et_host` copied into `run/base`. Logs land in `$ET_DATA/compat-out`. Needs bwrap, Xvfb, and i686 Mesa and X11 libraries.
