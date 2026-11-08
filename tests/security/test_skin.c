@@ -101,9 +101,16 @@ int main( int argc, char **argv ) {
 	if ( argc > 1 ) {
 		int a;
 		for ( a = 1; a < argc; a++ ) {
+			int before = tr.numSkins;
+
 			fileText = NULL;
 			i = RE_RegisterSkin( argv[a] );
-			skin = tr.skins[tr.numSkins - 1];
+			// the skin this file made, even one refused for having no surfaces
+			skin = tr.numSkins > before ? tr.skins[tr.numSkins - 1] : NULL;
+			if ( !skin ) {
+				printf( "%s unreadable\n", argv[a] );
+				continue;
+			}
 			printf( "%s %s surfaces=%d models=%d\n", argv[a], i ? "ok" : "default", skin->numSurfaces, skin->numModels );
 		}
 		return 0;
