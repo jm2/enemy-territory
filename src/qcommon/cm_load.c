@@ -604,6 +604,44 @@ unsigned CM_Checksum( dheader_t *header ) {
 
 /*
 ==================
+CM_ValidateBSPPatchGrids
+
+Runs each patch's collision refinement on a scratch grid. Curvature, not
+the source size, decides how far it subdivides, so this is the only way to
+know CM_GeneratePatchCollide will fit. Spans and sizes are already checked.
+==================
+*/
+static const char *CM_ValidateBSPPatchGrids( const byte *buf, const dheader_t *header ) {
+	const byte *surface, *vertices;
+	vec3_t points[MAX_PATCH_VERTS];
+	int i, j, k, count, width, height;
+	const char *error;
+
+	count = header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t );
+	surface = buf + header->lumps[LUMP_SURFACES].fileofs;
+	for ( i = 0 ; i < count ; i++, surface += sizeof( dsurface_t ) ) {
+		if ( BSP_FileWord( surface + offsetof( dsurface_t, surfaceType ) ) != MST_PATCH ) {
+			continue;
+		}
+		width = BSP_FileWord( surface + offsetof( dsurface_t, patchWidth ) );
+		height = BSP_FileWord( surface + offsetof( dsurface_t, patchHeight ) );
+		vertices = buf + header->lumps[LUMP_DRAWVERTS].fileofs +
+				   BSP_FileWord( surface + offsetof( dsurface_t, firstVert ) ) * sizeof( drawVert_t );
+		for ( j = 0 ; j < width * height ; j++ ) {
+			for ( k = 0 ; k < 3 ; k++ ) {
+				points[j][k] = BSP_GeometryFloat( vertices + j * sizeof( drawVert_t ) + k * 4 );
+			}
+		}
+		error = CM_ValidatePatchCollide( width, height, points );
+		if ( error ) {
+			return error;
+		}
+	}
+	return NULL;
+}
+
+/*
+==================
 CM_ValidateBSP
 
 Every lump, cross-lump index, span and patch size the loaders below trust,
@@ -642,6 +680,9 @@ static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *heade
 	}
 	if ( !error ) {
 		error = BSP_ValidateGeometry( buf, header, MAX_GRID_SIZE, MAX_PATCH_VERTS );
+	}
+	if ( !error ) {
+		error = CM_ValidateBSPPatchGrids( buf, header );
 	}
 	return error;
 }

@@ -347,6 +347,7 @@ static int RunCase( const bspCase_t *c ) {
 	fflush( stdout );
 	pid = fork();
 	if ( pid == 0 ) {
+		alarm( 60 );    // a load that walks a tree too often fails instead of hanging
 		BuildMap();
 		Check( LoaderAccept( "maps/previous.bsp" ), "the unmutated map loads" );
 		c->mutate();
@@ -567,6 +568,38 @@ static void M_LightmapSingle( void ) {
 	Lump( LUMP_LIGHTMAPS, LumpOfs( LUMP_LIGHTMAPS ) + LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3, LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3 );
 }
 static void M_LightmapPartial( void ) { Lump( LUMP_LIGHTMAPS, LumpOfs( LUMP_LIGHTMAPS ), LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3 - 3 ); }
+static void M_PatchCurved( void ) {
+	// a 3x3 patch whose middle control is far off its plane: collision subdivision
+	// would grow the grid past MAX_GRID_SIZE; the renderer stops at its own limit
+	Float( LumpOfs( LUMP_DRAWVERTS ) + 11 * sizeof( drawVert_t ) + 8, 1e7f );
+}
+static void M_IndexPartialTriangle( void ) { SET( LUMP_SURFACES, dsurface_t, S_PLANAR, numIndexes, 5 ); }
+static void M_TriIndexPartialTriangle( void ) { SET( LUMP_SURFACES, dsurface_t, S_TRISOUP, numIndexes, 2 ); }
+static void Fogs( unsigned int count ) {
+	unsigned int i, o = GrowLump( LUMP_FOGS, sizeof( dfog_t ), count );
+	for ( i = 2; i < count; i++ ) {
+		memcpy( source + o + i * sizeof( dfog_t ), source + o, sizeof( dfog_t ) );
+	}
+}
+static void M_Fogs31( void ) { Fogs( 31 ); }
+static void M_Fogs32( void ) { Fogs( 32 ); }
+#define DEEP_NODES  200000
+#define SHARED_MARKS 20000
+static void M_DeepTree( void ) {
+	// a 200,000-node chain, every node also pointing at one opaque leaf with
+	// 20,000 marks: deeper than any stack the old recursion had, and nodes x marks
+	// surface walks if a shared leaf is walked on every visit
+	unsigned int i, o;
+	o = Append( LUMP_NODES, DEEP_NODES * sizeof( dnode_t ), 1 );
+	for ( i = 0; i < DEEP_NODES; i++ ) {
+		Word( o + i * sizeof( dnode_t ) + offsetof( dnode_t, planeNum ), 1 );
+		Word( o + i * sizeof( dnode_t ) + offsetof( dnode_t, children ), i + 1 < DEEP_NODES ? i + 1 : (unsigned int)-2 );
+		Word( o + i * sizeof( dnode_t ) + offsetof( dnode_t, children ) + 4, (unsigned int)-1 );
+	}
+	o = GrowLump( LUMP_LEAFSURFACES, 4, NUM_SURFS + SHARED_MARKS );
+	SET( LUMP_LEAFS, dleaf_t, 0, firstLeafSurface, NUM_SURFS );
+	SET( LUMP_LEAFS, dleaf_t, 0, numLeafSurfaces, SHARED_MARKS );
+}
 static void M_LightmapTooMany( void ) {
 	unsigned int size = LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3;
 	Append( LUMP_LIGHTMAPS, size * 257, 0 );
@@ -676,13 +709,19 @@ static const bspCase_t bspCases[] = {
 	{ "gridsize nan", M_GridNan, SKIP, REJECT },
 	{ "gridsize inf", M_GridInf, SKIP, REJECT },
 	{ "gridsize denormal", M_GridTiny, SKIP, REJECT },
-	{ "gridsize point count overflows", M_GridPoints, SKIP, REJECT },
+	{ "gridsize point count overflows, no grid", M_GridPoints, SKIP, ACCEPT },
 	{ "gridsize with one value", M_GridPartial, SKIP, ACCEPT },
 	{ "gridsize not matching the lump", M_GridMismatch, SKIP, ACCEPT },
 	{ "grid with no points and an empty lump", M_GridEmptyBounds, SKIP, ACCEPT },
 	{ "single lightmap, uploaded twice", M_LightmapSingle, ACCEPT, ACCEPT },
 	{ "lightmap lump not whole lightmaps", M_LightmapPartial, REJECT, REJECT },
 	{ "257 lightmaps", M_LightmapTooMany, ACCEPT, REJECT },
+	{ "curved patch past the collision grid", M_PatchCurved, REJECT, ACCEPT },
+	{ "planar index count not whole triangles", M_IndexPartialTriangle, REJECT, REJECT },
+	{ "triangle index count not whole triangles", M_TriIndexPartialTriangle, REJECT, REJECT },
+	{ "31 fogs", M_Fogs31, ACCEPT, ACCEPT },
+	{ "32 fogs past the sort key", M_Fogs32, ACCEPT, REJECT },
+	{ "200,000-node chain sharing an opaque leaf", M_DeepTree, ACCEPT, ACCEPT },
 };
 
 static int RunCases( void ) {

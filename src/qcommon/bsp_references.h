@@ -147,13 +147,18 @@ static const char *BSP_ValidateSurfaceReferences( const byte *base, const dheade
 			if ( !BSP_ReferenceSpan( first, count, indexes ) ) {
 				return "invalid BSP surface index span";
 			}
+			// RB_SurfaceTriangles copies whole triangles; a partial one overruns tess_indexes
+			if ( ( type == MST_PLANAR || type == MST_TRIANGLE_SOUP ) && count % 3 ) {
+				return "BSP surface index count not whole triangles";
+			}
 			if ( count ) {
 				needed = qtrue;
 			}
 		}
 		if ( type == MST_PLANAR || type == MST_PATCH || type == MST_TRIANGLE_SOUP ) {
 			value = BSP_FileWord( record + offsetof( dsurface_t, lightmapNum ) );
-			// R_FindShader indexes tr.lightmaps below LIGHTMAP_2D; positive values fall back
+			// the renderer only knows the four negative selectors; R_FindLightmap also makes
+			// lower values vertex lit, but a map that uses one is malformed, so refuse it
 			if ( ( value & 0x80000000u ) && value < 0xfffffffcu ) {
 				return "invalid BSP negative lightmap selector";
 			}

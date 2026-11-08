@@ -100,6 +100,33 @@ static int LoaderAccept( const char *name ) {
 	if ( LumpLen( LUMP_LIGHTMAPS ) == LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3 ) {
 		Check( tr.numLightmaps == 2 && tr.lightmaps[1], "the single-lightmap hack keeps two textures" );
 	}
+	if ( s_worldData.numDecisionNodes == DEEP_NODES ) {
+		mnode_t *n = s_worldData.nodes;
+		Check( n[DEEP_NODES - 1].parent == &n[DEEP_NODES - 2] && n[1].parent == &n[0] && !n[0].parent, "deep chain parents" );
+		Check( n[DEEP_NODES].parent == &n[0] && n[DEEP_NODES + 1].parent == &n[DEEP_NODES - 1], "shared leaf keeps the last parent in walk order" );
+	}
+	if ( realMaps ) {
+		// parents and surface bounds of every node, to compare with the old recursive walk
+		unsigned int h = 2166136261u, k;
+		const byte *b;
+		for ( i = 0; i < s_worldData.numnodes; i++ ) {
+			mnode_t *n = &s_worldData.nodes[i];
+			int parent = n->parent ? (int)( n->parent - s_worldData.nodes ) : -1;
+			b = (const byte *)&parent;
+			for ( k = 0; k < sizeof( parent ); k++ ) {
+				h = ( h ^ b[k] ) * 16777619u;
+			}
+			b = (const byte *)n->surfMins;
+			for ( k = 0; k < sizeof( vec3_t ); k++ ) {
+				h = ( h ^ b[k] ) * 16777619u;
+			}
+			b = (const byte *)n->surfMaxs;
+			for ( k = 0; k < sizeof( vec3_t ); k++ ) {
+				h = ( h ^ b[k] ) * 16777619u;
+			}
+		}
+		printf( "     %s: %d nodes, tree digest %08x\n", name, s_worldData.numnodes, h );
+	}
 	if ( !strcmp( name, "maps/previous.bsp" ) ) {
 		// the unmutated fixture, as the unfixed loader also builds it
 		Check( s_worldData.numsurfaces == NUM_SURFS && s_worldData.numfogs == 3 && s_worldData.globalFog == 2, "fixture surfaces and fogs" );

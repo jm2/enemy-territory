@@ -1945,54 +1945,106 @@ static void R_LoadSubmodels( lump_t *l ) {
 
 /*
 =================
-R_SetParent
+R_LeafSurfaceBounds
+
+ydnar: a leaf's surface bounds. The mark only advances on a surface type that
+has bounds, as it always has, so one without them ends the walk early.
 =================
 */
+static void R_LeafSurfaceBounds( mnode_t *node ) {
+	int c;
+	msurface_t      **mark;
+	srfGeneric_t    *gen;
 
-static void R_SetParent( mnode_t *node, mnode_t *parent ) {
-	//  set parent
-	node->parent = parent;
-
-	// handle leaf nodes
-	if ( node->contents != -1 ) {
-		// add node surfaces to bounds
-		if ( node->nummarksurfaces > 0 ) {
-			int c;
-			msurface_t      **mark;
-			srfGeneric_t    *gen;
-
-
-			// add node surfaces to bounds
-			mark = node->firstmarksurface;
-			c = node->nummarksurfaces;
-			while ( c-- )
-			{
-				gen = ( srfGeneric_t* )( **mark ).data;
-				if ( gen->surfaceType != SF_FACE &&
-					 gen->surfaceType != SF_GRID &&
-					 gen->surfaceType != SF_TRIANGLES &&
-					 gen->surfaceType != SF_FOLIAGE ) {
-					continue;
-				}
-				AddPointToBounds( gen->bounds[ 0 ], node->surfMins, node->surfMaxs );
-				AddPointToBounds( gen->bounds[ 1 ], node->surfMins, node->surfMaxs );
-				mark++;
-			}
-		}
-
-		// go back
+	if ( node->nummarksurfaces <= 0 ) {
 		return;
 	}
+	mark = node->firstmarksurface;
+	c = node->nummarksurfaces;
+	while ( c-- )
+	{
+		gen = ( srfGeneric_t* )( **mark ).data;
+		if ( gen->surfaceType != SF_FACE &&
+			 gen->surfaceType != SF_GRID &&
+			 gen->surfaceType != SF_TRIANGLES &&
+			 gen->surfaceType != SF_FOLIAGE ) {
+			continue;
+		}
+		AddPointToBounds( gen->bounds[ 0 ], node->surfMins, node->surfMaxs );
+		AddPointToBounds( gen->bounds[ 1 ], node->surfMins, node->surfMaxs );
+		mark++;
+	}
+}
 
-	// recurse to child nodes
-	R_SetParent( node->children[ 0 ], node );
-	R_SetParent( node->children[ 1 ], node );
+/*
+=================
+R_SetLeafParent
 
-	// ydnar: surface bounds
+A leaf can be shared, by one parent or (when opaque) by several. The last
+parent in walk order wins, as before. Its surface bounds are the same on
+every visit, so they are added on the first one only.
+=================
+*/
+static void R_SetLeafParent( mnode_t *leaf, mnode_t *parent ) {
+	if ( !leaf->parent ) {
+		R_LeafSurfaceBounds( leaf );
+	}
+	leaf->parent = parent;
+}
+
+/*
+=================
+R_SetParents
+
+Sets every parent reachable from the world root and folds surface bounds up
+the tree, children before parents, in the order the old recursive walk used.
+It walks back up by parent pointers instead of recursing, so a deep tree
+cannot overflow the stack: BSP_ValidateTree has given every decision node one
+parent and refused cycles.
+=================
+*/
+static void R_SetParents( mnode_t *root ) {
+	mnode_t *node, *child, *parent;
+
+	node = root;
+	node->parent = NULL;
+
+descend:
+	// node is a decision node whose children are not walked yet
+	child = node->children[ 0 ];
+	if ( child->contents == CONTENTS_NODE ) {
+		child->parent = node;
+		node = child;
+		goto descend;
+	}
+	R_SetLeafParent( child, node );
+
+second:
+	child = node->children[ 1 ];
+	if ( child->contents == CONTENTS_NODE ) {
+		child->parent = node;
+		node = child;
+		goto descend;
+	}
+	R_SetLeafParent( child, node );
+
+finish:
+	// ydnar: surface bounds (child 0's mins twice and not its maxs, as before)
 	AddPointToBounds( node->children[ 0 ]->surfMins, node->surfMins, node->surfMaxs );
 	AddPointToBounds( node->children[ 0 ]->surfMins, node->surfMins, node->surfMaxs );
 	AddPointToBounds( node->children[ 1 ]->surfMins, node->surfMins, node->surfMaxs );
 	AddPointToBounds( node->children[ 1 ]->surfMaxs, node->surfMins, node->surfMaxs );
+
+	parent = node->parent;
+	if ( !parent ) {
+		return;
+	}
+	if ( node == parent->children[ 0 ] ) {
+		node = parent;
+		goto second;
+	}
+	node = parent;
+	goto finish;
 }
 
 /*
@@ -2080,7 +2132,7 @@ static void R_LoadNodesAndLeafs( lump_t *nodeLump, lump_t *leafLump ) {
 	}
 
 	// chain decendants
-	R_SetParent( s_worldData.nodes, NULL );
+	R_SetParents( s_worldData.nodes );
 }
 
 //=============================================================================
@@ -2539,6 +2591,7 @@ R_ValidateBSPLightGrid
 
 The light grid R_LoadLightGrid will use, computed with the same float
 operations as before, from the worldspawn gridsize and model 0's bounds.
+A bad gridsize refuses the map; a grid too large to index becomes no grid.
 ================
 */
 static const char *R_ValidateBSPLightGrid( const byte *buffer, const dheader_t *header, bspLightGrid_t *grid ) {
@@ -2571,18 +2624,18 @@ static const char *R_ValidateBSPLightGrid( const byte *buffer, const dheader_t *
 		minQuotient = BSP_GeometryFloat( model + i * 4 ) / grid->size[i];
 		maxQuotient = BSP_GeometryFloat( model + 12 + i * 4 ) / grid->size[i];
 		if ( !( minQuotient >= -FLT_MAX && minQuotient <= FLT_MAX && maxQuotient >= -FLT_MAX && maxQuotient <= FLT_MAX ) ) {
-			return "BSP light grid quotient overflow";
+			goto noGrid;
 		}
 		origin = grid->size[i] * ceil( minQuotient );
 		maximum = grid->size[i] * floor( maxQuotient );
 		if ( !( origin >= -FLT_MAX && origin <= FLT_MAX && maximum >= -FLT_MAX && maximum <= FLT_MAX ) ) {
-			return "BSP light grid origin overflow";
+			goto noGrid;
 		}
 		grid->origin[i] = (float)origin;
 		maxAligned = (float)maximum;
 		count = ( maxAligned - grid->origin[i] ) / grid->size[i] + 1;
 		if ( !( (double)count <= INT_MAX ) ) {
-			return "BSP light grid dimension overflow";
+			goto noGrid;
 		}
 		grid->bounds[i] = count > 0 ? (int)count : 0;
 	}
@@ -2591,11 +2644,19 @@ static const char *R_ValidateBSPLightGrid( const byte *buffer, const dheader_t *
 	}
 	for ( i = 0; i < 3; i++ ) {
 		if ( (unsigned int)grid->bounds[i] > capacity / points ) {
-			return "BSP light grid size overflow";
+			goto noGrid;
 		}
 		points *= grid->bounds[i];
 	}
 	grid->numPoints = points;
+	return NULL;
+
+noGrid:
+	// a grid too large to index is no grid: R_LoadLightGrid warns and lights
+	// entities without one, as for a mismatched lump
+	VectorClear( grid->origin );
+	grid->bounds[0] = grid->bounds[1] = grid->bounds[2] = 0;
+	grid->numPoints = 0;
 	return NULL;
 }
 
@@ -2697,6 +2758,11 @@ static const char *R_ValidateBSPAllocations( const dheader_t *header ) {
 	// tr.lightmaps is a fixed array
 	if ( header->lumps[LUMP_LIGHTMAPS].filelen / ( LIGHTMAP_WIDTH * LIGHTMAP_HEIGHT * 3 ) > MAX_LIGHTMAPS ) {
 		return "BSP has more than MAX_LIGHTMAPS lightmaps";
+	}
+	// a surface's fog index (fog record + 1) has 5 bits in the draw sort key; 32
+	// would spill into the entity number. q3map2 caps fogs at 30.
+	if ( header->lumps[LUMP_FOGS].filelen / sizeof( dfog_t ) > 31 ) {
+		return "BSP has more than 31 fogs";
 	}
 	// each submodel takes a slot through R_AllocModel, which returns NULL when full
 	if ( tr.numModels < 0 || tr.numModels > MAX_MOD_KNOWN ||
