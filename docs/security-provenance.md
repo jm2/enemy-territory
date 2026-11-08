@@ -83,6 +83,9 @@ it, and what has not been done. A cross-build proves only that code compiles.
 - `sv_userInfoFloodProtect` (`f5258c7d`) and the other server-side ETL fixes matter only for a
   listen server and are not ported, beyond the four host server rows above. Broadcast commands
   (chat, prints) still reach a `CS_PRIMED` client and count toward its command overflow.
+  An ACTIVE client on a pure server that sends usercmds with no `cp` is dropped, as in ETL, so
+  switching `sv_pure` from 0 to 1 mid-game without a map change kicks every player; change it
+  with the map.
 - Every loader of server pk3 content now has its array bounds checked, but not all of Q3A's
   validation. Shader and skin text has its array bounds only: Q3A's checks of non-finite numbers,
   fallback state and its brace recovery are not ported. BSP loading is preflighted, but not
