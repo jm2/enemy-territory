@@ -155,15 +155,23 @@ for sep in "'/'" "':'"; do
     "$CC" $FLAGS "-DTEST_PATH_SEP=$sep" "-DBEGINDL_INC=\"$OUT/begindl.inc\"" tests/security/test_clparse.c src/client/cl_parse.c src/qcommon/cvar.c src/qcommon/fs_path.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/clparse"
     "$OUT/clparse"
 done
-# The model loaders and the bone, mesh and surface code that trusts them. Q_rsqrt
-# reads a float through a 64-bit long on the host only, so q_math.c gets no
-# sanitizer here. The second build makes LittleLong and friends swap, as on the
-# big-endian target; LongSwap shifts a byte into the sign bit by design.
-MODELS="tests/security/test_models.c src/renderer/tr_model.c src/renderer/tr_animation_mds.c src/renderer/tr_animation_mdm.c src/renderer/tr_mesh.c src/renderer/tr_cmesh.c src/renderer/tr_surface.c"
-"$CC" $FLAGS -fno-sanitize=all -c src/game/q_math.c -o "$OUT/q_math_plain.o"
-"$CC" $FLAGS -fno-sanitize-recover=all -Isrc/renderer $MODELS "$OUT/q_math_plain.o" -lm -o "$OUT/models"
+# Q_rsqrt and SquareRootFloat read a float's 32 bits, not a 64-bit host long.
+# SquareRootFloat alone: cm_trace.c needs the whole collision map
+python3 - "$OUT/sqrtf.inc" <<'R'
+import sys
+s=open('src/qcommon/cm_trace.c',encoding='latin-1').read()
+a=s.index('float SquareRootFloat( float number ) {'); b=s.index('\n}\n',a)+3
+open(sys.argv[1],'w',encoding='latin-1').write('#line %d "src/qcommon/cm_trace.c"\n'%(s.count('\n',0,a)+1)+s[a:b])
+R
+"$CC" $FLAGS -fno-sanitize-recover=all "-DSQRTF_INC=\"$OUT/sqrtf.inc\"" tests/security/test_rsqrt.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/rsqrt"
+"$OUT/rsqrt"
+# The model loaders and the bone, mesh and surface code that trusts them. The
+# second build makes LittleLong and friends swap, as on the big-endian target;
+# LongSwap shifts a byte into the sign bit by design.
+MODELS="tests/security/test_models.c src/renderer/tr_model.c src/renderer/tr_animation_mds.c src/renderer/tr_animation_mdm.c src/renderer/tr_mesh.c src/renderer/tr_cmesh.c src/renderer/tr_surface.c src/game/q_math.c"
+"$CC" $FLAGS -fno-sanitize-recover=all -Isrc/renderer $MODELS -lm -o "$OUT/models"
 "$OUT/models"
-"$CC" $FLAGS -fno-sanitize-recover=all -fno-sanitize=shift-base -DMODEL_TEST_SWAP -Isrc/renderer $MODELS "$OUT/q_math_plain.o" -lm -o "$OUT/models_swapped"
+"$CC" $FLAGS -fno-sanitize-recover=all -fno-sanitize=shift-base -DMODEL_TEST_SWAP -Isrc/renderer $MODELS -lm -o "$OUT/models_swapped"
 "$OUT/models_swapped"
 # BSP preflight: the real CM_LoadMap and RE_LoadWorldMap on corrupted maps. Set
 # BSP_FILES to a list of .bsp files to also load, truncate and mutate each of them.
