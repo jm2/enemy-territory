@@ -550,7 +550,7 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks ) {
 			c = *data++;
 			if ( c == '\\' && *( data ) == '\"' ) {
 				// Arnout: string-in-string
-				if ( len < MAX_TOKEN_CHARS ) {
+				if ( len < MAX_TOKEN_CHARS - 1 ) {
 					com_token[len] = '\"';
 					len++;
 				}
@@ -561,11 +561,11 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks ) {
 
 					if ( !c ) {
 						com_token[len] = 0;
-						*data_p = ( char * ) data;
+						*data_p = ( char * ) data - 1;    // stop at the NUL
 						break;
 					}
 					if ( ( c == '\\' && *( data ) == '\"' ) ) {
-						if ( len < MAX_TOKEN_CHARS ) {
+						if ( len < MAX_TOKEN_CHARS - 1 ) {
 							com_token[len] = '\"';
 							len++;
 						}
@@ -573,7 +573,7 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks ) {
 						c = *data++;
 						break;
 					}
-					if ( len < MAX_TOKEN_CHARS ) {
+					if ( len < MAX_TOKEN_CHARS - 1 ) {
 						com_token[len] = c;
 						len++;
 					}
@@ -581,10 +581,11 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks ) {
 			}
 			if ( c == '\"' || !c ) {
 				com_token[len] = 0;
-				*data_p = ( char * ) data;
+				// an unterminated quote stops at the NUL, not past it
+				*data_p = ( char * ) ( c ? data : data - 1 );
 				return com_token;
 			}
-			if ( len < MAX_TOKEN_CHARS ) {
+			if ( len < MAX_TOKEN_CHARS - 1 ) {
 				com_token[len] = c;
 				len++;
 			}
@@ -1424,7 +1425,7 @@ void Info_SetValueForKey( char *s, const char *key, const char *value ) {
 
 	Com_sprintf( newi, sizeof( newi ), "\\%s\\%s", key, value );
 
-	if ( strlen( newi ) + strlen( s ) > MAX_INFO_STRING ) {
+	if ( strlen( newi ) + strlen( s ) >= MAX_INFO_STRING ) {
 		Com_Printf( "Info string length exceeded\n" );
 		return;
 	}
@@ -1468,7 +1469,7 @@ void Info_SetValueForKey_Big( char *s, const char *key, const char *value ) {
 
 	Com_sprintf( newi, sizeof( newi ), "\\%s\\%s", key, value );
 
-	if ( strlen( newi ) + strlen( s ) > BIG_INFO_STRING ) {
+	if ( strlen( newi ) + strlen( s ) >= BIG_INFO_STRING ) {
 		Com_Printf( "BIG Info string length exceeded\n" );
 		return;
 	}

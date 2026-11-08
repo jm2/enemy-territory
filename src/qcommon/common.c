@@ -3797,13 +3797,15 @@ static void FindMatches( const char *s ) {
 		return;
 	}
 
-	// cut shortestMatch to the amount common with s
-	for ( i = 0 ; s[i] ; i++ ) {
-		if ( tolower( shortestMatch[i] ) != tolower( s[i] ) ) {
+	// cut shortestMatch to the amount common with s, stopping at the end of
+	// either: a server's systeminfo can create cvar names far longer than
+	// shortestMatch (ioquake3's form)
+	for ( i = 0 ; shortestMatch[i] ; i++ ) {
+		if ( !s[i] || tolower( (unsigned char)shortestMatch[i] ) != tolower( (unsigned char)s[i] ) ) {
 			shortestMatch[i] = 0;
+			break;
 		}
 	}
-	shortestMatch[i] = 0;
 }
 
 /*

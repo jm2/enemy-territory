@@ -805,6 +805,42 @@ void FS_SV_Rename( const char *from, const char *to ) {
 
 
 /*
+===================
+FS_IsKeyFileName
+
+qtrue if filename names a key file in any letter case: etkey, the GUID source,
+or rtcwkey, the CD key. HFS matches names without regard to case, so "ETKEY"
+opens etkey there.
+===================
+*/
+static qboolean FS_IsKeyFileName( const char *filename ) {
+	const char *s;
+
+	for ( s = filename ; *s ; s++ ) {
+		if ( !Q_stricmpn( s, "etkey", 5 ) || !Q_stricmpn( s, "rtcwkey", 7 ) ) {
+			return qtrue;
+		}
+	}
+	return qfalse;
+}
+
+/*
+===================
+FS_CheckWriteIsNotKey
+
+Modules and console commands write through FS_FOpenFileWrite/Append and
+FS_Rename. The engine writes its key files through FS_SV_* only.
+===================
+*/
+static qboolean FS_CheckWriteIsNotKey( const char *filename, const char *function ) {
+	if ( FS_IsKeyFileName( filename ) ) {
+		Com_Printf( "WARNING: %s: Not allowed to manipulate %s, a key file\n", function, filename );
+		return qfalse;
+	}
+	return qtrue;
+}
+
+/*
 ===========
 FS_Rename
 
@@ -819,6 +855,10 @@ void FS_Rename( const char *from, const char *to ) {
 
 	// don't let sound stutter
 	//S_ClearSoundBuffer();
+
+	if ( !FS_CheckWriteIsNotKey( from, "FS_Rename" ) || !FS_CheckWriteIsNotKey( to, "FS_Rename" ) ) {
+		return;
+	}
 
 	from_ospath = FS_BuildOSPath( fs_homepath->string, fs_gamedir, from );
 	to_ospath = FS_BuildOSPath( fs_homepath->string, fs_gamedir, to );
@@ -887,6 +927,10 @@ fileHandle_t FS_FOpenFileWrite( const char *filename ) {
 		return 0;
 	}
 
+	if ( !FS_CheckWriteIsNotKey( filename, "FS_FOpenFileWrite" ) ) {
+		return 0;
+	}
+
 	f = FS_HandleForFile();
 	fsh[f].zipFile = qfalse;
 
@@ -930,6 +974,10 @@ fileHandle_t FS_FOpenFileAppend( const char *filename ) {
 
 	if ( !FS_CheckQPath( filename ) ) {
 		Com_Printf( "WARNING: refusing to append to illegal qpath \"%s\"\n", filename );
+		return 0;
+	}
+
+	if ( !FS_CheckWriteIsNotKey( filename, "FS_FOpenFileAppend" ) ) {
 		return 0;
 	}
 
@@ -1067,6 +1115,9 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 	// sure this chunk of code is really up to date with everything
 	if ( file == NULL ) {
 		// just wants to see if file is there
+		if ( com_fullyInitialized && FS_IsKeyFileName( filename ) ) {
+			return qfalse;
+		}
 		for ( search = fs_searchpaths ; search ; search = search->next ) {
 			//
 			if ( search->pack ) {
@@ -1128,7 +1179,8 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 
 	// make sure the q3key file is only readable by the quake3.exe at initialization
 	// any other time the key should only be accessed in memory using the provided functions
-	if ( com_fullyInitialized && strstr( filename, "etkey" ) ) {
+	// (in any letter case: the Mac's volumes would open "ETKEY" as etkey)
+	if ( com_fullyInitialized && FS_IsKeyFileName( filename ) ) {
 		*file = 0;
 		return -1;
 	}
@@ -2336,7 +2388,7 @@ char **FS_ListFilteredFiles( const char *path, const char *extension, char *filt
 	}
 
 	pathLength = strlen( path );
-	if ( path[pathLength - 1] == '\\' || path[pathLength - 1] == '/' ) {
+	if ( pathLength > 0 && ( path[pathLength - 1] == '\\' || path[pathLength - 1] == '/' ) ) {
 		pathLength--;
 	}
 	extensionLength = strlen( extension );
