@@ -808,20 +808,24 @@ void FS_SV_Rename( const char *from, const char *to ) {
 ===================
 FS_IsKeyFileName
 
-qtrue if filename names a key file in any letter case: etkey, the GUID source,
-or rtcwkey, the CD key. HFS matches names without regard to case, so "ETKEY"
-opens etkey there.
+qtrue if the last component of filename is a key file in any letter case:
+etkey, the GUID source, or rtcwkey, the CD key. HFS matches names without
+regard to case, so "ETKEY" opens etkey there. Only the whole last component
+counts, so names that merely contain the word ("presetkey.cfg") still work.
+Any of '/', '\\' or ':' (the Mac's own separator) ends a directory.
 ===================
 */
 static qboolean FS_IsKeyFileName( const char *filename ) {
 	const char *s;
+	const char *base;
 
+	base = filename;
 	for ( s = filename ; *s ; s++ ) {
-		if ( !Q_stricmpn( s, "etkey", 5 ) || !Q_stricmpn( s, "rtcwkey", 7 ) ) {
-			return qtrue;
+		if ( *s == '/' || *s == '\\' || *s == ':' ) {
+			base = s + 1;
 		}
 	}
-	return qfalse;
+	return !Q_stricmp( base, "etkey" ) || !Q_stricmp( base, "rtcwkey" );
 }
 
 /*

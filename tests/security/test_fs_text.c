@@ -96,10 +96,11 @@ static void ListEmpty( void ) {
 
 static const char *keys[] = {
 	"etkey", "ETKEY", "EtKey", "eTkEy", "etmain/etkey", "etmain/ETKEY", "profiles/x/EtKey",
-	"rtcwkey", "RTCWKEY", "etmain/RtCwKey",
+	"rtcwkey", "RTCWKEY", "etmain/RtCwKey", "etmain:etkey", "etmain\\ETKEY",
 };
 static const char *others[] = {
 	"etconfig.cfg", "scripts/legacy_gfx_2d.shader", "maps/oasis.bsp", "profiles/x/etconfig.cfg", "et_key",
+	"presetkey.cfg", "etkey.txt", "etkeys/a.cfg", "rtcwkey2",
 };
 #define N( a ) (int)( sizeof( a ) / sizeof( a[0] ) )
 
