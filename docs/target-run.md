@@ -27,8 +27,9 @@ is (`opt=`).
 and double-click the result: the Disk Copy 6.3.3 that comes with Mac OS 9.2.2 mounts it, and
 Toast is not needed. Copy the `Enemy Territory` folder off it to a writable disk and run it from
 there: the volume is locked, and the game writes `etkey`, its config and its logs beside itself.
-It needs about 280 MB for the decoded image and 270 MB for the copy; the image can be deleted
-afterwards. Under ClassicMac an image built the same way mounted on a double-click, the files
+If an `Enemy Territory` folder is already there, move or rename it first: replacing it loses
+`etkey`, the config and the logs. It needs about 280 MB for the decoded image and 270 MB for the
+copy; once the image is ejected it can be deleted. Under ClassicMac an image built the same way mounted on a double-click, the files
 copied off intact, and stage 1 passed from the copy; it has not been tried on the mini. Images
 built before PR #20 needed Toast: Disk Copy refused them as a bare hybrid volume typed for another
 creator. `ndif_image.py`, shared with the Quake III port, adds what Disk Copy needs. The one-file
