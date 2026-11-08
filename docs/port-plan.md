@@ -1,6 +1,6 @@
 # Enemy Territory on Mac OS 9: port plan
 
-Last updated: 2026-11-07. Target mod: `legacy` v2.86.2 (ET: Legacy tag `v2.86.2`,
+Last updated: 2026-11-08. Target mod: `legacy` v2.86.2 (ET: Legacy tag `v2.86.2`,
 `fdb40f87`). Engine base: id's 2.60 GPL release in `src/`. Platform base: the
 Quake III Arena Mac OS 9 port (`~/Quake-III-Arena`), copied at `72dfd69f` and its Mac layer
 merged up to `1b5fe234`.
