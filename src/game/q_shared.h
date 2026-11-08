@@ -970,6 +970,7 @@ default values.
 
 #define CVAR_UNSAFE         4096    // ydnar: unsafe system cvars (renderer, sound settings, anything that might cause a crash)
 #define CVAR_SERVERINFO_NOUPDATE        8192    // gordon: WONT automatically send this to clients, but server browsers will see it
+#define CVAR_SERVER_CREATED 16384   // created by a server's systeminfo; engine only, as in ET: Legacy
 
 // nothing outside the Cvar_*() functions should modify these fields!
 typedef struct cvar_s {

@@ -19,7 +19,7 @@ it, and what has not been done. A cross-build proves only that code compiles.
 | Client file overwrite through server pak names, and path traversal including HFS `::` | CVE-2006-3324 (ioquake3 `813a6ecd`); Q3A #262 | `tests/security/test_path.c`, with `/` and `:` separators |
 | Spoofed `print` dropping a client, spoofed `challengeResponse`, reflected `echo` | Local; stricter than ETL | `SPOOF=30 tests/compat/run.sh`: an `[err_dialog]` packet from another port drops the retail client (`ERROR: spoofed`) and not this one |
 | Auto-update, which could start a process from a server's say-so | Local | Off in static builds. Code review |
-| Server overwriting registered client cvars through systeminfo | ETL `cl_parse.c` | Code review, and a real server still connects. No hostile-server test. A server can still seed a cvar not yet registered, which ETL closes with `CVAR_SERVER_CREATED` |
+| Server overwriting registered client cvars through systeminfo | ETL `cl_parse.c` | Code review, and a real server still connects. No hostile-server test. A server can still seed a cvar no module has registered yet, and the value survives registration, as in ETL and ioquake3 |
 | Server lists accepted from any host; `getservers` sent to an address never filled in for any master but the first, or one that did not resolve | Q3A `3f7881d7` (its store bounds were already here) and the master half of `cb934e88`. The legacy menus ask every `sv_masterN` that is set, so each is resolved and recorded, and only those addresses may answer | `tests/compat/master.sh`: two fake masters on loopback fill the list, a server both list once, while 50 entries from an unasked port are refused; with the check disabled it fails. Before, neither master was asked. Its length checks are taken too, and a server two masters list is stored once |
 | Amplification through `getstatus`, `getinfo`, `getchallenge` | CVE-2010-5077; simpler than Q3A's buckets. rcon keeps its existing global limit | Code review |
 | `FS_VerifyOfficialPaks`: stack overflow from repeated names, NULL from a short name list | Local review; ETL has the same code | `tests/security/test_official.c` extracts the function and runs it under ASan |
@@ -52,6 +52,11 @@ it, and what has not been done. A cross-build proves only that code compiles.
 | Key files by name: the read guard's `strstr( "etkey" )` was case-sensitive and HFS is not, and the existence probe and write, append and rename paths had no guard. `rtcwkey`, the CD key file, had none at all | Adapted from Q3A `09cf4690` (`q3key`, a substring match); the whole-last-component match and `rtcwkey` are local. Defence in depth here: `legacy` is native code, not a VM, so it could open the file without the engine | `test_fs_text.c` `keyread` and `keywrite`: `ETKEY`, `EtKey`, path prefixes and `rtcwkey` refused by the real read guard, probe, `FS_FOpenFileWrite`, `FS_FOpenFileAppend` and `FS_Rename`, ordinary names still pass. Fails on master. The engine still writes both through `FS_SV_*` and reads `etkey` at start-up |
 | The same cursor fault in `SkipRestOfLine` (shader lines such as `qer_editorimage` at the end of a dynamic shader) and the splines' own `Com_ParseExt` (a `cameras/*.camera` file a server's `startCam` names) | ioquake3 for `SkipRestOfLine`; local for splines | `test_text.c` `unterminated`, real `q_shared.c`. The splines copy has code review only |
 | The GUID was hashed from `etkey` through `FS_ReadFile`, which searches pk3s before the folder, so a downloaded pk3 holding an `etkey` entry chose `cl_guid`; only the size check read the real file | Local, found by the review | Code review: `Com_MD5FileETCompat` now reads `etmain/etkey` through `FS_SV_FOpenFileRead`, as the size check does. Same bytes hashed, so the GUID is unchanged |
+| `CL_ParseDownload` www redirect: the server's URL became `downloadName`, so UDP blocks sent after the redirect were renamed to any path under, or with `..` above, `fs_homepath` | Local; ETL has the same flow | `test_clparse redirect`: master renames the blocks to the URL (`../../../.bashrc`); now the names stay, blocks are ignored until the new gamestate, and the UDP fallback still completes. The EOF rename re-checks `FS_CheckDownloadName` (`eof_rename_checked`); `CL_WWWDownload` makes the same check and has code review only. The fallback after `wwwdl fail` is from reading the ETL and 2.60b servers: no real server has run the redirect, since the `DL=1` compat run sets `cl_wwwDownload 0` |
+| Download names that would be cut: longer than `MAX_QPATH` (the home path is joined to them within `MAX_OSPATH`, and `originalDownloadName` is `MAX_QPATH`), and HFS's 31-byte limit for `<pak>.tmp` | Q3A `204fe36d` (lengths), `300f7323` (temp name) | `test_clparse begin_download_names` with `/` and `:`. Retail, legacy and 17 map pak names still download |
+| Binary bytes after `svc_EOF` before the cgame loads: `VM_Call( NULL )` is `ERR_FATAL` | ETL `8c47c2e0a`, which drops; here they are ignored | `test_clparse binary_without_cgame` |
+| One snapshot with more entities than the parse ring | Q3A `53440e7f` (CVE-2018-12100 family) | `test_clparse entity_count`: master parses 2056 into a 2048 ring; now `ERR_DROP`, and a full frame of 1023 still parses |
+| Cvars a server creates: flags 0, so no later server could set them, and the player could | ETL and ioquake3 `CVAR_SERVER_CREATED`; Q3A `18b0dbd1` (registration drops its `CVAR_ROM`) | `test_clparse systeminfo_cvars` on the real `cvar.c`. `Cvar_Register` and the UI's `trap_Cvar_Create`, which now goes through it as in the Quake III port, strip the flag |
 
 ## Not done
 
@@ -68,8 +73,8 @@ it, and what has not been done. A cross-build proves only that code compiles.
   `PC_MergeTokens` by an unbounded `strcat` into a 1024-byte token, for two strings and for a
   name with a name or number. Q3A bounded that in `08460fb3`. Its `fa39407b` and `f9f73568`
   bound includes, expressions, live tokens and nested conditionals, which ET has not reviewed.
-- `cm_optimizePatchPlanes` is not followed (E5). When it is, read it from `systemInfo`: the
-  cvar keeps the first server's value.
+- `cm_optimizePatchPlanes` is not followed (E5). When it is, read it from `systemInfo`, as
+  ETL does, rather than from the cvar.
 
 - No sanitizer run of the whole engine. Only `msg.c`, `huffman.c` and `fs_path.c` have one.
 

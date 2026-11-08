@@ -374,7 +374,7 @@ typedef struct {
 	// if new stuff gets added, CL_ClearStaticDownload code needs to be updated for clear up
 	qboolean bWWWDlDisconnected; // keep going with the download after server disconnect
 	char downloadName[MAX_OSPATH];
-	char downloadTempName[MAX_OSPATH];    // in wwwdl mode, this is OS path (it's a qpath otherwise)
+	char downloadTempName[MAX_OSPATH];    // always a qpath; the www download writes to its own OS path
 	char originalDownloadName[MAX_QPATH];    // if we get a redirect, keep a copy of the original file path
 	qboolean downloadRestart; // if true, we need to do another FS_Restart because we downloaded a pak
 } clientStatic_t;

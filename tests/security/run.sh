@@ -116,3 +116,14 @@ for t in msg; do
     "$CC" $FLAGS tests/security/test_$t.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/$t"
     "$OUT/$t"
 done
+# the real cl_parse.c and cvar.c, with CL_BeginDownload alone from cl_main.c
+python3 - "$OUT/begindl.inc" <<'P'
+import sys
+s=open('src/client/cl_main.c',encoding='latin-1').read()
+a=s.index('qboolean CL_BeginDownload( const char *localName, const char *remoteName ) {'); b=s.index('\n}\n',a)+3
+open(sys.argv[1],'w',encoding='latin-1').write(s[a:b])
+P
+for sep in "'/'" "':'"; do
+    "$CC" $FLAGS "-DTEST_PATH_SEP=$sep" "-DBEGINDL_INC=\"$OUT/begindl.inc\"" tests/security/test_clparse.c src/client/cl_parse.c src/qcommon/cvar.c src/qcommon/fs_path.c src/qcommon/msg.c src/qcommon/huffman.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/clparse"
+    "$OUT/clparse"
+done

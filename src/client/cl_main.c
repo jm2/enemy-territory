@@ -1851,7 +1851,12 @@ game directory.
 */
 qboolean CL_BeginDownload( const char *localName, const char *remoteName ) {
 
-	if ( !FS_CheckDownloadName( localName ) || !FS_CheckDownloadName( remoteName ) ) {
+	// lengths as the Quake III port's CL_BeginDownload: both names must fit
+	// whole, or a truncated copy would lose the .pk3 checked here. MAX_QPATH, not
+	// the buffer sizes: FS_BuildOSPath joins the name to fs_homepath within
+	// MAX_OSPATH and cuts what does not fit, and originalDownloadName is MAX_QPATH
+	if ( !FS_CheckDownloadName( localName ) || !FS_CheckDownloadName( remoteName ) ||
+		 strlen( localName ) + 4 >= MAX_QPATH || strlen( remoteName ) >= MAX_QPATH ) {
 		Com_Printf( "WARNING: refusing a download with an unsafe name\n" );
 		return qfalse;
 	}
@@ -1863,6 +1868,17 @@ qboolean CL_BeginDownload( const char *localName, const char *remoteName ) {
 
 	Q_strncpyz( cls.downloadName, localName, sizeof( cls.downloadName ) );
 	Com_sprintf( cls.downloadTempName, sizeof( cls.downloadTempName ), "%s.tmp", localName );
+
+	// HFS names are at most 31 bytes, and the Mac refuses longer ones, so a
+	// pk3 whose "<name>.tmp" would not fit downloads to "<name less .pk3>.tmp"
+	if ( PATH_SEP == ':' ) {
+		const char *leaf = strrchr( localName, '/' );
+
+		leaf = leaf ? leaf + 1 : localName;
+		if ( strlen( leaf ) + 4 > 31 ) {
+			strcpy( cls.downloadTempName + strlen( localName ) - 4, ".tmp" );
+		}
+	}
 
 	// Set so UI gets access to it
 	Cvar_Set( "cl_downloadName", remoteName );
@@ -2618,7 +2634,6 @@ CL_WWWDownload
 ==================
 */
 void CL_WWWDownload( void ) {
-	char *to_ospath;
 	dlStatus_t ret;
 	static qboolean bAbort = qfalse;
 
@@ -2641,14 +2656,13 @@ void CL_WWWDownload( void ) {
 	}
 
 	if ( ret == DL_DONE ) {
-		// taken from CL_ParseDownload
-		// we work with OS paths
+		// taken from CL_ParseDownload: downloadTempName stays a qpath, and the
+		// file goes to the name CL_BeginDownload accepted, never the server's URL
 		clc.download = 0;
-		to_ospath = FS_BuildOSPath( Cvar_VariableString( "fs_homepath" ), cls.originalDownloadName, "" );
-		to_ospath[strlen( to_ospath ) - 1] = '\0';
-		if ( rename( cls.downloadTempName, to_ospath ) ) {
-			FS_CopyFile( cls.downloadTempName, to_ospath );
-			remove( cls.downloadTempName );
+		if ( FS_CheckDownloadName( cls.originalDownloadName ) ) {
+			FS_SV_Rename( cls.downloadTempName, cls.originalDownloadName );
+		} else {
+			Com_Printf( "WARNING: refusing a download with an unsafe name\n" );
 		}
 		*cls.downloadTempName = *cls.downloadName = 0;
 		Cvar_Set( "cl_downloadName", "" );
@@ -2845,12 +2859,12 @@ static void CL_Cache_UsedFile_f( void ) {
 		return;
 	}
 
-	strcpy( groupStr, Cmd_Argv( 1 ) );
+	Q_strncpyz( groupStr, Cmd_Argv( 1 ), sizeof( groupStr ) );
 
-	strcpy( itemStr, Cmd_Argv( 2 ) );
+	Q_strncpyz( itemStr, Cmd_Argv( 2 ), sizeof( itemStr ) );
 	for ( i = 3; i < Cmd_Argc(); i++ ) {
-		strcat( itemStr, " " );
-		strcat( itemStr, Cmd_Argv( i ) );
+		Q_strcat( itemStr, sizeof( itemStr ), " " );
+		Q_strcat( itemStr, sizeof( itemStr ), Cmd_Argv( i ) );
 	}
 	Q_strlwr( itemStr );
 
