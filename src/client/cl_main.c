@@ -3430,7 +3430,7 @@ static void CL_UpdateGUID( void ) {
 		Cvar_Set( "cl_guid", "unknown" );
 		return;
 	}
-	guid = Com_MD5FileETCompat( ETKEY_FILE );
+	guid = Com_MD5FileETCompat( BASEGAME "/" ETKEY_FILE );
 	if ( guid ) {
 		Cvar_Set( "cl_guid", guid );
 	}

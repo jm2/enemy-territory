@@ -242,7 +242,8 @@ static char *Com_ParseExt( const char *( *data_p ), qboolean allowLineBreaks ) {
 				data++;
 			} else if ( c == '\"' || !c ) {
 				pi->token[len] = 0;
-				*data_p = ( char * ) data;
+				// an unterminated quote stops at the NUL, not past it
+				*data_p = ( char * ) ( c ? data : data - 1 );
 				return pi->token;
 			} else if ( *data == '\n' ) {
 				pi->lines++;

@@ -80,6 +80,16 @@ static void ParseQuoted( void ) {
 	Check( !strcmp( COM_ParseExt( &p, qtrue ), "after" ), "token after long string-in-string" );
 	free( body );
 	free( text );
+	/* the string-in-string opener reached after 1023 plain characters */
+	body = Run( 'x', MAX_TOKEN_CHARS - 1 );
+	text = malloc( 1100 );
+	sprintf( text, "\"%s\\\"ab\\\"c\" next", body );
+	p = text;
+	t = COM_ParseExt( &p, qtrue );
+	Check( (int)strlen( t ) == MAX_TOKEN_CHARS - 1, "string-in-string opener at the bound" );
+	Check( !strcmp( COM_ParseExt( &p, qtrue ), "next" ), "token after the bounded opener" );
+	free( body );
+	free( text );
 	printf( "parse quoted: passed\n" );
 }
 
@@ -120,6 +130,14 @@ static void ParseUnterminated( void ) {
 	Unterminated( "\"", "" );
 	Unterminated( "\"say \\\"hi", "say \"hi" );
 	Unterminated( "\"say \\\"hi\\\"", "say \"hi\"" );
+	{
+		/* a last line with no line break: SkipRestOfLine stops on the NUL */
+		char *text = Text( "qer_editorimage x" ), *p = text;
+
+		SkipRestOfLine( &p );
+		Check( p == text + strlen( text ), "SkipRestOfLine stops at the NUL" );
+		free( text );
+	}
 	printf( "parse unterminated: passed\n" );
 }
 

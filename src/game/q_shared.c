@@ -560,9 +560,7 @@ char *COM_ParseExt( char **data_p, qboolean allowLineBreaks ) {
 					c = *data++;
 
 					if ( !c ) {
-						com_token[len] = 0;
-						*data_p = ( char * ) data - 1;    // stop at the NUL
-						break;
+						break;  // the check below stops the cursor at the NUL
 					}
 					if ( ( c == '\\' && *( data ) == '\"' ) ) {
 						if ( len < MAX_TOKEN_CHARS - 1 ) {
@@ -690,7 +688,9 @@ void SkipRestOfLine( char **data ) {
 	int c;
 
 	p = *data;
-	while ( ( c = *p++ ) != 0 ) {
+	// stops on the NUL of a last line with no line break, not past it (ioquake3)
+	while ( ( c = *p ) != 0 ) {
+		p++;
 		if ( c == '\n' ) {
 			com_lines++;
 			break;
