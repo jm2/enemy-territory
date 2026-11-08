@@ -70,6 +70,10 @@ void *GetClearedHunkMemory( unsigned long size );
 #endif
 #endif
 
+//allocate like GetMemory and GetClearedMemory, but return NULL instead of a
+//fatal error when no free block is large enough
+void *TryGetMemory( unsigned long size );
+void *TryGetClearedMemory( unsigned long size );
 //free the given memory block
 void FreeMemory( void *ptr );
 //prints the total used memory size

@@ -354,6 +354,15 @@ void *BotImport_GetMemory( int size ) {
 
 /*
 ==================
+BotImport_TryGetMemory
+==================
+*/
+static void *BotImport_TryGetMemory( int size ) {
+	return Z_TryTagMalloc( size, TAG_BOTLIB );
+}
+
+/*
+==================
 BotImport_FreeMemory
 ==================
 */
@@ -684,6 +693,7 @@ void SV_BotInitBotLib( void ) {
 	botlib_import.FreeZoneMemory = BotImport_FreeZoneMemory;
 	botlib_import.HunkAlloc = BotImport_HunkAlloc;
 	botlib_import.AvailableMemory = Z_AvailableMemory;
+	botlib_import.TryGetMemory = BotImport_TryGetMemory;
 
 	// file system acess
 	botlib_import.FS_FOpenFile = FS_FOpenFileByMode;

@@ -108,6 +108,7 @@ typedef struct source_s
 	int numincludes;                        //files included over the life of the source
 	int numindents;                         //conditionals open on indentstack
 	int argdepth;                           //macro calls nested in macro arguments
+	int memoryerror;                        //an allocation failed: every later read fails
 	int skip;                               // > 0 if skipping conditional code
 	token_t token;                          //last read token
 } source_t;

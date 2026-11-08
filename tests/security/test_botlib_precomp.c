@@ -5,12 +5,13 @@
    tests/bot_preprocessor_bounds_regression.c and bot_macro_regression.c.
 
    Each case runs in its own process, on a 1 MiB thread stack (the Mac OS 9
-   stack has no guard page) under an alarm, with an allocator that models the
-   Mac zone the preprocessor allocates from: 10 MB, of which a map uses about
-   2 MB, with the zone's block header on every allocation.  Running out is a
-   fatal Z_Malloc error there, so the old code fails a case by a sanitizer
-   report, a stack overflow, a hang, a fatal allocation or a missing refusal,
-   and the new code must refuse while memory remains. */
+   stack has no guard page) under an alarm.  Memory comes from ET's real zone
+   allocator (extracted from src/qcommon/common.c by run.sh) through botlib's
+   real l_memory.c, in a zone the size of the Mac's (10 MB) of which a map
+   holds 2 MB.  Running out, or finding no free block large enough in a
+   fragmented zone, is a fatal Z_Malloc error, so the old code fails a case by
+   a sanitizer report, a stack overflow, a hang, a fatal allocation or a
+   missing refusal. */
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -23,6 +24,8 @@
 #include "../../src/game/botlib.h"
 #include "../../src/botlib/l_script.h"
 #include "../../src/botlib/l_precomp.h"
+#include "../../src/botlib/l_memory.h"
+#include ZONE_INC
 
 #ifdef PC_OWNER_UI
 #define LOAD( name ) PC_LoadSourceHandle( name, PC_OWNER_UI )
@@ -34,9 +37,8 @@
 #define MAX_FILES 160
 #define MAX_TEXT ( 4 * 1024 * 1024 )
 /* __MACOS__ DEF_COMZONEMEGS is 10; the stock maps use about 2 MB of it */
-#define MEMORY_CAP ( 8UL * 1024 * 1024 )
-/* memblock_t header and trash word of a zone block, rounded to 4 */
-#define ZONE_OVERHEAD 24
+#define ZONE_BYTES ( 10 * 1024 * 1024 )
+#define MAP_BYTES ( 2 * 1024 * 1024 )
 
 botlib_import_t botimport;
 extern int numtokens;
@@ -46,7 +48,7 @@ static char *fileNames[MAX_FILES], *fileTexts[MAX_FILES];
 static int numFiles;
 static int openText[64];
 static char text[MAX_TEXT];
-static size_t used, liveBytes;
+static size_t used;
 
 static void Check( int ok, const char *what ) {
 	if ( !ok ) {
@@ -55,35 +57,26 @@ static void Check( int ok, const char *what ) {
 	}
 }
 
-void *GetMemory( unsigned long size ) {
-	size_t *p;
-	size = ( size + ZONE_OVERHEAD + 3 ) & ~3UL;
-	if ( size > MEMORY_CAP - liveBytes ) {
-		return NULL;
-	}
-	p = malloc( size + 16 );
-	if ( !p ) {
-		return NULL;
-	}
-	*p = size;
-	liveBytes += size;
+/* botlib's allocations through the engine's imports, as sv_bot.c makes them */
+static void *ZoneGetMemory( int size ) {
+	void *p = Z_TagMalloc( size, TAG_BOTLIB );
 	liveOwners++;
-	return (char *)p + 16;
+	return p;
 }
-void *GetClearedMemory( unsigned long size ) { void *p = GetMemory( size ); if ( p ) { memset( p, 0, size ); } return p; }
-static int AvailableMemory( void ) { return (int)( MEMORY_CAP - liveBytes ); }
-void FreeMemory( void *p ) {
-	size_t *block;
-	if ( !p ) {
-		return;
+#ifdef HAVE_Z_TRY
+static void *ZoneTryGetMemory( int size ) {
+	void *p = Z_TryTagMalloc( size, TAG_BOTLIB );
+	if ( p ) {
+		liveOwners++;
 	}
-	block = (size_t *)( (char *)p - 16 );
-	liveBytes -= *block;
-	liveOwners--;
-	free( block );
+	return p;
 }
-void *GetHunkMemory( unsigned long size ) { return GetMemory( size ); }
-void *GetClearedHunkMemory( unsigned long size ) { return GetClearedMemory( size ); }
+#endif
+static void ZoneFreeMemory( void *p ) {
+	Z_Free( p );
+	liveOwners--;
+}
+static void *ZoneHunkAlloc( int size ) { (void)size; return NULL; }
 void QDECL Log_Write( char *fmt, ... ) { (void)fmt; }
 void QDECL Com_Error( int level, const char *fmt, ... ) {
 	va_list a;
@@ -610,7 +603,38 @@ static void EmptyDefines( void ) {
 	Append( "marker\n" );
 	AddFile( "empty.menu", text );
 	source = Load( "empty.menu" );
-	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "out of memory for #define" );
+	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "out of memory" );
+	Finish( source );
+}
+
+static void Fragmented( void ) {
+	source_t *source;
+	int i, j;
+
+	/* 1500 definitions with 500-character names (a zone block of about
+	   570 bytes each, too small for a token copy) between 1500 one-token
+	   definitions; undefining the first leaves 0.8 MB of free holes, and a
+	   long definition then exhausts the rest of the zone with that free */
+	Begin();
+	for ( i = 0; i < 1500; i++ ) {
+		Append( "#define A%d_", i );
+		for ( j = 0; j < 500; j++ ) Append( "a" );
+		Append( "\n#define B%d x\n", i );
+	}
+	for ( i = 0; i < 1500; i++ ) {
+		Append( "#undef A%d_", i );
+		for ( j = 0; j < 500; j++ ) Append( "a" );
+		Append( "\n" );
+	}
+	Append( "#define C" );
+	for ( i = 0; i < 6000; i++ ) Append( " x" );
+	Append( "\nmarker C\n" );
+	AddFile( "fragment.menu", text );
+	source = Load( "fragment.menu" );
+	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "out of memory" );
+#ifdef HAVE_Z_AVAILABLE
+	Check( Z_AvailableMemory() > 512 * 1024, "the zone still had free bytes, only fragmented" );
+#endif
 	Finish( source );
 }
 
@@ -738,6 +762,7 @@ static void RunConditionals( int a ) { Conditionals( a < 0 ? -a : a, a < 0 ); }
 static void RunHandles( int a ) { (void)a; Handles(); }
 static void RunEmptyDefines( int a ) { (void)a; EmptyDefines(); }
 static void RunRecursive( int a ) { (void)a; RecursiveIncludes(); }
+static void RunFragmented( int a ) { (void)a; Fragmented(); }
 
 static const testcase_t cases[] = {
 	{ "long source and include names are refused", RunLongNames, 0 },
@@ -764,6 +789,7 @@ static const testcase_t cases[] = {
 	{ "handle ranges and owner-tagged release", RunHandles, 0 },
 	{ "120000 empty definitions are refused before the zone runs out", RunEmptyDefines, 0 },
 	{ "300 recursive includes of a file count against the include budget", RunRecursive, 0 },
+	{ "a fragmented zone refuses the source instead of failing fatally", RunFragmented, 0 },
 };
 
 static const testcase_t *current;
@@ -777,9 +803,18 @@ int main( void ) {
 	botimport.FS_FOpenFile = FileOpen;
 	botimport.FS_Read = FileRead;
 	botimport.FS_FCloseFile = FileClose;
-#ifdef PS_MEMORY_RESERVE
-	botimport.AvailableMemory = AvailableMemory;
+	botimport.GetMemory = ZoneGetMemory;
+	botimport.FreeMemory = ZoneFreeMemory;
+	botimport.HunkAlloc = ZoneHunkAlloc;
+#ifdef HAVE_Z_AVAILABLE
+	botimport.AvailableMemory = Z_AvailableMemory;
 #endif
+#ifdef HAVE_Z_TRY
+	botimport.TryGetMemory = ZoneTryGetMemory;
+#endif
+	mainzone = calloc( ZONE_BYTES, 1 );
+	Z_ClearZone( mainzone, ZONE_BYTES );
+	Z_TagMalloc( MAP_BYTES, TAG_GENERAL );
 	setvbuf( stdout, NULL, _IONBF, 0 );
 	for ( i = 0; i < (int)( sizeof( cases ) / sizeof( cases[0] ) ); i++ ) {
 		pid = fork();

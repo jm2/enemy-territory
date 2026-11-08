@@ -108,6 +108,16 @@ typedef struct pc_token_s
 #include "l_utils.h"
 #endif //QUAKE
 
+//allocations a script drives return NULL when the zone has no block that
+//large, and the source fails, instead of ending the game in a fatal error
+#ifdef BOTLIB
+#define PC_TryGetMemory         TryGetMemory
+#define PC_TryGetClearedMemory  TryGetClearedMemory
+#else
+#define PC_TryGetMemory         GetMemory
+#define PC_TryGetClearedMemory  GetClearedMemory
+#endif
+
 //#define DEBUG_EVAL
 
 #define MAX_DEFINEPARMS         128
@@ -209,6 +219,7 @@ void QDECL SourceWarning( source_t *source, char *str, ... ) {
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
+static void PC_OutOfMemory( source_t *source );
 int PC_PushIndent( source_t *source, int type, int skip ) {
 	indent_t *indent;
 
@@ -220,7 +231,11 @@ int PC_PushIndent( source_t *source, int type, int skip ) {
 		SourceError( source, "out of memory for conditionals" );
 		return qfalse;
 	} //end if
-	indent = (indent_t *) GetMemory( sizeof( indent_t ) );
+	indent = (indent_t *) PC_TryGetMemory( sizeof( indent_t ) );
+	if ( !indent ) {
+		PC_OutOfMemory( source );
+		return qfalse;
+	} //end if
 	indent->type = type;
 	indent->script = source->scriptstack;
 	indent->skip = ( skip != 0 );
@@ -310,12 +325,10 @@ void PC_InitTokenHeap( void ) {
 token_t *PC_CopyToken( token_t *token ) {
 	token_t *t;
 
-	t = (token_t *) GetMemory( sizeof( token_t ) );
+	t = (token_t *) PC_TryGetMemory( sizeof( token_t ) );
 	if ( !t ) {
 #ifdef BSPC
 		Error( "out of token space\n" );
-#else
-		Com_Error( ERR_FATAL, "out of token space\n" );
 #endif
 		return NULL;
 	} //end if
@@ -352,6 +365,37 @@ static void PC_DiscardSourceTokens( source_t *source ) {
 		PC_FreeToken( t );
 	} //end while
 } //end of the function PC_DiscardSourceTokens
+//============================================================================
+// fails the source for good after an allocation found no memory; it is
+// reported once and every later read fails
+//
+// Parameter:				-
+// Returns:					-
+// Changes Globals:		-
+//============================================================================
+static void PC_OutOfMemory( source_t *source ) {
+	if ( !source->memoryerror ) {
+		SourceError( source, "out of memory" );
+		source->memoryerror = qtrue;
+	} //end if
+	PC_DiscardSourceTokens( source );
+} //end of the function PC_OutOfMemory
+//============================================================================
+// copies a token for a source, failing the source when there is no memory
+//
+// Parameter:				-
+// Returns:					-
+// Changes Globals:		-
+//============================================================================
+static token_t *PC_SourceCopyToken( source_t *source, token_t *token ) {
+	token_t *t;
+
+	t = PC_CopyToken( token );
+	if ( !t ) {
+		PC_OutOfMemory( source );
+	}
+	return t;
+} //end of the function PC_SourceCopyToken
 //============================================================================
 // charges one token copy against the live token budget
 //
@@ -473,7 +517,10 @@ int PC_ReadSourceToken( source_t *source, token_t *token ) {
 int PC_UnreadSourceToken( source_t *source, token_t *token ) {
 	token_t *t;
 
-	t = PC_CopyToken( token );
+	t = PC_SourceCopyToken( source, token );
+	if ( !t ) {
+		return qfalse;
+	}
 	t->next = source->tokens;
 	source->tokens = t;
 	return qtrue;
@@ -577,7 +624,10 @@ int PC_ReadDefineParms( source_t *source, define_t *define, token_t **parms, int
 				if ( !PC_ReserveToken( source ) ) {
 					return qfalse;
 				}
-				t = PC_CopyToken( &token );
+				t = PC_SourceCopyToken( source, &token );
+				if ( !t ) {
+					return qfalse;
+				}
 				t->next = NULL;
 				if ( last ) {
 					last->next = t;
@@ -854,7 +904,11 @@ int PC_ExpandBuiltinDefine( source_t *source, token_t *deftoken, define_t *defin
 	time_t t;
 	char *curtime;
 
-	token = PC_CopyToken( deftoken );
+	token = PC_SourceCopyToken( source, deftoken );
+	if ( !token ) {
+		*firsttoken = *lasttoken = NULL;
+		return qfalse;
+	} //end if
 	switch ( define->builtin )
 	{
 	case BUILTIN_LINE:
@@ -974,7 +1028,10 @@ int PC_ExpandDefine( source_t *source, token_t *deftoken, define_t *define,
 				if ( !PC_ConsumeTokenWork( source ) ) {
 					goto cleanup;
 				}
-				t = PC_CopyToken( pt );
+				t = PC_SourceCopyToken( source, pt );
+				if ( !t ) {
+					goto cleanup;
+				}
 				//add the token to the list
 				t->next = NULL;
 				if ( last ) {
@@ -1004,7 +1061,7 @@ int PC_ExpandDefine( source_t *source, token_t *deftoken, define_t *define,
 					if ( !PC_ConsumeTokenWork( source ) ) {
 						goto cleanup;
 					}
-					t = PC_CopyToken( &token );
+					t = PC_SourceCopyToken( source, &token );
 				} //end if
 				else
 				{
@@ -1017,9 +1074,12 @@ int PC_ExpandDefine( source_t *source, token_t *deftoken, define_t *define,
 				if ( !PC_ConsumeTokenWork( source ) ) {
 					goto cleanup;
 				}
-				t = PC_CopyToken( dt );
+				t = PC_SourceCopyToken( source, dt );
 			} //end else
-			  //add the token to the list
+			if ( !t ) {
+				goto cleanup;
+			}
+			//add the token to the list
 			t->next = NULL;
 			if ( last ) {
 				last->next = t;
@@ -1395,7 +1455,11 @@ int PC_Directive_define( source_t *source ) {
 		SourceError( source, "out of memory for #define %s", token.string );
 		return qfalse;
 	} //end if
-	define = (define_t *) GetMemory( sizeof( define_t ) + strlen( token.string ) + 1 );
+	define = (define_t *) PC_TryGetMemory( sizeof( define_t ) + strlen( token.string ) + 1 );
+	if ( !define ) {
+		PC_OutOfMemory( source );
+		return qfalse;
+	} //end if
 	memset( define, 0, sizeof( define_t ) );
 	define->name = (char *) define + sizeof( define_t );
 	strcpy( define->name, token.string );
@@ -1435,7 +1499,10 @@ int PC_Directive_define( source_t *source ) {
 				if ( !PC_ReserveToken( source ) ) {
 					return qfalse;
 				}
-				t = PC_CopyToken( &token );
+				t = PC_SourceCopyToken( source, &token );
+				if ( !t ) {
+					return qfalse;
+				}
 				PC_ClearTokenWhiteSpace( t );
 				t->next = NULL;
 				if ( last ) {
@@ -1474,7 +1541,10 @@ int PC_Directive_define( source_t *source ) {
 		if ( !PC_ReserveToken( source ) ) {
 			return qfalse;
 		}
-		t = PC_CopyToken( &token );
+		t = PC_SourceCopyToken( source, &token );
+		if ( !t ) {
+			return qfalse;
+		}
 		PC_ClearTokenWhiteSpace( t );
 		t->next = NULL;
 		if ( last ) {
@@ -1637,7 +1707,11 @@ define_t *PC_CopyDefine( source_t *source, define_t *define ) {
 	define_t *newdefine;
 	token_t *token, *newtoken, *lasttoken;
 
-	newdefine = (define_t *) GetMemory( sizeof( define_t ) + strlen( define->name ) + 1 );
+	newdefine = (define_t *) PC_TryGetMemory( sizeof( define_t ) + strlen( define->name ) + 1 );
+	if ( !newdefine ) {
+		PC_OutOfMemory( source );
+		return NULL;
+	} //end if
 	//copy the define name
 	newdefine->name = (char *) newdefine + sizeof( define_t );
 	strcpy( newdefine->name, define->name );
@@ -1651,7 +1725,11 @@ define_t *PC_CopyDefine( source_t *source, define_t *define ) {
 	newdefine->tokens = NULL;
 	for ( lasttoken = NULL, token = define->tokens; token; token = token->next )
 	{
-		newtoken = PC_CopyToken( token );
+		newtoken = PC_SourceCopyToken( source, token );
+		if ( !newtoken ) {
+			PC_FreeDefine( newdefine );
+			return NULL;
+		} //end if
 		newtoken->next = NULL;
 		if ( lasttoken ) {
 			lasttoken->next = newtoken;
@@ -1662,7 +1740,11 @@ define_t *PC_CopyDefine( source_t *source, define_t *define ) {
 	newdefine->parms = NULL;
 	for ( lasttoken = NULL, token = define->parms; token; token = token->next )
 	{
-		newtoken = PC_CopyToken( token );
+		newtoken = PC_SourceCopyToken( source, token );
+		if ( !newtoken ) {
+			PC_FreeDefine( newdefine );
+			return NULL;
+		} //end if
 		newtoken->next = NULL;
 		if ( lasttoken ) {
 			lasttoken->next = newtoken;
@@ -1677,12 +1759,15 @@ define_t *PC_CopyDefine( source_t *source, define_t *define ) {
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-void PC_AddGlobalDefinesToSource( source_t *source ) {
+int PC_AddGlobalDefinesToSource( source_t *source ) {
 	define_t *define, *newdefine;
 
 	for ( define = globaldefines; define; define = define->next )
 	{
 		newdefine = PC_CopyDefine( source, define );
+		if ( !newdefine ) {
+			return qfalse;
+		}
 #if DEFINEHASHING
 		PC_AddDefineToHash( newdefine, source->definehash );
 #else //DEFINEHASHING
@@ -1690,6 +1775,7 @@ void PC_AddGlobalDefinesToSource( source_t *source ) {
 		source->defines = newdefine;
 #endif //DEFINEHASHING
 	} //end for
+	return qtrue;
 } //end of the function PC_AddGlobalDefinesToSource
 //============================================================================
 //
@@ -2351,7 +2437,10 @@ int PC_Evaluate( source_t *source, signed long int *intvalue,
 				if ( !PC_ReserveExpressionToken( source, &numexpressiontokens ) ) {
 					goto cleanup;
 				}
-				t = PC_CopyToken( &token );
+				t = PC_SourceCopyToken( source, &token );
+				if ( !t ) {
+					goto cleanup;
+				}
 				t->next = NULL;
 				if ( lasttoken ) {
 					lasttoken->next = t;
@@ -2363,7 +2452,10 @@ int PC_Evaluate( source_t *source, signed long int *intvalue,
 				if ( !PC_ReserveExpressionToken( source, &numexpressiontokens ) ) {
 					goto cleanup;
 				}
-				t = PC_CopyToken( &token );
+				t = PC_SourceCopyToken( source, &token );
+				if ( !t ) {
+					goto cleanup;
+				}
 				t->next = NULL;
 				if ( lasttoken ) {
 					lasttoken->next = t;
@@ -2392,7 +2484,10 @@ int PC_Evaluate( source_t *source, signed long int *intvalue,
 			if ( !PC_ReserveExpressionToken( source, &numexpressiontokens ) ) {
 				goto cleanup;
 			}
-			t = PC_CopyToken( &token );
+			t = PC_SourceCopyToken( source, &token );
+			if ( !t ) {
+				goto cleanup;
+			}
 			t->next = NULL;
 			if ( lasttoken ) {
 				lasttoken->next = t;
@@ -2468,7 +2563,10 @@ int PC_DollarEvaluate( source_t *source, signed long int *intvalue,
 				if ( !PC_ReserveExpressionToken( source, &numexpressiontokens ) ) {
 					goto cleanup;
 				}
-				t = PC_CopyToken( &token );
+				t = PC_SourceCopyToken( source, &token );
+				if ( !t ) {
+					goto cleanup;
+				}
 				t->next = NULL;
 				if ( lasttoken ) {
 					lasttoken->next = t;
@@ -2480,7 +2578,10 @@ int PC_DollarEvaluate( source_t *source, signed long int *intvalue,
 				if ( !PC_ReserveExpressionToken( source, &numexpressiontokens ) ) {
 					goto cleanup;
 				}
-				t = PC_CopyToken( &token );
+				t = PC_SourceCopyToken( source, &token );
+				if ( !t ) {
+					goto cleanup;
+				}
 				t->next = NULL;
 				if ( lasttoken ) {
 					lasttoken->next = t;
@@ -2517,7 +2618,10 @@ int PC_DollarEvaluate( source_t *source, signed long int *intvalue,
 			if ( !PC_ReserveExpressionToken( source, &numexpressiontokens ) ) {
 				goto cleanup;
 			}
-			t = PC_CopyToken( &token );
+			t = PC_SourceCopyToken( source, &token );
+			if ( !t ) {
+				goto cleanup;
+			}
 			t->next = NULL;
 			if ( lasttoken ) {
 				lasttoken->next = t;
@@ -2984,7 +3088,7 @@ static int PC_ReadTokenNoJoin( source_t *source, token_t *token ) {
 int PC_ReadToken( source_t *source, token_t *token ) {
 	token_t newtoken;
 
-	if ( !PC_ReadTokenNoJoin( source, token ) ) {
+	if ( source->memoryerror || !PC_ReadTokenNoJoin( source, token ) ) {
 		return qfalse;
 	}
 	// concatenate strings that are behind each other; this loop gives the
@@ -3004,7 +3108,10 @@ int PC_ReadToken( source_t *source, token_t *token ) {
 			strcat( token->string, newtoken.string + 1 );
 		} //end while
 	} //end if
-	  //copy token for unreading
+	if ( source->memoryerror ) {
+		return qfalse;
+	}
+	//copy token for unreading
 	memcpy( &source->token, token, sizeof( token_t ) );
 	return qtrue;
 } //end of the function PC_ReadToken
@@ -3235,7 +3342,11 @@ source_t *LoadSourceFile( const char *filename ) {
 
 	script->next = NULL;
 
-	source = (source_t *) GetMemory( sizeof( source_t ) );
+	source = (source_t *) PC_TryGetMemory( sizeof( source_t ) );
+	if ( !source ) {
+		FreeScript( script );
+		return NULL;
+	} //end if
 	memset( source, 0, sizeof( source_t ) );
 
 	Q_strncpyz( source->filename, filename, sizeof( source->filename ) );
@@ -3246,9 +3357,17 @@ source_t *LoadSourceFile( const char *filename ) {
 	source->skip = 0;
 
 #if DEFINEHASHING
-	source->definehash = GetClearedMemory( DEFINEHASHSIZE * sizeof( define_t * ) );
+	source->definehash = PC_TryGetClearedMemory( DEFINEHASHSIZE * sizeof( define_t * ) );
+	if ( !source->definehash ) {
+		FreeScript( script );
+		FreeMemory( source );
+		return NULL;
+	} //end if
 #endif //DEFINEHASHING
-	PC_AddGlobalDefinesToSource( source );
+	if ( !PC_AddGlobalDefinesToSource( source ) ) {
+		FreeSource( source );
+		return NULL;
+	} //end if
 	return source;
 } //end of the function LoadSourceFile
 //============================================================================

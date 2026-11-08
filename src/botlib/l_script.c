@@ -1374,7 +1374,17 @@ script_t *LoadScriptFile( const char *filename ) {
 	length = FileLength( fp );
 #endif
 
+#ifdef BOTLIB
+	//the file comes from a pk3: no memory refuses it rather than ending the game
+	buffer = TryGetClearedMemory( sizeof( script_t ) + length + 1 );
+	if ( !buffer ) {
+		botimport.Print( PRT_ERROR, "%s: not enough memory to load the script\n", pathname );
+		botimport.FS_FCloseFile( fp );
+		return NULL;
+	} //end if
+#else
 	buffer = GetClearedMemory( sizeof( script_t ) + length + 1 );
+#endif
 	script = (script_t *) buffer;
 	memset( script, 0, sizeof( script_t ) );
 	strcpy( script->filename, filename );
@@ -1393,6 +1403,15 @@ script_t *LoadScriptFile( const char *filename ) {
 	script->line = 1;
 	script->lastline = 1;
 	//
+#if defined( BOTLIB ) && defined( PUNCTABLE )
+	script->punctuationtable = (punctuation_t **) TryGetMemory( 256 * sizeof( punctuation_t * ) );
+	if ( !script->punctuationtable ) {
+		botimport.Print( PRT_ERROR, "%s: not enough memory to load the script\n", pathname );
+		botimport.FS_FCloseFile( fp );
+		FreeScript( script );
+		return NULL;
+	} //end if
+#endif
 	SetScriptPunctuations( script, NULL );
 	//
 #ifdef BOTLIB

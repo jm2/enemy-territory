@@ -202,6 +202,9 @@ typedef struct botlib_import_s
 	void        *( *HunkAlloc )( int size );
 	//bytes still free where GetMemory allocates
 	int ( *AvailableMemory )( void );
+	//GetMemory that returns NULL instead of a fatal error when no free block
+	//is large enough
+	void        *( *TryGetMemory )( int size );
 	//file system access
 	int ( *FS_FOpenFile )( const char *qpath, fileHandle_t *file, fsMode_t mode );
 	int ( *FS_Read )( void *buffer, int len, fileHandle_t f );
