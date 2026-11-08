@@ -35,8 +35,8 @@ int main( void ) {
 			fprintf( stderr, "FAIL: command %d overwritten\n", i ); return 1;
 		}
 	}
-	// CL_Disconnect's guard says there is no room, and it is right
-	if ( clc.reliableSequence - clc.reliableAcknowledge < MAX_RELIABLE_COMMANDS ) { fprintf( stderr, "FAIL: guard\n" ); return 1; }
+	// CL_Disconnect's own guard, taken from cl_main.c, says there is no room
+	if ( DISCONNECT_GUARD ) { fprintf( stderr, "FAIL: CL_Disconnect would queue into a full queue\n" ); return 1; }
 	ok = 0;
 	if ( setjmp( dropped ) ) {
 		ok = 1;
