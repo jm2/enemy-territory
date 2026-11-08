@@ -93,9 +93,10 @@ class NdifImageTests(unittest.TestCase):
 
     def test_package_writes_the_ndif_image(self):
         script = (REPO / "scripts" / "package_mac.sh").read_text()
-        self.assertIn('python3 ndif_image.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" '
+        self.assertIn('ndif_image.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" '
                       '"Enemy Territory"', script)
         self.assertNotIn('"iso " "dCpy"', script)
+        self.assertNotIn(".dsk", script)
 
 
 if __name__ == "__main__":

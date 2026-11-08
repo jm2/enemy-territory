@@ -2,3 +2,4 @@
 /build*/
 *.pk3
 /release_mac/
+__pycache__/

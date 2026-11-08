@@ -79,7 +79,7 @@ M
 
 image() { # volume, staging tree, output
     "$MKISOFS" -quiet -hfs -double -map "$MAPPING" -o "$3" -V "$1" "$2"
-    python3 mac_app.py verify --creator WfET --hfs-name ET --pef "$APP.pef" "$3"
+    python3 -B mac_app.py verify --creator WfET --hfs-name ET --pef "$APP.pef" "$3"
 }
 image "Enemy Territory" "$CONTENT" "$RELEASE/ET_Install.img"
 
@@ -112,7 +112,23 @@ P
 
 # a Disk Copy read/write image, which the Disk Copy Mac OS 9 ships mounts: as a bare
 # hybrid typed iso /dCpy it needed Toast. ndif_image.py is Quake III's, copied verbatim
-python3 ndif_image.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" "Enemy Territory"
+python3 -B ndif_image.py "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" "Enemy Territory"
+# read the wrapped file back: the volume byte for byte, typed and described for Disk Copy
+python3 -I -B - "$RELEASE/ET_Install.img" "$RELEASE/ET_Install.img.bin" <<'N'
+import os, sys
+sys.path.insert(0, os.getcwd())
+import mac_app, ndif_image
+raw, wrapped = sys.argv[1:]
+image = mac_app.read_macbinary(wrapped)
+with open(raw, "rb") as stream:
+    volume = stream.read()
+if (image.file_type, image.creator) != (b"dimg", b"ddsk") or image.data != volume:
+    sys.exit("package_mac: the Disk Copy image does not hold the volume")
+name, bcem = mac_app.parse_resource_fork(image.resource_fork)["bcem"][128]
+if name != "Enemy Territory" or bcem != ndif_image.bcem(name, len(volume) // 512):
+    sys.exit("package_mac: the Disk Copy image's bcem does not describe the volume")
+print("Disk Copy image verified")
+N
 rm -f "$RELEASE/ET_Install.img"
 
 # the one-file install, and the bare application for a redeploy
@@ -120,10 +136,10 @@ EXTRA=()
 if [ "$BRINGUP" = 1 ]; then EXTRA=(METParms.txt etmain/bringup.cfg); fi
 FILES=()
 while read -r sum file; do FILES+=("$file"); done < "$SUMS"
-python3 scripts/installer_pack.py pack build-mac/ETInstaller.bin "$TEMP/ET Installer" "$TEMP/ET Installer.rsrc" \
+python3 -B scripts/installer_pack.py pack build-mac/ETInstaller.bin "$TEMP/ET Installer" "$TEMP/ET Installer.rsrc" \
     "$CONTENT/Enemy Territory" "$APP.bin" "${FILES[@]}" "${EXTRA[@]}"
-python3 macbinary_encode.py "$TEMP/ET Installer" "$RELEASE/ET_Installer.bin" "APPL" "WfEI" "$TEMP/ET Installer.rsrc"
-python3 scripts/installer_pack.py verify "$RELEASE/ET_Installer.bin" "$SUMS" "$APP.bin" "${EXTRA[@]}"
+python3 -B macbinary_encode.py "$TEMP/ET Installer" "$RELEASE/ET_Installer.bin" "APPL" "WfEI" "$TEMP/ET Installer.rsrc"
+python3 -B scripts/installer_pack.py verify "$RELEASE/ET_Installer.bin" "$SUMS" "$APP.bin" "${EXTRA[@]}"
 cp "$APP.bin" "$RELEASE/ET.bin"
 rm -rf "$CONTENT" "$TEMP"
 
