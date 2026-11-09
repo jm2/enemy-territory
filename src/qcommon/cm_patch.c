@@ -658,8 +658,10 @@ static int  CM_GridPlane( int gridPlanes[MAX_GRID_SIZE][MAX_GRID_SIZE][2], int i
 		return p;
 	}
 
-	// should never happen; the callers index planes[] with the result
-	return CM_PATCH_UNRESOLVABLE_PLANE;
+	// both triangles degenerate: ET 2.60 warns and goes on (Q3A drops); the
+	// cell's facet has no surface plane, so CM_ValidateFacet discards it
+	Com_Printf( "WARNING: CM_GridPlane unresolvable\n" );
+	return -1;
 }
 
 /*
@@ -677,8 +679,8 @@ static int CM_EdgePlaneNum( cGrid_t *grid, int gridPlanes[MAX_GRID_SIZE][MAX_GRI
 		p1 = grid->points[i][j];
 		p2 = grid->points[i + 1][j];
 		p = CM_GridPlane( gridPlanes, i, j, 0 );
-		if ( p < -1 ) {
-			return p;
+		if ( p == -1 ) {
+			return -1;  // the old code read planes[-1] here
 		}
 		VectorMA( p1, 4, planes[ p ].plane, up );
 		return CM_FindPlane( p1, p2, up );
@@ -687,8 +689,8 @@ static int CM_EdgePlaneNum( cGrid_t *grid, int gridPlanes[MAX_GRID_SIZE][MAX_GRI
 		p1 = grid->points[i][j + 1];
 		p2 = grid->points[i + 1][j + 1];
 		p = CM_GridPlane( gridPlanes, i, j, 1 );
-		if ( p < -1 ) {
-			return p;
+		if ( p == -1 ) {
+			return -1;  // the old code read planes[-1] here
 		}
 		VectorMA( p1, 4, planes[ p ].plane, up );
 		return CM_FindPlane( p2, p1, up );
@@ -697,8 +699,8 @@ static int CM_EdgePlaneNum( cGrid_t *grid, int gridPlanes[MAX_GRID_SIZE][MAX_GRI
 		p1 = grid->points[i][j];
 		p2 = grid->points[i][j + 1];
 		p = CM_GridPlane( gridPlanes, i, j, 1 );
-		if ( p < -1 ) {
-			return p;
+		if ( p == -1 ) {
+			return -1;  // the old code read planes[-1] here
 		}
 		VectorMA( p1, 4, planes[ p ].plane, up );
 		return CM_FindPlane( p2, p1, up );
@@ -707,8 +709,8 @@ static int CM_EdgePlaneNum( cGrid_t *grid, int gridPlanes[MAX_GRID_SIZE][MAX_GRI
 		p1 = grid->points[i + 1][j];
 		p2 = grid->points[i + 1][j + 1];
 		p = CM_GridPlane( gridPlanes, i, j, 0 );
-		if ( p < -1 ) {
-			return p;
+		if ( p == -1 ) {
+			return -1;  // the old code read planes[-1] here
 		}
 		VectorMA( p1, 4, planes[ p ].plane, up );
 		return CM_FindPlane( p1, p2, up );
@@ -717,8 +719,8 @@ static int CM_EdgePlaneNum( cGrid_t *grid, int gridPlanes[MAX_GRID_SIZE][MAX_GRI
 		p1 = grid->points[i + 1][j + 1];
 		p2 = grid->points[i][j];
 		p = CM_GridPlane( gridPlanes, i, j, 0 );
-		if ( p < -1 ) {
-			return p;
+		if ( p == -1 ) {
+			return -1;  // the old code read planes[-1] here
 		}
 		VectorMA( p1, 4, planes[ p ].plane, up );
 		return CM_FindPlane( p1, p2, up );
@@ -727,8 +729,8 @@ static int CM_EdgePlaneNum( cGrid_t *grid, int gridPlanes[MAX_GRID_SIZE][MAX_GRI
 		p1 = grid->points[i][j];
 		p2 = grid->points[i + 1][j + 1];
 		p = CM_GridPlane( gridPlanes, i, j, 1 );
-		if ( p < -1 ) {
-			return p;
+		if ( p == -1 ) {
+			return -1;  // the old code read planes[-1] here
 		}
 		VectorMA( p1, 4, planes[ p ].plane, up );
 		return CM_FindPlane( p1, p2, up );
@@ -1035,7 +1037,9 @@ static const char *CM_AddFacetBevels( facet_t *facet ) {
 				}
 
 				if ( i == facet->numBorders ) {
-					if ( facet->numBorders >= bevelCapacity ) {
+					// the candidate is written first and may be dropped below, so only
+					// the array bounds it here; the opposite plane's slot is kept at the ++
+					if ( facet->numBorders >= borderCapacity ) {
 						FreeWinding( w );
 						return "MAX_FACET_BORDERS";
 					}
@@ -1067,6 +1071,10 @@ static const char *CM_AddFacetBevels( facet_t *facet ) {
 						continue;
 					} else {
 						FreeWinding( w2 );
+					}
+					if ( facet->numBorders >= bevelCapacity ) {
+						FreeWinding( w );
+						return "MAX_FACET_BORDERS";
 					}
 					//
 					facet->numBorders++;

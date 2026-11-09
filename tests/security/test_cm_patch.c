@@ -107,6 +107,31 @@ static void TurnFacet( void ) {
 	}
 }
 
+/* The facet tilted 30 degrees about x, so that its edges slant out of every axis
+ * plane and take edge bevels. Planes through the origin keep their distances. */
+static void TiltFacet( void ) {
+	int i;
+	for ( i = 0; i <= 4; i++ ) {
+		float y = planes[i].plane[1], z = planes[i].plane[2];
+		planes[i].plane[1] = y * 0.8660254f - z * 0.5f;
+		planes[i].plane[2] = y * 0.5f + z * 0.8660254f;
+	}
+}
+
+/* Far axial planes as borders 4-9, so the axial bevel step adds none. */
+static void AxialBorders( facet_t *facet ) {
+	int i;
+	for ( i = 0; i < 6; i++ ) {
+		VectorClear( planes[5 + i].plane );
+		planes[5 + i].plane[i / 2] = ( i & 1 ) ? -1 : 1;
+		planes[5 + i].plane[3] = -1000;
+		facet->borderPlanes[4 + i] = 5 + i;
+		facet->borderInward[4 + i] = qtrue;
+	}
+	facet->numBorders = 10;
+	numPlanes = 11;
+}
+
 static void FacetOwnership( void ) {
 	facet_t facet;
 	int missing, repeat, before;
@@ -211,6 +236,28 @@ static void PlaneAndBorderBudgets( void ) {
 	Check( error && !strcmp( error, "MAX_FACET_BORDERS" ) && facet.numBorders == 25 && !zoneLive && !c_active_windings,
 		   "a bevel past the border budget frees the winding" );
 
+	// a tilted facet whose axial bevels are already borders: with 25 borders, its edge
+	// bevel candidate may still be written into borderPlanes[25] (the old code dropped
+	// some there and went on), but keeping it is refused at the count, winding freed
+	BuildFacet( &facet );
+	TurnFacet();
+	TiltFacet();
+	AxialBorders( &facet );
+	Check( CM_AddFacetBevels( &facet ) == NULL && numPlanes > 11 && facet.borderPlanes[facet.numBorders - 1] == facet.surfacePlane,
+		   "the tilted square takes edge bevels" );
+	BuildFacet( &facet );
+	TurnFacet();
+	TiltFacet();
+	AxialBorders( &facet );
+	for ( i = 10; i < 25; i++ ) {
+		facet.borderPlanes[i] = 4;
+		facet.borderInward[i] = qtrue;
+	}
+	facet.numBorders = 25;
+	error = CM_AddFacetBevels( &facet );
+	Check( error && !strcmp( error, "MAX_FACET_BORDERS" ) && facet.numBorders == 25 && facet.borderPlanes[25] >= 11 &&
+		   !zoneLive && !c_active_windings, "an edge bevel candidate in the last slot is refused when kept" );
+
 	// a bevel plane that does not fit the table
 	BuildFacet( &facet );
 	numPlanes = MAX_PATCH_PLANES;
@@ -257,11 +304,40 @@ static void PreflightState( void ) {
 		   "bad parameters are refused before the points are read" );
 }
 
+/* A 3x5 patch whose first segment lies on one line: CM_GridPlane finds no plane
+ * for its cells. ET 2.60 warns and loads; the edge-plane code read planes[-1]. */
+static void SquashedSegment( void ) {
+	vec3_t points[15];
+	int i, j, sizes[3];
+	patchCollide_t *pc;
+
+	for ( j = 0; j < 5; j++ ) {
+		for ( i = 0; i < 3; i++ ) {
+			if ( j < 3 ) {
+				VectorSet( points[j * 3 + i], i * 32 + j * 4, 0, 0 );
+			} else {
+				VectorSet( points[j * 3 + i], i * 32, ( j - 2 ) * 32, 0 );
+			}
+		}
+	}
+	Check( CM_ValidatePatchCollideAllocations( 3, 5, points, sizes ) == NULL, "a segment on a line passes the preflight" );
+	pc = CM_GeneratePatchCollide( 3, 5, points, qtrue );
+	Check( pc && pc->numFacets >= 1 && sizes[1] == pc->numFacets * (int)sizeof( facet_t ) &&
+		   sizes[2] == pc->numPlanes * (int)sizeof( patchPlane_t ) && !zoneLive, "a segment on a line loads, its flat cells dropped" );
+	for ( i = 0; i < pc->numFacets; i++ ) {
+		Check( pc->facets[i].surfacePlane >= 0 && pc->facets[i].surfacePlane < pc->numPlanes, "every kept facet has a surface plane" );
+		for ( j = 0; j < pc->facets[i].numBorders; j++ ) {
+			Check( pc->facets[i].borderPlanes[j] >= -1 && pc->facets[i].borderPlanes[j] < pc->numPlanes, "every border is a plane or none" );
+		}
+	}
+}
+
 int main( void ) {
 	FacetOwnership();
 	CopyOwnership();
 	PlaneAndBorderBudgets();
 	PreflightState();
+	SquashedSegment();
 	Check( zoneAllocations == zoneFrees && !zoneLive && !c_active_windings, "every winding freed" );
 	puts( "collision patch facet budgets and winding ownership passed" );
 	return 0;

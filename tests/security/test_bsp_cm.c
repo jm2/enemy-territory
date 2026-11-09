@@ -288,6 +288,23 @@ static void B_BumpyPatch( void ) {
 	PatchGrid( 15, 15, 2, 32 );
 }
 
+static void B_SquashedPatch( void ) {
+	// a 3x5 patch whose first segment (rows 0-2) lies on one line: both triangles
+	// of its cells are degenerate, so CM_GridPlane finds no plane. ET 2.60 warns and
+	// loads (Q3A drops); the old edge-plane code then read planes[-1]
+	unsigned int v;
+	int i, j;
+	PatchGrid( 3, 5, 0, 0 );
+	for ( j = 0; j < 3; j++ ) {
+		for ( i = 0; i < 3; i++ ) {
+			v = LumpOfs( LUMP_DRAWVERTS ) + ( 21 + j * 3 + i ) * sizeof( drawVert_t );
+			Float( v, i * 32.0f + j * 4.0f );
+			Float( v + 4, 0 );
+			Float( v + 8, 0 );
+		}
+	}
+}
+
 static void FacetsPastMax( void ) { PatchGrid( 31, 31, 2, 32 ); }
 static void PlanesPastMax( void ) { PatchGrid( 31, 31, 3, 128 ); }
 
@@ -307,6 +324,7 @@ static const budgetCase_t budgetCases[] = {
 	{ "hunk budget: repeated patch surfaces", B_RepeatedPatches, NULL },
 	{ "hunk budget: 129x3 patch", B_WidePatch, NULL },
 	{ "hunk budget: 15x15 bumpy patch", B_BumpyPatch, NULL },
+	{ "patch segment on a line, as in ET 2.60", B_SquashedPatch, NULL },
 	{ "31x31 patch past MAX_FACETS", FacetsPastMax, "MAX_FACETS" },
 	{ "31x31 patch past MAX_PATCH_PLANES", PlanesPastMax, "MAX_PATCH_PLANES" },
 };
@@ -350,6 +368,9 @@ static void BudgetCase( const budgetCase_t *c ) {
 	} else if ( c->mutate == B_BumpyPatch ) {
 		printf( "    %d facets, %d planes\n", cm.surfaces[S_PATCH]->pc->numFacets, cm.surfaces[S_PATCH]->pc->numPlanes );
 		Check( cm.surfaces[S_PATCH]->pc->numFacets > 64, "a patch of many facets" );
+	} else if ( c->mutate == B_SquashedPatch ) {
+		printf( "    %d facets, %d planes\n", cm.surfaces[S_PATCH]->pc->numFacets, cm.surfaces[S_PATCH]->pc->numPlanes );
+		Check( cm.surfaces[S_PATCH]->pc->numFacets >= 1, "the flat segment's facets are kept" );
 	}
 }
 
