@@ -42,6 +42,8 @@ static int s_numShaderFiles;
 static shaderStage_t stages[MAX_SHADER_STAGES];
 static shader_t shader;
 static texModInfo_t texMods[MAX_SHADER_STAGES][TR_MAX_TEXMODS];
+// a stage named an image that is not there: refused, but not an error in the text
+static qboolean shaderMissingImage;
 static qboolean deferLoad;
 
 // ydnar: these are here because they are only referenced while parsing a shader
@@ -803,6 +805,7 @@ static qboolean ParseStage( shaderStage_t *stage, char **text ) {
 				stage->bundle[0].image[0] = R_FindImageFile( token, !shader.noMipMaps, !shader.noPicMip, GL_REPEAT, qfalse );
 				if ( !stage->bundle[0].image[0] ) {
 					ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
+					shaderMissingImage = qtrue;
 					return qfalse;
 				}
 			}
@@ -820,6 +823,7 @@ static qboolean ParseStage( shaderStage_t *stage, char **text ) {
 			stage->bundle[0].image[0] = R_FindImageFile( token, !shader.noMipMaps, !shader.noPicMip, GL_CLAMP, qfalse );
 			if ( !stage->bundle[0].image[0] ) {
 				ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
+				shaderMissingImage = qtrue;
 				return qfalse;
 			}
 		}
@@ -857,6 +861,7 @@ static qboolean ParseStage( shaderStage_t *stage, char **text ) {
 				stage->bundle[0].image[0] = R_FindImageFile( token, qfalse, qfalse, GL_CLAMP, qtrue );
 				if ( !stage->bundle[0].image[0] ) {
 					ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
+					shaderMissingImage = qtrue;
 					return qfalse;
 				}
 				stage->bundle[0].isLightmap = qtrue;
@@ -889,6 +894,7 @@ static qboolean ParseStage( shaderStage_t *stage, char **text ) {
 					stage->bundle[0].image[num] = R_FindImageFile( token, !shader.noMipMaps, !shader.noPicMip, GL_REPEAT, qfalse );
 					if ( !stage->bundle[0].image[num] ) {
 						ri.Printf( PRINT_WARNING, "WARNING: R_FindImageFile could not find '%s' in shader '%s'\n", token, shader.name );
+						shaderMissingImage = qtrue;
 						return qfalse;
 					}
 					stage->bundle[0].numImageAnimations++;
@@ -1777,6 +1783,7 @@ static qboolean ParseShader( char **text ) {
 
 	s = 0;
 	memset( &pending, 0, sizeof( pending ) );
+	shaderMissingImage = qfalse;
 
 	tr.allowCompress = qtrue;   // Arnout: allow compression by default
 
@@ -1806,6 +1813,10 @@ static qboolean ParseShader( char **text ) {
 				return qfalse;
 			}
 			if ( !ParseStage( &stages[s], text ) ) {
+				if ( shaderMissingImage ) {
+					// as retail: what was read before is kept and published
+					PublishShaderGlobals();
+				}
 				return qfalse;
 			}
 			stages[s].active = qtrue;
@@ -3331,15 +3342,17 @@ shader_t *R_FindShaderByName( const char *name ) {
 }
 
 /*
-A shader refused for an error becomes the default material, as tr.defaultShader
-(CreateInternalShaders) is, under its own name so the name stays cached (Q3A
-7e86b875). Retail kept the stages and settings parsed before the error. The
-world and the models already swap such a shader for tr.defaultShader, and a
-registered handle is 0; skins and the other R_FindShader callers drew the
-partial shader. A shader whose text parsed but has no stages (clip, nodraw
-and the like) is not an error and stays as retail made it. The "need" flags
-stay set as for any named shader, and the compression switch goes back to its
-default, as at the end of a parse.
+A shader refused for an error in its text keeps nothing it parsed (Q3A
+7e86b875): it is empty under its own name, so the name stays cached, as ET's
+default for a missing implicit image is. Q3A gives it a stage of the default
+image, but here the sun shader, skins, fog volumes and remap targets use the
+result without checking defaultShader, and an empty shader draws nothing, as
+retail's did when its first stage failed. Retail kept the stages and settings
+parsed before the error. A shader whose text parsed but has no stages (clip,
+nodraw and the like), or whose stage names an image that is not there, is not
+an error in the text and stays as retail made it, prefix and all. The "need"
+flags stay set as for any named shader, and the compression switch goes back
+to its default, as at the end of a parse.
 */
 static void InitDefaultShader( const char *name ) {
 	int i;
@@ -3356,9 +3369,6 @@ static void InitDefaultShader( const char *name ) {
 	shader.needsST1 = qtrue;
 	shader.needsST2 = qtrue;
 	shader.needsColor = qtrue;
-	stages[0].bundle[0].image[0] = tr.defaultImage;
-	stages[0].active = qtrue;
-	stages[0].stateBits = GLS_DEFAULT;
 	tr.allowCompress = qtrue;
 }
 
@@ -3553,8 +3563,9 @@ shader_t *R_FindShader( const char *name, int lightmapIndex, qboolean mipRawImag
 
 		if ( !ParseShader( &shaderText ) ) {
 			// had errors, so use default shader
-			if ( pending.complete ) {
-				// no error, but no stages either (clip, nodraw and such): as retail
+			if ( pending.complete || shaderMissingImage ) {
+				// no error in the text: no stages (clip, nodraw and such), or an
+				// image that is not there, which retail content has often; as retail
 				shader.defaultShader = qtrue;
 				return FinishShader();
 			}

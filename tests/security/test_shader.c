@@ -47,9 +47,64 @@ void Com_Memcpy( void *d, const void *s, const size_t c ) { memcpy( d, s, c ); }
 /* named images, so the corpus dump can say which image each stage has */
 static image_t *namedImages[8192];
 static int numNamedImages;
+
+/* corpus mode with IMAGES=file: only the images listed (lower case, one per line) exist */
+static char **imageList;
+static int numImageList;
+static int CompareNames( const void *a, const void *b ) {
+	return strcmp( *(char * const *)a, *(char * const *)b );
+}
+static int ImageListed( const char *lower ) {
+	const char *key = lower;
+	return bsearch( &key, imageList, numImageList, sizeof( *imageList ), CompareNames ) != NULL;
+}
+/* R_LoadImage's rules: .tga, or a .jpg in its place; .pcx, .bmp and .jpg as named; pk3 names ignore case */
+static int ImageExists( const char *name ) {
+	char lower[MAX_QPATH];
+	int i, len = strlen( name );
+	if ( len < 5 || len >= MAX_QPATH ) {
+		return 0;
+	}
+	for ( i = 0; i <= len; i++ ) {
+		lower[i] = tolower( (unsigned char)name[i] );
+	}
+	if ( !strcmp( lower + len - 4, ".tga" ) ) {
+		if ( ImageListed( lower ) ) {
+			return 1;
+		}
+		strcpy( lower + len - 3, "jpg" );
+		return ImageListed( lower );
+	}
+	if ( !strcmp( lower + len - 4, ".pcx" ) || !strcmp( lower + len - 4, ".bmp" ) || !strcmp( lower + len - 4, ".jpg" ) ) {
+		return ImageListed( lower );
+	}
+	return 0;
+}
+static void LoadImageList( const char *path ) {
+	FILE *f = fopen( path, "r" );
+	char line[1024];
+	int size = 0;
+	if ( !f ) {
+		exit( 3 );
+	}
+	while ( fgets( line, sizeof( line ), f ) ) {
+		line[strcspn( line, "\r\n" )] = 0;
+		if ( numImageList == size ) {
+			size = size ? size * 2 : 1024;
+			imageList = realloc( imageList, size * sizeof( *imageList ) );
+		}
+		imageList[numImageList++] = strdup( line );
+	}
+	fclose( f );
+	qsort( imageList, numImageList, sizeof( *imageList ), CompareNames );
+}
+
 image_t *R_FindImageFile( const char *name, qboolean mip, qboolean picmip, int wrap, qboolean lightmap ) {
 	int i;
 	images++;
+	if ( imageList && !strstr( name, "/lm_" ) && !ImageExists( name ) ) {
+		return NULL;
+	}
 	if ( strstr( name, "/lm_" ) ) {
 		return &lightmapImage;
 	}
@@ -411,9 +466,10 @@ static void Unchanged( void ) {
 }
 
 /*
-A refused shader is the default material (one stage of the default image) and leaves
-nothing behind: no sun, clouds, fog, light grid or sun shader. On the old tree it kept
-its stages and settings and set the rest as it read them.
+A shader refused for an error in its text is empty and leaves nothing behind: no sun,
+clouds, fog, light grid or sun shader. On the old tree it kept its stages and settings
+and set the rest as it read them. A missing image is not an error in the text, and
+stays as retail: the stages before it, and what was read, are kept.
 */
 static void Fallback( void ) {
 	static const memFile_t files[] = {
@@ -429,16 +485,18 @@ static void Fallback( void ) {
 		  "\t{\n\t\tmap a.tga\n\t}\n}\n"
 		  "test/stale_a\n{\n\t{\n\t\tmap a.tga\n\t\ttcMod rotate 10\n\t}\n}\n"
 		  "test/stale_b\n{\n\t{\n\t\tmap b.tga\n\t\ttcMod scale 1\n\t}\n}\n"
-		  "test/badtime\n{\n\t{\n\t\tmap a.tga\n\t}\n}\n" }
+		  "test/badtime\n{\n\t{\n\t\tmap a.tga\n\t}\n}\n"
+		  "test/missing_second\n{\n\tcull none\n\tsunshader sun/y\n\t{\n\t\tmap a.tga\n\t\tblendFunc add\n\t}\n"
+		  "\t{\n\t\tmap missing.tga\n\t}\n}\n"
+		  "test/missing_first\n{\n\t{\n\t\tmap gfx/missing/sun.tga\n\t}\n}\n" }
 	};
 	shader_t *sh, *again;
 
 	Load( files, 1, 1 );
 	tr.allowCompress = qtrue;
 	sh = R_FindShader( "test/partial", 0, qtrue );
-	Check( sh->defaultShader && sh->numUnfoggedPasses == 1 && sh->stages[0]->bundle[0].image[0] == &defaultImage &&
-		   !sh->stages[1], "refused shader is the default material" );
-	Check( !sh->isSky && sh->cullType == CT_FRONT_SIDED && sh->numDeforms == 0 && sh->sort == SS_OPAQUE &&
+	Check( sh->defaultShader && sh->numUnfoggedPasses == 0 && !sh->stages[0], "refused shader draws nothing" );
+	Check( !sh->isSky && sh->cullType == CT_FRONT_SIDED && sh->numDeforms == 0 && sh->sort == SS_FOG &&
 		   sh->fogParms.depthForOpaque == 0 && !sh->explicitlyDefined, "refused shader keeps none of its settings" );
 	Check( clouds == 0, "refused shader builds no cloud layer" );
 	Check( tr.allowCompress == qtrue, "refused shader leaves compression at its default" );
@@ -487,6 +545,15 @@ static void Fallback( void ) {
 	Check( sh->stages[0]->bundle[0].numTexMods == 1 && sh->stages[0]->bundle[0].texMods[0].type == TMOD_NONE &&
 		   sh->stages[0]->bundle[0].texMods[0].rotateSpeed == 0, "incomplete tcMod is cleared" );
 
+	/* a missing image: as retail */
+	sh = R_FindShader( "test/missing_second", LIGHTMAP_NONE, qtrue );
+	// retail counts the failed stage as a pass but drops it: one stage drawn
+	Check( sh->defaultShader && sh->stages[0] && sh->stages[0]->bundle[0].image[0] == &white && !sh->stages[1] &&
+		   sh->cullType == CT_TWO_SIDED, "missing second image keeps the first stage, as retail" );
+	Check( tr.sunShaderName && !strcmp( tr.sunShaderName, "sun/y" ), "missing image publishes what was read, as retail" );
+	sh = R_FindShader( "test/missing_first", LIGHTMAP_NONE, qtrue );
+	Check( sh->defaultShader && !sh->stages[0], "missing first image draws nothing, as retail" );
+
 	/* a remap time offset from the game */
 	sh = R_FindShader( "test/badtime", LIGHTMAP_NONE, qtrue );
 	sh->timeOffset = 5;
@@ -496,7 +563,7 @@ static void Fallback( void ) {
 	Check( sh->timeOffset == 5, "overflowing remap offset refused" );
 	R_RemapShader( "test/stale_a", "test/badtime", "2.5" );
 	Check( sh->timeOffset == 2.5f && R_FindShader( "test/stale_a", LIGHTMAP_NONE, qtrue )->remappedShader == sh, "valid remap offset" );
-	printf( "fallback: refused shaders are the default material and publish nothing\n" );
+	printf( "fallback: refused shaders draw nothing and publish nothing; missing images as retail\n" );
 }
 
 /*
@@ -691,6 +758,9 @@ static int Corpus( int argc, char **argv ) {
 	int i, l, count = 0, refused = 0, lightmaps[2] = { LIGHTMAP_NONE, 0 };
 
 	corpus = 1;
+	if ( getenv( "IMAGES" ) ) {
+		LoadImageList( getenv( "IMAGES" ) );
+	}
 	diskFiles = argv + 1;
 	numDiskFiles = argc - 1;
 	Load( NULL, 0, 1 );
@@ -740,6 +810,23 @@ static int Corpus( int argc, char **argv ) {
 			Dump( sh );
 			refused += l == 0 && sh->defaultShader;
 		}
+	}
+	/* EXTRA=file: more names, as skins and sunshader ask for them */
+	if ( getenv( "EXTRA" ) ) {
+		FILE *f = fopen( getenv( "EXTRA" ), "r" );
+		char line[1024];
+		if ( !f ) {
+			exit( 3 );
+		}
+		while ( fgets( line, sizeof( line ), f ) ) {
+			line[strcspn( line, "\r\n" )] = 0;
+			if ( !line[0] ) {
+				continue;
+			}
+			printf( "extra %s\n", line );
+			Dump( R_FindShader( line, LIGHTMAP_NONE, qtrue ) );
+		}
+		fclose( f );
 	}
 	fprintf( stderr, "corpus: %d labels, %d shaders default\n", count, refused );
 	return 0;
