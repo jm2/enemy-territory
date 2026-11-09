@@ -253,3 +253,12 @@ open(sys.argv[1],'w',encoding='latin-1').write(''.join(out))
 K
 "$CC" $FLAGS -fno-sanitize-recover=all "-DKEYS_INC=\"$OUT/keys.inc\"" tests/security/test_keys.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/keys"
 "$OUT/keys"
+# RB_SetColor and its byte conversion alone: tr_backend.c needs the whole renderer
+python3 - "$OUT/setcolor.inc" <<'C'
+import sys
+s=open('src/renderer/tr_backend.c',encoding='latin-1').read()
+a=s.index('static byte RB_ColorByte( float c ) {'); b=s.index('\n}\n',s.index('const void  *RB_SetColor( const void *data ) {'))+3
+open(sys.argv[1],'w',encoding='latin-1').write('#line %d "src/renderer/tr_backend.c"\n'%(s.count('\n',0,a)+1)+s[a:b])
+C
+"$CC" $FLAGS -fsanitize=float-cast-overflow -fno-sanitize-recover=all "-DSETCOLOR_INC=\"$OUT/setcolor.inc\"" tests/security/test_setcolor.c -lm -o "$OUT/setcolor"
+"$OUT/setcolor"
