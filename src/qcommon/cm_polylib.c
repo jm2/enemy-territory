@@ -31,6 +31,7 @@ If you have questions concerning this license or the applicable additional terms
 
 
 #include "cm_local.h"
+#include <stddef.h>
 
 
 // counters are only bumped when running single threaded,
@@ -272,7 +273,8 @@ winding_t   *CopyWinding( winding_t *w ) {
 	winding_t   *c;
 
 	c = AllocWinding( w->numpoints );
-	size = (int)( (winding_t *)0 )->p[w->numpoints];
+	// the header and the points, without forming an address from a NULL winding (Q3A 734ebe51)
+	size = offsetof( winding_t, p ) + w->numpoints * sizeof( w->p[0] );
 	memcpy( c, w, size );
 	return c;
 }

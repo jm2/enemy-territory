@@ -1881,6 +1881,27 @@ static void Hunk_SwapBanks( void ) {
 
 /*
 =================
+Hunk_AllocationSize
+
+The bytes Hunk_Alloc( size ) takes: its debug header and the cacheline rounding
+(Q3A 21e54159). CM_LoadMap checks a whole map's allocations against
+Hunk_MemoryRemaining with it before it changes anything.
+=================
+*/
+int Hunk_AllocationSize( int size ) {
+	int header = 0;
+
+#ifdef HUNK_DEBUG
+	header = sizeof( hunkblock_t );
+#endif
+	if ( size < 0 || size > INT_MAX - header - 31 ) {
+		return -1;
+	}
+	return ( size + header + 31 ) & ~31;
+}
+
+/*
+=================
 Hunk_Alloc
 
 Allocate permanent (until the hunk is cleared) memory
@@ -1899,18 +1920,12 @@ void *Hunk_Alloc( int size, ha_pref preference ) {
 
 	Hunk_SwapBanks();
 
-#ifdef HUNK_DEBUG
-	size += sizeof( hunkblock_t );
-#endif
-
-	// a size from a file can be near INT_MAX: refuse it before the rounding
-	// and compare against the room left, so neither sum can overflow
-	if ( size < 0 || size > INT_MAX - 31 ) {
+	// a size from a file can be near INT_MAX: refused before the rounding,
+	// and compared against the room left, so neither sum can overflow
+	if ( Hunk_AllocationSize( size ) < 0 ) {
 		Com_Error( ERR_DROP, "Hunk_Alloc failed on %i", size );
 	}
-
-	// round to cacheline
-	size = ( size + 31 ) & ~31;
+	size = Hunk_AllocationSize( size );
 
 	if ( size > s_hunkTotal - hunk_low.temp - hunk_high.temp ) {
 #ifdef HUNK_DEBUG

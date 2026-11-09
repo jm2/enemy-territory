@@ -211,6 +211,8 @@ cmodel_t    *CM_ClipHandleToModel( clipHandle_t handle );
 // cm_patch.c
 
 const char *CM_ValidatePatchCollide( int width, int height, vec3_t *points );
+// also gives the patch's three hunk block sizes, written only on success
+const char *CM_ValidatePatchCollideAllocations( int width, int height, vec3_t *points, int sizes[3] );
 struct patchCollide_s   *CM_GeneratePatchCollide( int width, int height, vec3_t *points, qboolean addBevels );
 void CM_TraceThroughPatchCollide( traceWork_t *tw, const struct patchCollide_s *pc );
 qboolean CM_PositionTestInPatchCollide( traceWork_t *tw, const struct patchCollide_s *pc );

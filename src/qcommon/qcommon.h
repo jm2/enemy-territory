@@ -983,6 +983,8 @@ void Hunk_ClearTempMemory( void );
 void *Hunk_AllocateTempMemory( int size );
 void Hunk_FreeTempMemory( void *buf );
 int Hunk_MemoryRemaining( void );
+// what Hunk_Alloc( size ) takes from Hunk_MemoryRemaining, or -1 if it would refuse the size
+int Hunk_AllocationSize( int size );
 void Hunk_SmallLog( void );
 void Hunk_Log( void );
 
