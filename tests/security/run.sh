@@ -262,3 +262,12 @@ open(sys.argv[1],'w',encoding='latin-1').write('#line %d "src/renderer/tr_backen
 C
 "$CC" $FLAGS -fsanitize=float-cast-overflow -fno-sanitize-recover=all "-DSETCOLOR_INC=\"$OUT/setcolor.inc\"" tests/security/test_setcolor.c -lm -o "$OUT/setcolor"
 "$OUT/setcolor"
+# FS_HasExtension alone: files.c needs the whole engine
+python3 - "$OUT/fs_ext.inc" <<'E'
+import sys
+s=open('src/qcommon/files.c',encoding='latin-1').read()
+a=s.index('static qboolean FS_HasExtension( const char *filename, const char *extension ) {'); b=s.index('\n}\n',a)+3
+open(sys.argv[1],'w',encoding='latin-1').write('#line %d "src/qcommon/files.c"\n'%(s.count('\n',0,a)+1)+s[a:b])
+E
+"$CC" $FLAGS -fno-sanitize-recover=all "-DFS_EXT_INC=\"$OUT/fs_ext.inc\"" tests/security/test_fs_ext.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/fs_ext"
+"$OUT/fs_ext"
