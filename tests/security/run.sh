@@ -239,3 +239,17 @@ B
 # -fsanitize=undefined leaves out, checks the number and $evalfloat conversions
 "$CC" $FLAGS -fno-sanitize=alignment -fsanitize=float-cast-overflow -fno-sanitize-recover=float-cast-overflow "-DZONE_INC=\"$OUT/zone.inc\"" tests/security/test_botlib_precomp.c src/botlib/l_precomp.c src/botlib/l_script.c src/botlib/l_memory.c src/game/q_shared.c src/game/q_math.c -pthread -lm -o "$OUT/botlib_precomp"
 "$OUT/botlib_precomp"
+# Key_IsDown, the binding functions and bind/unbind alone: cl_keys.c needs the whole client
+python3 - "$OUT/keys.inc" <<'K'
+import sys
+s=open('src/client/cl_keys.c',encoding='latin-1').read()
+def fn(sig):
+    a=s.index(sig); return '#line %d "src/client/cl_keys.c"\n'%(s.count('\n',0,a)+1)+s[a:s.index('\n}\n',a)+3]
+h=s.index('#define BIND_HASH_SIZE')
+out=[fn('int Key_StringToKeynum( char *str ) {'), fn('qboolean Key_IsDown( int keynum ) {'),
+     s[h:s.index('\n}\n',h)+3], fn('void Key_SetBinding( int keynum, const char *binding ) {'),
+     fn('char *Key_GetBinding( int keynum ) {'), fn('void Key_Unbind_f( void ) {'), fn('void Key_Bind_f( void ) {')]
+open(sys.argv[1],'w',encoding='latin-1').write(''.join(out))
+K
+"$CC" $FLAGS -fno-sanitize-recover=all "-DKEYS_INC=\"$OUT/keys.inc\"" tests/security/test_keys.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/keys"
+"$OUT/keys"
