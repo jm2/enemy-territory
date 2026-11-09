@@ -31,7 +31,6 @@
 
 #define COMMAND_SIZE		MAX_STRING_CHARS		/* main's commandLine */
 #define TEXT_SIZE			( MAX_STRING_CHARS * 2 )	/* main's file buffer */
-#define MAX_CONSOLE_LINES	32
 
 /* common.c's command line state */
 char	*com_consoleLines[MAX_CONSOLE_LINES];
@@ -380,18 +379,65 @@ static void TestMaskSecrets( void ) {
 		{ "+set rconpassword", "+set rconpassword" },
 		{ "+set rconpassword \"unterminated", "+set rconpassword \"************" },
 		{ "+set s_initsound 1 +set com_hunkMegs 64", "+set s_initsound 1 +set com_hunkMegs 64" },
+		/* Cmd_TokenizeString ends a word at a comment and, with signed chars,
+		 * at Option-Space (0xCA), so the value can be glued to the name */
+		{ "+set g_password/*x*/secret +map q3dm1", "+set g_password*********** +map q3dm1" },
+		{ "+set rconpassword\xCAhunter2 +map q3dm1", "+set rconpassword******** +map q3dm1" },
+		{ "seta g_password\"quoted\"", "seta g_password\"******\"" },
 		{ "", "" },
 	};
 	char	line[COMMAND_SIZE];
+	char	expected[COMMAND_SIZE];
 	int		i;
 
 	for ( i = 0 ; i < (int)( sizeof( cases ) / sizeof( cases[0] ) ) ; i++ ) {
+		Reset( cases[i][0] );
 		Q_strncpyz( line, cases[i][0], sizeof( line ) );
 		Sys_MaskStartupSecrets( line );
 		if ( strcmp( line, cases[i][1] ) ) {
 			fprintf( stderr, "masked \"%s\" as \"%s\"\n", cases[i][0], line );
 		}
 		Check( !strcmp( line, cases[i][1] ), "password cvar values are masked in the logged command line" );
+	}
+
+	/* Com_ParseCommandLine stops splitting at MAX_CONSOLE_LINES: the last
+	 * line keeps the rest, so "set" takes an unquoted '+' there as part of
+	 * the value, and it must be masked with the rest. A line break there
+	 * still ends the command in Cbuf_Execute; masking past it is only
+	 * caution. One line earlier the '+' still starts a new console line. */
+	for ( i = 0 ; i < 2 ; i++ ) {
+		static const char	*tail[2][2] = {
+			{ " +set g_password abc +def\n+map q3dm1", " +set g_password *** ****\n**** *****" },
+			{ " +set g_password abc +map q3dm1", " +set g_password *** +map q3dm1" },
+		};
+		int					filler = i == 0 ? MAX_CONSOLE_LINES - 1 : MAX_CONSOLE_LINES - 2;
+		int					j;
+
+		Reset( i == 0 ? "a password on the last console line" : "a password on the line before the cap" );
+		Q_strncpyz( line, "x", sizeof( line ) );
+		for ( j = 1 ; j < filler ; j++ ) {
+			Q_strcat( line, sizeof( line ), " +x" );
+		}
+		Q_strcat( line, sizeof( line ), tail[i][0] );
+		Q_strncpyz( expected, line, sizeof( expected ) );
+		expected[strlen( expected ) - strlen( tail[i][0] )] = '\0';
+		Q_strcat( expected, sizeof( expected ), tail[i][1] );
+
+		Q_strncpyz( commandLine, line, COMMAND_SIZE );
+		Com_ParseCommandLine( commandLine );
+		Cmd_TokenizeString( com_consoleLines[com_numConsoleLines - 1] );
+		Check( com_numConsoleLines == MAX_CONSOLE_LINES, "the fixture fills every console line" );
+		if ( i == 0 ) {
+			Check( !strcmp( Cmd_Argv( 3 ), "+def" ), "the last console line keeps the '+' word" );
+		} else {
+			Check( !strcmp( Cmd_Argv( 0 ), "map" ), "the '+' before the cap starts the last console line" );
+		}
+
+		Sys_MaskStartupSecrets( line );
+		if ( strcmp( line, expected ) ) {
+			fprintf( stderr, "masked as \"%s\"\n", line );
+		}
+		Check( !strcmp( line, expected ), "the password is masked to the end of its console line" );
 	}
 }
 

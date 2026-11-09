@@ -490,7 +490,6 @@ quake3 set test blah + map test
 ============================================================================
 */
 
-#define MAX_CONSOLE_LINES   32
 int com_numConsoleLines;
 char    *com_consoleLines[MAX_CONSOLE_LINES];
 
