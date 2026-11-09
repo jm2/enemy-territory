@@ -1075,8 +1075,6 @@ va
 
 does a varargs printf into a temp buffer, so I don't need to have
 varargs versions of all text functions.
-FIXME: make this buffer size safe someday
-
 Ridah, modified this into a circular list, to further prevent stepping on
 previous strings
 ============
@@ -1091,11 +1089,12 @@ char    * QDECL va( char *format, ... ) {
 	int len;
 
 
+	// bounded: vsprintf wrote past temp_buffer before the length check could run
 	va_start( argptr, format );
-	vsprintf( temp_buffer, format,argptr );
+	len = Q_vsnprintf( temp_buffer, sizeof( temp_buffer ), format, argptr );
 	va_end( argptr );
 
-	if ( ( len = strlen( temp_buffer ) ) >= MAX_VA_STRING ) {
+	if ( len < 0 || len >= MAX_VA_STRING ) {
 		Com_Error( ERR_DROP, "Attempted to overrun string in call to va()\n" );
 	}
 

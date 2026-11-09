@@ -95,11 +95,10 @@ it, and what has not been done. A cross-build proves only that code compiles.
 | Mac boot log masking gaps: a value glued to its name by a `/*` comment or a Mac Roman byte such as Option-Space (0xCA), where `Cmd_TokenizeString` ends the word, was logged in the clear (`set g_password/*x*/secret`); on the 32nd (last) console line an unquoted `+` in a password ended the masking though `Com_ParseCommandLine` no longer splits there | Q3A #565 (`463dab3b`, `4195b248`): masking starts right after `password`, and line ends count only below `MAX_CONSOLE_LINES`, which moves to `qcommon.h` | `tests/mac` startup_parms `TestMaskSecrets` (Q3A's new cases, each now reported under its own name), including two that fill all 32 lines through the real `Com_ParseCommandLine`. The comment, Option-Space and last-console-line cases fail on master. A password given as a command argument (`+ref <password>`) is still logged: only `password` cvar names are masked |
 | `R_StitchPatches`' four reversed loops read the LOD error at `k + 1` one float past the array on their first pass; retail radar and railgun reach it. The arrays are zone blocks (`ri.Z_Malloc` is `Z_TagMalloc`, `TAG_RENDERER`), so retail read the trash tester `ZONEID`, a denormal that `RB_SurfaceGrid`'s `error <= lodError` treats as 0, or stale bytes when the block kept a small fragment. That read is now 0 | Q3A #562 (`1b5fe234`) | `tests/security/test_bsp_stitch.c`: each loop reads past an exact-size array on master, and reads inside it are unchanged. The real-map run no longer pads zone blocks; the six retail maps' grids after stitching (sizes, points, LOD errors) hash the same as master's with `ZONEID` or 0 after each block, by `~/et-data/evidence/stitch-lod-error/compare_all.sh` |
 | `Q_rsqrt` and the collision code's `SquareRootFloat` read a float through a `long`: 8 bytes on LP64 hosts, so four bytes past the float on the host. The Mac's `long` is 32 bits, and the Retro68 code for both is unchanged | Q3A #561 (`019a396b`). The `legacy` mod's own `Q_rsqrt` reads through a union and is untouched | `tests/security/test_rsqrt.c`, with `SquareRootFloat` taken verbatim from `cm_trace.c`: master fails at the 8-byte load in each. The model test's unsanitized `q_math.c` workaround is gone; that test also failed in `Q_rsqrt` on master with a sanitized `q_math.c` |
+| `va()` formatted with `vsprintf` into its 32000-byte buffer and checked the length only after writing. It was the last `vsprintf` in the engine outside the splines (`src/game/q_shared.c`, linked into the engine; the `legacy` mod has its own `va`). No network path found gives it 32000 bytes: network strings stop at `BIG_INFO_STRING` (8192) | Local, from the review of ETL `c10805a4` and `89647300` (neither applies, see below). `Q_vsnprintf` bounds the write; a string that does not fit is the same `ERR_DROP` the old check meant to give | `tests/security/test_text.c` case `va`: 31999 characters fit, 32000 and 63998 are refused, `va` works afterwards. Master writes 32001 bytes into the buffer (ASan global-buffer-overflow). Evidence in `~/et-data/evidence/etl-print` |
 
 ## Not done
 
-- ETL's `Com_Printf` overflow fix (`c10805a4`) and `Q_ColorizeString` (`89647300`) are not
-  reviewed against this tree yet.
 - `sv_userInfoFloodProtect` (`f5258c7d`) and the other server-side ETL fixes matter only for a
   listen server and are not ported, beyond the four host server rows above. Broadcast commands
   (chat, prints) still reach a `CS_PRIMED` client and count toward its command overflow.
@@ -121,6 +120,27 @@ it, and what has not been done. A cross-build proves only that code compiles.
   ETL does, rather than from the cvar.
 
 - No sanitizer run of the whole engine. Only `msg.c`, `huffman.c` and `fs_path.c` have one.
+
+## ET: Legacy print fixes that do not apply
+
+- `c10805a4` (`Com_Printf` overflow): ETL writes an `%8i ` timestamp at the start of its buffer
+  and then formatted with the whole buffer's size after it. ET 2.60's `Com_VPrintf` has no
+  timestamp: `Q_vsnprintf` writes from the start of `msg[MAXPRINTMSG]` with its full size. The
+  other print buffers here are bounded too: `Com_DPrintf`, `CL_RefPrintf` and `FS_Printf`
+  (`Q_vsnprintf` into `MAXPRINTMSG`), `Com_Error` (`com_errorMessage`, and 4096 bytes for a
+  recursive error), the rcon redirect (flushed before a message would not fit, then
+  `Q_strcat` into `SV_OUTPUTBUF_LENGTH`), `NET_OutOfBandPrint` (`MAX_MSGLEN`), `CL_PrintPacket`
+  (`Q_strncpyz`), `CL_ConsolePrint` (masks the color index and wraps at `con.linewidth`), and on
+  the Mac `Sys_Error` and `Sys_LogPrintf` (`vsnprintf`, 1024), `Com_FlightRecord` and
+  `Sys_LogRecord` (rings indexed modulo their size), and the boot log's time stamp (at most 16
+  characters and its NUL, for a negative clock, and a stamp starts only 16 bytes or more
+  before the end of the 8192-byte pending buffer). `SV_AuthorizeIpPacket`'s `sprintf` of the
+  authorize server's reason is unbounded, but `AUTHORIZE_SUPPORT` is not defined, so it is not
+  built. The splines' `Com_ScriptError`, `Com_ScriptWarning` and `idStr::snprintf` still use
+  `vsprintf`, into 32000 and 65536 bytes, with at most a 1024-byte token.
+- `89647300` (`Q_ColorizeString`): the function is ETL's; ET 2.60's engine has none and no
+  equivalent. Only the `legacy` mod uses it, and its copy (`legacy/src/qcommon/q_shared.c`)
+  already has the fix.
 
 ## Decided, and stricter than upstream
 

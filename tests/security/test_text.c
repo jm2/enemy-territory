@@ -1,16 +1,27 @@
 /* Shared text handling: COM_ParseExt's quoted tokens at and past MAX_TOKEN_CHARS and
  * an unterminated quote, Info_SetValueForKey(_Big) at exactly the buffer size, and
  * tab completion's FindMatches (extracted from common.c) with candidates longer than
- * shortestMatch, as a server's systeminfo can create. Run under ASan.
+ * shortestMatch, as a server's systeminfo can create, and va() at and past its
+ * 32000-byte buffer. Run under ASan.
  * An argument runs one case only. */
 #include <ctype.h>
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../../src/game/q_shared.h"
 #include "../../src/qcommon/qcommon.h"
 
-void QDECL Com_Error( int code, const char *fmt, ... ) { fprintf( stderr, "FAIL: unexpected Com_Error: %s\n", fmt ); exit( 2 ); }
+static jmp_buf errorJump;
+static int errorExpected;
+
+void QDECL Com_Error( int code, const char *fmt, ... ) {
+	if ( errorExpected ) {
+		longjmp( errorJump, 1 );
+	}
+	fprintf( stderr, "FAIL: unexpected Com_Error: %s\n", fmt );
+	exit( 2 );
+}
 void QDECL Com_Printf( const char *fmt, ... ) {}
 void Com_Memset( void *d, const int v, const size_t c ) { memset( d, v, c ); }
 void Com_Memcpy( void *d, const void *s, const size_t c ) { memcpy( d, s, c ); }
@@ -220,10 +231,36 @@ static void Complete( void ) {
 	printf( "find matches: passed\n" );
 }
 
+/* va() wrote with vsprintf into its 32000-byte buffer and measured afterwards */
+static void Va( void ) {
+	char *fits = Run( 'v', 31999 ), *over = Run( 'w', 32000 ), *a, *b;
+
+	Check( !strcmp( va( "%d %s", 5, "x" ), "5 x" ), "an ordinary va" );
+	a = va( "%s", fits );
+	Check( strlen( a ) == 31999 && !strcmp( a, fits ), "31999 characters fit" );
+	b = va( "%s", "after" );
+	Check( !strcmp( b, "after" ), "the next string after a full one" );
+
+	errorExpected = 1;
+	if ( !setjmp( errorJump ) ) {
+		va( "%s", over );
+		Check( 0, "32000 characters are refused" );
+	}
+	if ( !setjmp( errorJump ) ) {
+		va( "%s%s", fits, fits );
+		Check( 0, "63998 characters are refused" );
+	}
+	errorExpected = 0;
+	Check( !strcmp( va( "%s", "still" ), "still" ), "va works after a refusal" );
+	free( fits );
+	free( over );
+	printf( "va: passed\n" );
+}
+
 int main( int argc, char **argv ) {
 	static const struct { const char *name; void ( *run )( void ); } cases[] = {
 		{ "quoted", ParseQuoted }, { "word", ParseWord }, { "unterminated", ParseUnterminated },
-		{ "info", Info }, { "complete", Complete },
+		{ "info", Info }, { "complete", Complete }, { "va", Va },
 	};
 	int i;
 
