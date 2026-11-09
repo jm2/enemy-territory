@@ -93,15 +93,15 @@ static void FreeGrid( srfGridMesh_t *grid ) {
 /* grid2's edge runs the other way from grid1's, so only a reversed loop matches it */
 static void Stitch( int count1, int transposed1, int transposed2, float wantError, const char *name ) {
 	static const float xs1[] = { 0, 1, 2, 3, 4 }, xs2[] = { 2, 0 };
-	msurface_t surfaces[2];
+	srfGridMesh_t *grids[2];
 	srfGridMesh_t *grid1 = Grid( count1, xs1, 0, 100, transposed1 );
 	srfGridMesh_t *grid2 = Grid( 2, xs2, 0, -100, transposed2 );
 
-	memset( surfaces, 0, sizeof( surfaces ) );
-	surfaces[0].data = (void *)grid1;
-	surfaces[1].data = (void *)grid2;
-	s_worldData.surfaces = surfaces;
-	s_worldData.numsurfaces = 2;
+	// the grids the map preflight stitches, in surface order
+	grids[0] = grid1;
+	grids[1] = grid2;
+	s_stitchGrids = grids;
+	s_numStitchGrids = 2;
 	inserts = 0;
 	insertedError = -1;
 

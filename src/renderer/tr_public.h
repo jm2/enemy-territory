@@ -164,6 +164,10 @@ typedef struct {
 #endif
 	void    *( *Hunk_AllocateTempMemory )( int size );
 	void ( *Hunk_FreeTempMemory )( void *block );
+	// what is left, and what Hunk_Alloc( size ) takes of it (-1 if it would
+	// refuse the size): RE_LoadWorldMap refuses a world that will not fit
+	int ( *Hunk_MemoryRemaining )( void );
+	int ( *Hunk_AllocationSize )( int size );
 
 	// dynamic memory allocator for things that need to be freed
 #ifdef ZONE_DEBUG
@@ -171,6 +175,9 @@ typedef struct {
 #else
 	void    *( *Z_Malloc )( int bytes );
 #endif
+	// a TAG_RENDERER block, not zero filled, or NULL where the zone has no
+	// free block large enough (Z_TryTagMalloc)
+	void    *( *Z_TryMalloc )( int bytes );
 	void ( *Free )( void *buf );
 	void ( *Tag_Free )( void );
 

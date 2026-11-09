@@ -47,6 +47,47 @@ static world_t s_worldData;
 static byte        *fileBase;
 static int s_bspFogCount;           // fog lump records; R_LoadFogs runs after the surfaces
 
+// The drawn patches' grids, in surface order. R_ValidateBSP builds and
+// stitches them, so their final sizes are known before the load; ParseMesh
+// then takes them in the same order.
+typedef struct {
+	srfGridMesh_t **grids;
+	int count, next;
+} bspPatchGrids_t;
+static bspPatchGrids_t s_patchGrids;
+
+// what R_StitchPatches and its callers stitch: every grid, in surface order
+static srfGridMesh_t **s_stitchGrids;
+static int s_numStitchGrids;
+static qboolean s_stitchFailed;     // the zone had no block for a wider grid
+
+/* The list alone, once the world owns its grids, or when ri.Tag_Free is about to free them. */
+static void R_FreePatchGridList( bspPatchGrids_t *list ) {
+	free( list->grids );
+	memset( list, 0, sizeof( *list ) );
+}
+
+/* The grids still in the list and the list: for a map the preflight refused,
+ * or what a load that dropped before R_MovePatchSurfacesToHunk left. */
+static void R_FreePatchGrids( bspPatchGrids_t *list ) {
+	int i;
+
+	for ( i = 0; i < list->count; i++ ) {
+		if ( list->grids[i] ) {
+			R_FreeSurfaceGridMesh( list->grids[i] );
+		}
+	}
+	R_FreePatchGridList( list );
+}
+
+/*
+RE_Shutdown calls this before ri.Tag_Free frees every TAG_RENDERER block,
+grids a dropped load left in the list among them.
+*/
+void R_ClearPatchGridList( void ) {
+	R_FreePatchGridList( &s_patchGrids );
+}
+
 int c_subdivisions;
 int c_gridVerts;
 
@@ -456,15 +497,70 @@ static void FinishGenericSurface( dsurface_t *ds, srfGeneric_t *gen, vec3_t pt )
 ParseMesh
 ===============
 */
-static void ParseMesh( dsurface_t *ds, drawVert_t *verts, msurface_t *surf ) {
-	srfGridMesh_t   *grid;
-	int i, j;
-	int width, height, numPoints;
-	MAC_STATIC drawVert_t points[MAX_PATCH_SIZE * MAX_PATCH_SIZE];
-	int lightmapNum;
+/*
+===============
+R_PatchControlPoints
+
+A patch's control points as the grid is built from them, colors shifted.
+===============
+*/
+static void R_PatchControlPoints( const dsurface_t *ds, const drawVert_t *verts, drawVert_t *points ) {
+	int i, j, numPoints;
+
+	verts += LittleLong( ds->firstVert );
+	numPoints = LittleLong( ds->patchWidth ) * LittleLong( ds->patchHeight );
+	for ( i = 0 ; i < numPoints ; i++ ) {
+		for ( j = 0 ; j < 3 ; j++ ) {
+			points[i].xyz[j] = LittleFloat( verts[i].xyz[j] );
+			points[i].normal[j] = LittleFloat( verts[i].normal[j] );
+		}
+		for ( j = 0 ; j < 2 ; j++ ) {
+			points[i].st[j] = LittleFloat( verts[i].st[j] );
+			points[i].lightmap[j] = LittleFloat( verts[i].lightmap[j] );
+		}
+		R_ColorShiftLightingBytes( (byte *)verts[i].color, points[i].color );
+	}
+}
+
+/*
+===============
+R_FinishPatchGrid
+
+A new grid's LOD group sphere and its surface sphere and plane, before stitching.
+===============
+*/
+static void R_FinishPatchGrid( dsurface_t *ds, srfGridMesh_t *grid ) {
+	int i;
 	vec3_t bounds[2];
 	vec3_t tmpVec;
 
+	// copy the level of detail origin, which is the center
+	// of the group of all curves that must subdivide the same
+	// to avoid cracking
+	for ( i = 0 ; i < 3 ; i++ ) {
+		bounds[0][i] = LittleFloat( ds->lightmapVecs[0][i] );
+		bounds[1][i] = LittleFloat( ds->lightmapVecs[1][i] );
+	}
+	VectorAdd( bounds[0], bounds[1], bounds[1] );
+	VectorScale( bounds[1], 0.5f, grid->lodOrigin );
+	VectorSubtract( bounds[0], grid->lodOrigin, tmpVec );
+	grid->lodRadius = VectorLength( tmpVec );
+
+	// finish surface
+	FinishGenericSurface( ds, (srfGeneric_t*) grid, grid->verts[ 0 ].xyz );
+}
+
+/*
+===============
+ParseMesh
+
+The preflight built, finished and stitched the grid: this takes the next one.
+===============
+*/
+static void ParseMesh( dsurface_t *ds, drawVert_t *verts, msurface_t *surf ) {
+	int lightmapNum;
+
+	(void)verts;
 	lightmapNum = LittleLong( ds->lightmapNum );
 
 	// get fog volume
@@ -483,41 +579,11 @@ static void ParseMesh( dsurface_t *ds, drawVert_t *verts, msurface_t *surf ) {
 		return;
 	}
 
-	width = LittleLong( ds->patchWidth );
-	height = LittleLong( ds->patchHeight );
-
-	verts += LittleLong( ds->firstVert );
-	numPoints = width * height;
-	for ( i = 0 ; i < numPoints ; i++ ) {
-		for ( j = 0 ; j < 3 ; j++ ) {
-			points[i].xyz[j] = LittleFloat( verts[i].xyz[j] );
-			points[i].normal[j] = LittleFloat( verts[i].normal[j] );
-		}
-		for ( j = 0 ; j < 2 ; j++ ) {
-			points[i].st[j] = LittleFloat( verts[i].st[j] );
-			points[i].lightmap[j] = LittleFloat( verts[i].lightmap[j] );
-		}
-		R_ColorShiftLightingBytes( verts[i].color, points[i].color );
+	// the preflight skipped the same nodraw patches
+	if ( s_patchGrids.next >= s_patchGrids.count ) {
+		ri.Error( ERR_DROP, "ParseMesh: more patches than the preflight built" );
 	}
-
-	// pre-tesseleate
-	grid = R_SubdividePatchToGrid( width, height, points );
-	surf->data = (surfaceType_t*) grid;
-
-	// copy the level of detail origin, which is the center
-	// of the group of all curves that must subdivide the same
-	// to avoid cracking
-	for ( i = 0 ; i < 3 ; i++ ) {
-		bounds[0][i] = LittleFloat( ds->lightmapVecs[0][i] );
-		bounds[1][i] = LittleFloat( ds->lightmapVecs[1][i] );
-	}
-	VectorAdd( bounds[0], bounds[1], bounds[1] );
-	VectorScale( bounds[1], 0.5f, grid->lodOrigin );
-	VectorSubtract( bounds[0], grid->lodOrigin, tmpVec );
-	grid->lodRadius = VectorLength( tmpVec );
-
-	// finish surface
-	FinishGenericSurface( ds, (srfGeneric_t*) grid, grid->verts[ 0 ].xyz );
+	surf->data = (surfaceType_t *)s_patchGrids.grids[s_patchGrids.next++];
 }
 
 
@@ -1251,8 +1317,8 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 	srfGridMesh_t *grid1, *grid2;
 	float *v1, *v2;
 
-	grid1 = (srfGridMesh_t *) s_worldData.surfaces[grid1num].data;
-	grid2 = (srfGridMesh_t *) s_worldData.surfaces[grid2num].data;
+	grid1 = s_stitchGrids[grid1num];
+	grid2 = s_stitchGrids[grid2num];
 	for ( n = 0; n < 2; n++ ) {
 		//
 		if ( n ) {
@@ -1314,8 +1380,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					} else { row = 0;}
 					grid2 = R_GridInsertColumn( grid2, l + 1, row,
 												grid1->verts[k + 1 + offset1].xyz, grid1->widthLodError[k + 1] );
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1370,8 +1441,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					} else { column = 0;}
 					grid2 = R_GridInsertRow( grid2, l + 1, column,
 											 grid1->verts[k + 1 + offset1].xyz, grid1->widthLodError[k + 1] );
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1437,8 +1513,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					} else { row = 0;}
 					grid2 = R_GridInsertColumn( grid2, l + 1, row,
 												grid1->verts[grid1->width * ( k + 1 ) + offset1].xyz, grid1->heightLodError[k + 1] );
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1493,8 +1574,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					} else { column = 0;}
 					grid2 = R_GridInsertRow( grid2, l + 1, column,
 											 grid1->verts[grid1->width * ( k + 1 ) + offset1].xyz, grid1->heightLodError[k + 1] );
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1561,8 +1647,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					} else { row = 0;}
 					grid2 = R_GridInsertColumn( grid2, l + 1, row,
 												grid1->verts[k - 1 + offset1].xyz, R_StitchLodError( grid1->widthLodError, grid1->width, k + 1 ) );
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1620,8 +1711,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					if ( !grid2 ) {
 						break;
 					}
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1687,8 +1783,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					} else { row = 0;}
 					grid2 = R_GridInsertColumn( grid2, l + 1, row,
 												grid1->verts[grid1->width * ( k - 1 ) + offset1].xyz, R_StitchLodError( grid1->heightLodError, grid1->height, k + 1 ) );
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1743,8 +1844,13 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					} else { column = 0;}
 					grid2 = R_GridInsertRow( grid2, l + 1, column,
 											 grid1->verts[grid1->width * ( k - 1 ) + offset1].xyz, R_StitchLodError( grid1->heightLodError, grid1->height, k + 1 ) );
+					if ( !grid2 ) {
+						// no zone for the wider grid: the old one stays, and the map is refused
+						s_stitchFailed = qtrue;
+						return qfalse;
+					}
 					grid2->lodStitched = qfalse;
-					s_worldData.surfaces[grid2num].data = (void *) grid2;
+					s_stitchGrids[grid2num] = grid2;
 					return qtrue;
 				}
 			}
@@ -1771,10 +1877,10 @@ int R_TryStitchingPatch( int grid1num ) {
 	srfGridMesh_t *grid1, *grid2;
 
 	numstitches = 0;
-	grid1 = (srfGridMesh_t *) s_worldData.surfaces[grid1num].data;
-	for ( j = 0; j < s_worldData.numsurfaces; j++ ) {
+	grid1 = s_stitchGrids[grid1num];
+	for ( j = 0; j < s_numStitchGrids; j++ ) {
 		//
-		grid2 = (srfGridMesh_t *) s_worldData.surfaces[j].data;
+		grid2 = s_stitchGrids[j];
 		// if this surface is not a grid
 		if ( grid2->surfaceType != SF_GRID ) {
 			continue;
@@ -1798,6 +1904,9 @@ int R_TryStitchingPatch( int grid1num ) {
 		{
 			numstitches++;
 		}
+		if ( s_stitchFailed ) {
+			break;
+		}
 	}
 	return numstitches;
 }
@@ -1815,9 +1924,9 @@ void R_StitchAllPatches( void ) {
 	do
 	{
 		stitched = qfalse;
-		for ( i = 0; i < s_worldData.numsurfaces; i++ ) {
+		for ( i = 0; i < s_numStitchGrids; i++ ) {
 			//
-			grid1 = (srfGridMesh_t *) s_worldData.surfaces[i].data;
+			grid1 = s_stitchGrids[i];
 			// if this surface is not a grid
 			if ( grid1->surfaceType != SF_GRID ) {
 				continue;
@@ -1831,6 +1940,9 @@ void R_StitchAllPatches( void ) {
 			stitched = qtrue;
 			//
 			numstitches += R_TryStitchingPatch( i );
+			if ( s_stitchFailed ) {
+				return;
+			}
 		}
 	}
 	while ( stitched );
@@ -1843,7 +1955,7 @@ R_MovePatchSurfacesToHunk
 ===============
 */
 void R_MovePatchSurfacesToHunk( void ) {
-	int i, size;
+	int i, size, moved = 0;
 	srfGridMesh_t *grid, *hunkgrid;
 
 	for ( i = 0; i < s_worldData.numsurfaces; i++ ) {
@@ -1865,6 +1977,11 @@ void R_MovePatchSurfacesToHunk( void ) {
 		// rain - copy into hunkgrid instead of copying grid overtop of itself
 		Com_Memcpy( hunkgrid->heightLodError, grid->heightLodError, grid->height * 4 );
 
+		// the list holds the grids in this order: a later drop must not free one again
+		if ( moved < s_patchGrids.count && s_patchGrids.grids[moved] == grid ) {
+			s_patchGrids.grids[moved] = NULL;
+		}
+		moved++;
 		R_FreeSurfaceGridMesh( grid );
 
 		s_worldData.surfaces[i].data = (void *) hunkgrid;
@@ -1946,15 +2063,17 @@ static void R_LoadSurfaces( lump_t *surfs, lump_t *verts, lump_t *indexLump ) {
 		}
 	}
 
-#ifdef PATCH_STITCHING
-	R_StitchAllPatches();
-#endif
-
+	// R_ValidateBSP stitched the grids
 	R_FixSharedVertexLodError();
 
 #ifdef PATCH_STITCHING
 	R_MovePatchSurfacesToHunk();
 #endif
+	// ParseMesh took every grid, and each went to the hunk
+	if ( s_patchGrids.next != s_patchGrids.count ) {
+		ri.Error( ERR_DROP, "R_LoadSurfaces: %d of %d patch grids unused", s_patchGrids.count - s_patchGrids.next, s_patchGrids.count );
+	}
+	R_FreePatchGridList( &s_patchGrids );
 
 	ri.Printf( PRINT_ALL, "...loaded %d faces, %i meshes, %i trisurfs, %i flares %i foliage\n",
 			   numFaces, numMeshes, numTriSurfs, numFlares, numFoliage );
@@ -2908,6 +3027,36 @@ static void R_BSPVertexXYZ( const byte *vertex, vec3_t xyz ) {
 	}
 }
 
+/* A patch surface ParseMesh will build a grid for: one not marked nodraw. */
+static qboolean R_BSPDrawnPatch( const byte *buffer, const dheader_t *header, const byte *record ) {
+	const byte *shader;
+
+	if ( BSP_FileWord( record + offsetof( dsurface_t, surfaceType ) ) != MST_PATCH ) {
+		return qfalse;
+	}
+	// BSP_ValidateReferences has checked the shader index
+	shader = buffer + header->lumps[LUMP_SHADERS].fileofs + BSP_FileWord( record + offsetof( dsurface_t, shaderNum ) ) * sizeof( dshader_t );
+	return !( BSP_FileWord( shader + offsetof( dshader_t, surfaceFlags ) ) & SURF_NODRAW );
+}
+
+/*
+Takes one ri.Hunk_Alloc( size )'s real cost off what is left, as
+CM_BudgetAllocation does. Subtracting keeps a hostile sum from overflowing.
+*/
+#define R_HUNK_BUDGET_ERROR "world map needs more hunk memory than is left"
+static qboolean R_BudgetAllocation( unsigned int size, int *remaining ) {
+	int cost = size > INT_MAX ? -1 : ri.Hunk_AllocationSize( (int)size );
+
+	if ( cost < 0 || cost > *remaining ) {
+		return qfalse;
+	}
+	*remaining -= cost;
+	return qtrue;
+}
+
+/* R_CreateSurfaceGridMesh found no zone block for a grid, building or stitching it */
+#define R_ZONE_BUDGET_ERROR "patch grids need more zone memory than is left"
+
 /* ParseMesh's control points and R_SubdividePatchToGrid's grid, off the stack */
 typedef struct {
 	drawVert_t points[MAX_PATCH_SIZE * MAX_PATCH_SIZE];
@@ -2918,12 +3067,13 @@ typedef struct {
 =================
 R_ValidateBSPPatch
 
-Runs a drawn patch through R_RefinePatchGrid as ParseMesh will, then checks
-the sphere, plane and LOD sphere ParseMesh computes from it (Q3A 8bc70a8a).
+Runs a drawn patch through R_RefinePatchGrid as R_SubdividePatchToGrid
+would, then checks the sphere, plane and LOD sphere R_FinishPatchGrid
+computes from it (Q3A 8bc70a8a). The refined grid is left in work, and its
+size in width and height, for R_ValidateBSPGeometry to build.
 =================
 */
-static const char *R_ValidateBSPPatch( const byte *buffer, const dheader_t *header, const byte *record, bspPatchWork_t *work ) {
-	const byte *vertex;
+static const char *R_ValidateBSPPatch( const byte *buffer, const dheader_t *header, const byte *record, bspPatchWork_t *work, int *widthOut, int *heightOut ) {
 	int width = BSP_FileWord( record + offsetof( dsurface_t, patchWidth ) );
 	int height = BSP_FileWord( record + offsetof( dsurface_t, patchHeight ) );
 	int i, k;
@@ -2935,23 +3085,14 @@ static const char *R_ValidateBSPPatch( const byte *buffer, const dheader_t *head
 	if ( width > MAX_GRID_SIZE || height > MAX_GRID_SIZE ) {
 		return "BSP patch exceeds the renderer grid";
 	}
-	vertex = R_BSPSurfaceVertex( buffer, header, record );
-	for ( i = 0; i < width * height; i++, vertex += sizeof( drawVert_t ) ) {
-		R_BSPVertexXYZ( vertex, work->points[i].xyz );
-		for ( k = 0; k < 3; k++ ) {
-			work->points[i].normal[k] = BSP_GeometryFloat( vertex + offsetof( drawVert_t, normal ) + k * 4 );
-		}
-		for ( k = 0; k < 2; k++ ) {
-			work->points[i].st[k] = BSP_GeometryFloat( vertex + offsetof( drawVert_t, st ) + k * 4 );
-			work->points[i].lightmap[k] = BSP_GeometryFloat( vertex + offsetof( drawVert_t, lightmap ) + k * 4 );
-		}
-		// colors take no part in the float arithmetic
-		memcpy( work->points[i].color, vertex + offsetof( drawVert_t, color ), sizeof( work->points[i].color ) );
-	}
+	// the lumps are aligned (BSP_ValidateHeader) and the span checked
+	R_PatchControlPoints( (const dsurface_t *)record, (const drawVert_t *)( buffer + header->lumps[LUMP_DRAWVERTS].fileofs ), work->points );
 	error = R_RefinePatchGrid( &width, &height, &work->grid, work->points );
 	if ( error ) {
 		return error;
 	}
+	*widthOut = width;
+	*heightOut = height;
 	// R_CreateSurfaceGridMesh's bounds, then FinishGenericSurface on its first vertex
 	ClearBounds( bounds[0], bounds[1] );
 	for ( i = 0; i < height; i++ ) {
@@ -2986,24 +3127,49 @@ surface: the R_GetSurfMemory size of a triangle or foliage surface, its
 vertex and index counts against the tessellator, and the floats the parsers
 compute from finite input (refined patches, bounding spheres, plane
 distances, foliage bounds), which can still overflow.
+
+Each drawn patch's grid is then built, in the zone as R_SubdividePatchToGrid
+builds it, and finished, into patches. Once every surface has passed, the
+grids are stitched: stitching inserts rows and columns, so only after it are
+the sizes R_MovePatchSurfacesToHunk copies to the hunk known. Every grid
+built or widened comes from ri.Z_TryMalloc, so a zone with no block for one
+refuses the map instead of failing fatally. On an error, the caller frees
+the grids.
 =================
 */
-static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *header ) {
+#ifndef PATCH_STITCHING
+#error "the BSP preflight builds patch grids in the zone, which needs PATCH_STITCHING"
+#endif
+static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *header, bspPatchGrids_t *patches ) {
 	const byte *record, *shader, *vertex;
 	unsigned int i, j, count, type, size, verts, indexes, instances;
 	srfTriangles_t *tri = NULL;
 	srfFoliage_t *foliage = NULL;
+	srfGridMesh_t *grid;
 	bspPatchWork_t *work = NULL;
 	vec3_t point, first, bounds[2], meshBounds[2], translated;
 	float scale;
+	int width, height;
 	const char *error;
 
+	memset( patches, 0, sizeof( *patches ) );
 	error = BSP_ValidateGeometry( buffer, header, MAX_PATCH_SIZE * MAX_PATCH_SIZE, MAX_PATCH_SIZE * MAX_PATCH_SIZE );
 	if ( error ) {
 		return error;
 	}
 	scale = R_FoliageScale();
 	count = header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t );
+	// a list entry for each drawn patch
+	for ( i = j = 0; i < count; i++ ) {
+		record = buffer + header->lumps[LUMP_SURFACES].fileofs + i * sizeof( dsurface_t );
+		if ( R_BSPDrawnPatch( buffer, header, record ) ) {
+			j++;
+		}
+	}
+	patches->grids = malloc( ( j ? j : 1 ) * sizeof( *patches->grids ) );
+	if ( !patches->grids ) {
+		return "BSP patch validation allocation failed";
+	}
 	for ( i = 0; i < count && !error; i++ ) {
 		record = buffer + header->lumps[LUMP_SURFACES].fileofs + i * sizeof( dsurface_t );
 		type = BSP_FileWord( record + offsetof( dsurface_t, surfaceType ) );
@@ -3011,18 +3177,28 @@ static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *h
 		indexes = BSP_FileWord( record + offsetof( dsurface_t, numIndexes ) );
 		size = 0;
 		if ( type == MST_PATCH ) {
-			// ParseMesh skips a nodraw patch before R_SubdividePatchToGrid's ctrl grid
-			shader = buffer + header->lumps[LUMP_SHADERS].fileofs + BSP_FileWord( record + offsetof( dsurface_t, shaderNum ) ) * sizeof( dshader_t );
-			if ( BSP_FileWord( shader + offsetof( dshader_t, surfaceFlags ) ) & SURF_NODRAW ) {
+			// ParseMesh skips a nodraw patch, which has no grid
+			if ( !R_BSPDrawnPatch( buffer, header, record ) ) {
 				continue;
 			}
 			if ( !work ) {
 				work = malloc( sizeof( *work ) );
 				if ( !work ) {
-					return "BSP patch validation allocation failed";
+					error = "BSP patch validation allocation failed";
+					break;
 				}
 			}
-			error = R_ValidateBSPPatch( buffer, header, record, work );
+			error = R_ValidateBSPPatch( buffer, header, record, work, &width, &height );
+			if ( !error ) {
+				// NULL where the zone has no block for it, instead of a fatal Z_Malloc
+				grid = R_CreateSurfaceGridMesh( width, height, work->grid.ctrl, work->grid.errorTable );
+				if ( !grid ) {
+					error = R_ZONE_BUDGET_ERROR;
+				} else {
+					R_FinishPatchGrid( (dsurface_t *)record, grid );
+					patches->grids[patches->count++] = grid;
+				}
+			}
 		} else if ( type == MST_PLANAR || type == MST_TRIANGLE_SOUP ) {
 			// ParseTriSurf. RB_SurfaceTriangles drops with ERR_DROP, every
 			// frame it is drawn, a surface the tessellator cannot hold (Q3A 7b4ba9c6)
@@ -3087,7 +3263,154 @@ static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *h
 		}
 	}
 	free( work );
+	if ( !error ) {
+		// the grids in surface order, as R_LoadSurfaces stitched them
+		s_stitchGrids = patches->grids;
+		s_numStitchGrids = patches->count;
+		s_stitchFailed = qfalse;
+		R_StitchAllPatches();
+		if ( s_stitchFailed ) {
+			error = R_ZONE_BUDGET_ERROR;
+		}
+		s_stitchGrids = NULL;
+		s_numStitchGrids = 0;
+		s_stitchFailed = qfalse;
+	}
 	return error;
+}
+
+/* R_GetSurfMemory's cost of a size-byte surface, from a chunk with *used bytes taken. */
+static qboolean R_BudgetSurfMemory( unsigned int size, int *used, int *remaining ) {
+	// size is under INT_MAX - 4096 (R_BSPSurfaceBytes)
+	size = ( size + 31 ) & ~31u;
+	if ( size > SURF_HUNK_MAXSIZE ) {
+		return R_BudgetAllocation( size, remaining );
+	}
+	*used += size;
+	if ( *used >= SURF_HUNK_MAXSIZE ) {
+		// a new chunk, of which this surface takes the start
+		*used = size;
+		return R_BudgetAllocation( SURF_HUNK_MAXSIZE, remaining );
+	}
+	return qtrue;
+}
+
+/*
+=================
+R_ValidateBSPBudget
+
+Charges every block RE_LoadWorldMap will take from the hunk, in load order,
+at Hunk_AllocationSize's real cost, against what is left with the file in
+temp memory (as CM_LoadMap does, #41). The patch grids are the stitched ones
+R_ValidateBSPGeometry built. Not charged: temporary hunk (image reads, decode
+and resample buffers), and shaders and the images they load (R_FindShader and
+R_RemapShader, from the surfaces, fogs, worldspawn and sun), which take zone
+and malloc memory at the default r_cache 1 and r_cacheShaders 1, but the hunk
+when either is 0: only at the default is the budget exact.
+=================
+*/
+static const char *R_ValidateBSPBudget( const byte *buffer, const dheader_t *header, const bspLightGrid_t *lightGrid, const bspPatchGrids_t *patches ) {
+	const byte *record;
+	unsigned int i, count, type, value, clusters = 0, size, verts, indexes, instances;
+	const srfGridMesh_t *grid;
+	const srfTriangles_t *tri = NULL;
+	const srfFoliage_t *foliage = NULL;
+	unsigned int depth;
+	const char *error;
+	int remaining = ri.Hunk_MemoryRemaining(), used = 0, ok;
+
+	// the start marker, the shader records, and the lightmaps' images if
+	// R_CacheImageAlloc takes them from the hunk
+	ok = R_BudgetAllocation( 0, &remaining ) &&
+		 R_BudgetAllocation( header->lumps[LUMP_SHADERS].filelen, &remaining );
+	count = header->lumps[LUMP_LIGHTMAPS].filelen / ( LIGHTMAP_SIZE * LIGHTMAP_SIZE * 3 );
+	if ( count && glConfig.hardwareType != GLHW_PERMEDIA2 && !( r_cache->integer && r_cacheShaders->integer ) ) {
+		// the single-lightmap hack makes a second image
+		for ( i = 0; ok && i < ( count == 1 ? 2 : count ); i++ ) {
+			ok = R_BudgetAllocation( sizeof( image_t ), &remaining );
+		}
+	}
+	// each plane and its flipped copy; the surface records and the first surface chunk
+	ok = ok && R_BudgetAllocation( header->lumps[LUMP_PLANES].filelen / sizeof( dplane_t ) * 2 * sizeof( cplane_t ), &remaining ) &&
+		 R_BudgetAllocation( header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t ) * sizeof( msurface_t ), &remaining ) &&
+		 R_BudgetAllocation( SURF_HUNK_MAXSIZE, &remaining );
+	// the surfaces, at the sizes R_ValidateBSPGeometry has bounded
+	count = header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t );
+	for ( i = 0; ok && i < count; i++ ) {
+		record = buffer + header->lumps[LUMP_SURFACES].fileofs + i * sizeof( dsurface_t );
+		type = BSP_FileWord( record + offsetof( dsurface_t, surfaceType ) );
+		indexes = BSP_FileWord( record + offsetof( dsurface_t, numIndexes ) );
+		if ( type == MST_PLANAR || type == MST_TRIANGLE_SOUP ) {
+			verts = BSP_FileWord( record + offsetof( dsurface_t, numVerts ) );
+			// ParseTriSurf's size
+			size = sizeof( *tri ) + verts * sizeof( tri->verts[0] ) + indexes * sizeof( tri->indexes[0] );
+			ok = R_BudgetSurfMemory( size, &used, &remaining );
+		} else if ( type == MST_FOLIAGE ) {
+			// ParseFoliage's size
+			verts = BSP_FileWord( record + offsetof( dsurface_t, patchHeight ) );
+			instances = BSP_FileWord( record + offsetof( dsurface_t, patchWidth ) );
+			size = sizeof( *foliage ) +
+				   verts * ( sizeof( foliage->xyz[0] ) + sizeof( foliage->normal[0] ) + sizeof( foliage->texCoords[0] ) + sizeof( foliage->lmTexCoords[0] ) ) +
+				   indexes * sizeof( foliage->indexes[0] ) +
+				   instances * sizeof( foliage->instances[0] );
+			ok = R_BudgetSurfMemory( size, &used, &remaining );
+		} else if ( type == MST_FLARE ) {
+			ok = R_BudgetAllocation( sizeof( srfFlare_t ), &remaining );
+		}
+	}
+	// R_MovePatchSurfacesToHunk's copy of each stitched grid
+	for ( i = 0; ok && i < (unsigned int)patches->count; i++ ) {
+		grid = patches->grids[i];
+		ok = R_BudgetAllocation( ( grid->width * grid->height - 1 ) * sizeof( drawVert_t ) + sizeof( *grid ), &remaining ) &&
+			 R_BudgetAllocation( grid->width * 4, &remaining ) &&
+			 R_BudgetAllocation( grid->height * 4, &remaining );
+	}
+	// marks, then nodes and leafs and the sky node list
+	ok = ok && R_BudgetAllocation( header->lumps[LUMP_LEAFSURFACES].filelen / 4 * sizeof( msurface_t * ), &remaining ) &&
+		 R_BudgetAllocation( ( header->lumps[LUMP_NODES].filelen / sizeof( dnode_t ) + header->lumps[LUMP_LEAFS].filelen / sizeof( dleaf_t ) ) * sizeof( mnode_t ), &remaining ) &&
+		 R_BudgetAllocation( WORLD_MAX_SKY_NODES * sizeof( mnode_t * ), &remaining );
+	// the world walks' stacks, one entry per level R_SetParents finds: BSP_TreeDepth
+	// counts the same decision nodes on the deepest path, the root as 1
+	if ( ok ) {
+		error = BSP_TreeDepth( buffer, header, &depth );
+		if ( error ) {
+			return error;
+		}
+		// depth is at most the node count, which R_ValidateBSPAllocations bounded
+		ok = R_BudgetAllocation( depth * sizeof( *s_worldData.worldNodeStack ), &remaining ) &&
+			 R_BudgetAllocation( depth * sizeof( *s_worldData.boxNodeStack ), &remaining );
+	}
+	// the brush models: each one's model slot and decals
+	count = header->lumps[LUMP_MODELS].filelen / sizeof( dmodel_t );
+	ok = ok && R_BudgetAllocation( count * sizeof( bmodel_t ), &remaining );
+	for ( i = 0; ok && i < count; i++ ) {
+		ok = R_BudgetAllocation( sizeof( model_t ), &remaining ) &&
+			 R_BudgetAllocation( ( i ? MAX_ENTITY_DECALS : MAX_WORLD_DECALS ) * sizeof( decal_t ), &remaining );
+	}
+	// the fogs, with the empty fog 0
+	ok = ok && R_BudgetAllocation( ( header->lumps[LUMP_FOGS].filelen / sizeof( dfog_t ) + 1 ) * sizeof( fog_t ), &remaining );
+	// novis rows for the clusters R_LoadNodesAndLeafs counts, then the rows
+	// themselves unless the collision map shares them
+	count = header->lumps[LUMP_LEAFS].filelen / sizeof( dleaf_t );
+	for ( i = 0; i < count; i++ ) {
+		value = BSP_FileWord( buffer + header->lumps[LUMP_LEAFS].fileofs + i * sizeof( dleaf_t ) + offsetof( dleaf_t, cluster ) );
+		if ( value < 0x80000000u && value >= clusters ) {
+			clusters = value + 1;
+		}
+	}
+	// clusters is at most 2^31, so the rounding cannot wrap
+	ok = ok && R_BudgetAllocation( ( clusters + 63 ) & ~63u, &remaining );
+	if ( ok && header->lumps[LUMP_VISIBILITY].filelen && !tr.externalVisData ) {
+		// BSP_ValidateReferences has checked the 8-byte header is there
+		ok = R_BudgetAllocation( header->lumps[LUMP_VISIBILITY].filelen - 8, &remaining );
+	}
+	// the entity string and its NUL, the light grid R_LoadLightGrid keeps, and the end marker
+	ok = ok && R_BudgetAllocation( header->lumps[LUMP_ENTITIES].filelen + 1, &remaining );
+	if ( ok && lightGrid->numPoints && header->lumps[LUMP_LIGHTGRID].filelen == lightGrid->numPoints * 8 ) {
+		ok = R_BudgetAllocation( header->lumps[LUMP_LIGHTGRID].filelen, &remaining );
+	}
+	ok = ok && R_BudgetAllocation( 0, &remaining );
+	return ok ? NULL : R_HUNK_BUDGET_ERROR;
 }
 
 /*
@@ -3095,12 +3418,16 @@ static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *h
 R_ValidateBSP
 
 Every lump, cross-lump index, span, size and light grid the loaders below
-trust, checked on the file buffer before RE_LoadWorldMap changes anything.
+trust, checked on the file buffer before RE_LoadWorldMap changes anything,
+and every block they take from the hunk charged against what is left. The
+patch grids are built and stitched here, in the zone; a refused map's are
+freed.
 =================
 */
-static const char *R_ValidateBSP( const byte *buffer, int length, dheader_t *header, bspLightGrid_t *grid ) {
+static const char *R_ValidateBSP( const byte *buffer, int length, dheader_t *header, bspLightGrid_t *grid, bspPatchGrids_t *patches ) {
 	const char *error;
 
+	memset( patches, 0, sizeof( *patches ) );
 	error = BSP_ValidateHeader( buffer, length, header );
 	if ( !error ) {
 		error = R_ValidateBSPAllocations( header );
@@ -3112,10 +3439,16 @@ static const char *R_ValidateBSP( const byte *buffer, int length, dheader_t *hea
 		error = BSP_ValidateTree( buffer, header );
 	}
 	if ( !error ) {
-		error = R_ValidateBSPGeometry( buffer, header );
+		error = R_ValidateBSPGeometry( buffer, header, patches );
 	}
 	if ( !error ) {
 		error = R_ValidateBSPLightGrid( buffer, header, grid );
+	}
+	if ( !error ) {
+		error = R_ValidateBSPBudget( buffer, header, grid, patches );
+	}
+	if ( error ) {
+		R_FreePatchGrids( patches );
 	}
 	return error;
 }
@@ -3131,6 +3464,7 @@ void RE_LoadWorldMap( const char *name ) {
 	int length;
 	dheader_t validatedHeader, *header = &validatedHeader;
 	bspLightGrid_t validatedGrid;
+	bspPatchGrids_t patches;
 	const char  *error;
 	byte        *buffer;
 	byte        *startMarker;
@@ -3139,16 +3473,22 @@ void RE_LoadWorldMap( const char *name ) {
 		ri.Error( ERR_DROP, "ERROR: attempted to redundantly load world map\n" );
 	}
 
-	// load it, and check the whole file before any renderer state changes
+	// grids an earlier load built but dropped before moving to the hunk
+	// (TAG_RENDERER blocks outlive ERR_DROP until RE_Shutdown's ri.Tag_Free)
+	R_FreePatchGrids( &s_patchGrids );
+
+	// load it, and check the whole file, and that the world fits in the hunk
+	// beside it, before any renderer state changes
 	length = ri.FS_ReadFile( name, (void **)&buffer );
 	if ( !buffer ) {
 		ri.Error( ERR_DROP, "RE_LoadWorldMap: %s not found", name );
 	}
-	error = R_ValidateBSP( buffer, length, header, &validatedGrid );
+	error = R_ValidateBSP( buffer, length, header, &validatedGrid, &patches );
 	if ( error ) {
 		ri.FS_FreeFile( buffer );
 		ri.Error( ERR_DROP, "RE_LoadWorldMap: %s: %s", name, error );
 	}
+	s_patchGrids = patches;
 
 	skyboxportal = 0;
 

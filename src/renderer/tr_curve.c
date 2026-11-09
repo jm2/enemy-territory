@@ -305,13 +305,27 @@ srfGridMesh_t *R_CreateSurfaceGridMesh( int width, int height,
 	size = ( width * height - 1 ) * sizeof( drawVert_t ) + sizeof( *grid );
 
 #ifdef PATCH_STITCHING
-	grid = /*ri.Hunk_Alloc*/ ri.Z_Malloc( size );
+	// the map preflight builds and stitches every grid: where the zone has no
+	// block for one, it refuses the map instead of Z_Malloc failing fatally
+	grid = ri.Z_TryMalloc( size );
+	if ( !grid ) {
+		return NULL;
+	}
 	Com_Memset( grid, 0, size );
 
-	grid->widthLodError = /*ri.Hunk_Alloc*/ ri.Z_Malloc( width * 4 );
+	grid->widthLodError = ri.Z_TryMalloc( width * 4 );
+	grid->heightLodError = ri.Z_TryMalloc( height * 4 );
+	if ( !grid->widthLodError || !grid->heightLodError ) {
+		if ( grid->widthLodError ) {
+			ri.Free( grid->widthLodError );
+		}
+		if ( grid->heightLodError ) {
+			ri.Free( grid->heightLodError );
+		}
+		ri.Free( grid );
+		return NULL;
+	}
 	memcpy( grid->widthLodError, errorTable[0], width * 4 );
-
-	grid->heightLodError = /*ri.Hunk_Alloc*/ ri.Z_Malloc( height * 4 );
 	memcpy( grid->heightLodError, errorTable[1], height * 4 );
 #else
 	grid = ri.Hunk_Alloc( size, h_low );
@@ -596,6 +610,7 @@ R_SubdividePatchToGrid
 srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
 									   drawVert_t points[MAX_PATCH_SIZE*MAX_PATCH_SIZE] ) {
 	MAC_STATIC patchGrid_t grid;
+	srfGridMesh_t *result;
 	const char *error;
 
 	// the preflight refused any patch this would refuse
@@ -603,7 +618,11 @@ srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
 	if ( error ) {
 		ri.Error( ERR_DROP, "R_SubdividePatchToGrid: %s", error );
 	}
-	return R_CreateSurfaceGridMesh( width, height, grid.ctrl, grid.errorTable );
+	result = R_CreateSurfaceGridMesh( width, height, grid.ctrl, grid.errorTable );
+	if ( !result ) {
+		ri.Error( ERR_DROP, "R_SubdividePatchToGrid: no zone memory for the grid" );
+	}
+	return result;
 }
 
 /*
@@ -612,6 +631,7 @@ R_GridInsertColumn
 ===============
 */
 srfGridMesh_t *R_GridInsertColumn( srfGridMesh_t *grid, int column, int row, vec3_t point, float loderror ) {
+	srfGridMesh_t *newGrid;
 	int i, j;
 	int width, height, oldwidth;
 	MAC_STATIC drawVert_t ctrl[MAX_GRID_SIZE][MAX_GRID_SIZE];
@@ -653,10 +673,14 @@ srfGridMesh_t *R_GridInsertColumn( srfGridMesh_t *grid, int column, int row, vec
 
 	VectorCopy( grid->lodOrigin, lodOrigin );
 	lodRadius = grid->lodRadius;
-	// free the old grid
+	// create a new grid, then free the old one: with no zone for the new one,
+	// the old grid stays and the caller gets NULL
+	newGrid = R_CreateSurfaceGridMesh( width, height, ctrl, errorTable );
+	if ( !newGrid ) {
+		return NULL;
+	}
 	R_FreeSurfaceGridMesh( grid );
-	// create a new grid
-	grid = R_CreateSurfaceGridMesh( width, height, ctrl, errorTable );
+	grid = newGrid;
 	grid->lodRadius = lodRadius;
 	VectorCopy( lodOrigin, grid->lodOrigin );
 	return grid;
@@ -668,6 +692,7 @@ R_GridInsertRow
 ===============
 */
 srfGridMesh_t *R_GridInsertRow( srfGridMesh_t *grid, int row, int column, vec3_t point, float loderror ) {
+	srfGridMesh_t *newGrid;
 	int i, j;
 	int width, height, oldheight;
 	MAC_STATIC drawVert_t ctrl[MAX_GRID_SIZE][MAX_GRID_SIZE];
@@ -709,10 +734,14 @@ srfGridMesh_t *R_GridInsertRow( srfGridMesh_t *grid, int row, int column, vec3_t
 
 	VectorCopy( grid->lodOrigin, lodOrigin );
 	lodRadius = grid->lodRadius;
-	// free the old grid
+	// create a new grid, then free the old one: with no zone for the new one,
+	// the old grid stays and the caller gets NULL
+	newGrid = R_CreateSurfaceGridMesh( width, height, ctrl, errorTable );
+	if ( !newGrid ) {
+		return NULL;
+	}
 	R_FreeSurfaceGridMesh( grid );
-	// create a new grid
-	grid = R_CreateSurfaceGridMesh( width, height, ctrl, errorTable );
+	grid = newGrid;
 	grid->lodRadius = lodRadius;
 	VectorCopy( lodOrigin, grid->lodOrigin );
 	return grid;

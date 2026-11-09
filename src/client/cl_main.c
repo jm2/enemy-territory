@@ -3242,6 +3242,11 @@ void *CL_RefMalloc( int size ) {
 }
 #endif
 
+// NULL instead of a fatal error: the map preflight refuses a map whose patch grids do not fit
+static void *CL_RefTryMalloc( int size ) {
+	return Z_TryTagMalloc( size, TAG_RENDERER );
+}
+
 /*
 ============
 CL_RefTagFree
@@ -3290,6 +3295,9 @@ void CL_InitRef( void ) {
 #endif
 	ri.Hunk_AllocateTempMemory = Hunk_AllocateTempMemory;
 	ri.Hunk_FreeTempMemory = Hunk_FreeTempMemory;
+	ri.Hunk_MemoryRemaining = Hunk_MemoryRemaining;
+	ri.Hunk_AllocationSize = Hunk_AllocationSize;
+	ri.Z_TryMalloc = CL_RefTryMalloc;
 	ri.CM_DrawDebugSurface = CM_DrawDebugSurface;
 	ri.FS_ReadFile = FS_ReadFile;
 	ri.FS_FreeFile = FS_FreeFile;
