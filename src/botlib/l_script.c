@@ -85,6 +85,9 @@ typedef enum {qfalse, qtrue}    qboolean;
 #define qfalse  false
 #endif //BSPC
 
+#include <float.h>
+#include <limits.h>
+
 #define PUNCTABLE
 
 //longer punctuations first
@@ -379,7 +382,7 @@ int PS_ReadWhiteSpace( script_t *script ) {
 // Changes Globals:		-
 //============================================================================
 int PS_ReadEscapeCharacter( script_t *script, char *ch ) {
-	int c, val, i;
+	int c, val = 0, base = 0, overflow = qfalse;
 
 	//step over the leading '\\'
 	script->script_p++;
@@ -400,24 +403,7 @@ int PS_ReadEscapeCharacter( script_t *script, char *ch ) {
 	case 'x':
 	{
 		script->script_p++;
-		for ( i = 0, val = 0; ; i++, script->script_p++ )
-		{
-			c = *script->script_p;
-			if ( c >= '0' && c <= '9' ) {
-				c = c - '0';
-			} else if ( c >= 'A' && c <= 'Z' ) {
-				c = c - 'A' + 10;
-			} else if ( c >= 'a' && c <= 'z' )                                            {
-				c = c - 'a' + 10;
-			} else { break;}
-			val = ( val << 4 ) + c;
-		}     //end for
-		script->script_p--;
-		if ( val > 0xFF ) {
-			ScriptWarning( script, "too large value in escape character" );
-			val = 0xFF;
-		}     //end if
-		c = val;
+		base = 16;
 		break;
 	}     //end case
 	default:     //NOTE: decimal ASCII code, NOT octal
@@ -425,25 +411,41 @@ int PS_ReadEscapeCharacter( script_t *script, char *ch ) {
 		if ( *script->script_p < '0' || *script->script_p > '9' ) {
 			ScriptError( script, "unknown escape char" );
 		}
-		for ( i = 0, val = 0; ; i++, script->script_p++ )
+		base = 10;
+		break;
+	}     //end default
+	} //end switch
+	if ( base ) {
+		//the value stops growing at 0xFF, so no run of digits overflows it
+		for ( ; ; script->script_p++ )
 		{
 			c = *script->script_p;
 			if ( c >= '0' && c <= '9' ) {
 				c = c - '0';
+			} else if ( base == 16 && c >= 'A' && c <= 'Z' ) {
+				c = c - 'A' + 10;
+			} else if ( base == 16 && c >= 'a' && c <= 'z' ) {
+				c = c - 'a' + 10;
 			} else { break;}
-			val = val * 10 + c;
-		}     //end for
-		script->script_p--;
-		if ( val > 0xFF ) {
+			if ( !overflow ) {
+				if ( val > ( 0xFF - c ) / base ) {
+					overflow = qtrue;
+				} else { val = val * base + c;}
+			} //end if
+		} //end for
+		if ( overflow ) {
 			ScriptWarning( script, "too large value in escape character" );
 			val = 0xFF;
-		}     //end if
+		} //end if
+		//the cursor stays on the first character after the digits (on the
+		//character after the escape when there are none, as it always has)
 		c = val;
-		break;
-	}     //end default
-	} //end switch
-	  //step over the escape character or the last digit of the number
-	script->script_p++;
+	} //end if
+	else
+	{
+		//step over the escape character
+		script->script_p++;
+	} //end else
 	//store the escape character
 	*ch = c;
 	//succesfully read escape character
@@ -570,9 +572,12 @@ int PS_ReadName( script_t *script, token_t *token ) {
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
-void NumberValue( char *string, int subtype, unsigned long int *intvalue,
-				  long double *floatvalue ) {
-	unsigned long int dotfound = 0;
+int NumberValue( char *string, int subtype, unsigned long int *intvalue,
+				 long double *floatvalue ) {
+	unsigned long value = 0;
+	unsigned int base, digit;
+	int dotfound = qfalse, scaled = qfalse;
+	long double number = 0, divisor = 10, weight = 0, contribution;
 
 	*intvalue = 0;
 	*floatvalue = 0;
@@ -582,55 +587,103 @@ void NumberValue( char *string, int subtype, unsigned long int *intvalue,
 		{
 			if ( *string == '.' ) {
 				if ( dotfound ) {
-					return;
+					return qfalse;
 				}
-				dotfound = 10;
+				dotfound = qtrue;
 				string++;
+				continue;
 			} //end if
+			if ( *string < '0' || *string > '9' ) {
+				return qfalse;
+			}
+			digit = *string++ - '0';
 			if ( dotfound ) {
-				*floatvalue = *floatvalue + ( long double )( *string - '0' ) /
-							  (long double) dotfound;
-				dotfound *= 10;
+				if ( scaled ) {
+					contribution = digit * weight;
+					weight /= 10;
+				} //end if
+				else
+				{
+					contribution = (long double) digit / divisor;
+					if ( divisor < LDBL_MAX / 10 ) {
+						divisor *= 10;
+					} else
+					{
+						//keep tiny fractions without overflowing the divisor
+						scaled = qtrue;
+						weight = ( 1 / divisor ) / 10;
+					} //end else
+				} //end else
+				if ( number > LDBL_MAX - contribution ) {
+					return qfalse;
+				}
+				number += contribution;
 			} //end if
 			else
 			{
-				*floatvalue = *floatvalue * 10.0 + ( long double )( *string - '0' );
+				if ( number >= LDBL_MAX / 10 ) {
+					return qfalse;
+				}
+				number *= 10;
+				if ( number > LDBL_MAX - digit ) {
+					return qfalse;
+				}
+				number += digit;
 			} //end else
-			string++;
 		} //end while
-		*intvalue = (unsigned long) *floatvalue;
+		//a finite float can exceed the range of its integer value
+		if ( number >= (long double) ULONG_MAX ) {
+			value = ULONG_MAX;
+		} else { value = (unsigned long) number;}
+		*intvalue = value;
+		*floatvalue = number;
+		return qtrue;
 	} //end if
-	else if ( subtype & TT_DECIMAL ) {
-		while ( *string ) *intvalue = *intvalue * 10 + ( *string++ - '0' );
-		*floatvalue = *intvalue;
-	} //end else if
-	else if ( subtype & TT_HEX ) {
+	if ( subtype & TT_DECIMAL ) {
+		base = 10;
+	} else if ( subtype & TT_HEX ) {
 		//step over the leading 0x or 0X
+		base = 16;
 		string += 2;
-		while ( *string )
-		{
-			*intvalue <<= 4;
-			if ( *string >= 'a' && *string <= 'f' ) {
-				*intvalue += *string - 'a' + 10;
-			} else if ( *string >= 'A' && *string <= 'F' ) {
-				*intvalue += *string - 'A' + 10;
-			} else { *intvalue += *string - '0';}
-			string++;
-		} //end while
-		*floatvalue = *intvalue;
+		if ( !*string ) {
+			return qfalse;
+		}
 	} //end else if
 	else if ( subtype & TT_OCTAL ) {
 		//step over the first zero
-		string += 1;
-		while ( *string ) *intvalue = ( *intvalue << 3 ) + ( *string++ - '0' );
-		*floatvalue = *intvalue;
+		base = 8;
+		string++;
 	} //end else if
 	else if ( subtype & TT_BINARY ) {
 		//step over the leading 0b or 0B
+		base = 2;
 		string += 2;
-		while ( *string ) *intvalue = ( *intvalue << 1 ) + ( *string++ - '0' );
-		*floatvalue = *intvalue;
+		if ( !*string ) {
+			return qfalse;
+		}
 	} //end else if
+	else
+	{
+		return qfalse;
+	} //end else
+	while ( *string )
+	{
+		if ( *string >= 'a' && *string <= 'f' ) {
+			digit = *string - 'a' + 10;
+		} else if ( *string >= 'A' && *string <= 'F' ) {
+			digit = *string - 'A' + 10;
+		} else if ( *string >= '0' && *string <= '9' ) {
+			digit = *string - '0';
+		} else { return qfalse;}
+		if ( digit >= base || value > ( ULONG_MAX - digit ) / base ) {
+			return qfalse;
+		}
+		value = value * base + digit;
+		string++;
+	} //end while
+	*intvalue = value;
+	*floatvalue = value;
+	return qtrue;
 } //end of the function NumberValue
 //============================================================================
 //
@@ -656,7 +709,7 @@ int PS_ReadNumber( script_t *script, token_t *token ) {
 		//hexadecimal
 		while ( ( c >= '0' && c <= '9' ) ||
 				( c >= 'a' && c <= 'f' ) ||
-				( c >= 'A' && c <= 'A' ) )
+				( c >= 'A' && c <= 'F' ) )
 		{
 			token->string[len++] = *script->script_p++;
 			if ( len >= MAX_TOKEN ) {
@@ -736,7 +789,10 @@ int PS_ReadNumber( script_t *script, token_t *token ) {
 	} //end for
 	token->string[len] = '\0';
 #ifdef NUMBERVALUE
-	NumberValue( token->string, token->subtype, &token->intvalue, &token->floatvalue );
+	if ( !NumberValue( token->string, token->subtype, &token->intvalue, &token->floatvalue ) ) {
+		ScriptError( script, "invalid or unrepresentable number %s", token->string );
+		return 0;
+	} //end if
 #endif //NUMBERVALUE
 	if ( !( token->subtype & TT_FLOAT ) ) {
 		token->subtype |= TT_INTEGER;
@@ -758,6 +814,10 @@ int PS_ReadLiteral( script_t *script, token_t *token ) {
 		ScriptError( script, "end of file before trailing \'" );
 		return 0;
 	} //end if
+	if ( *script->script_p == '\'' || *script->script_p == '\n' ) {
+		ScriptError( script, "empty literal or newline before character" );
+		return 0;
+	} //end if
 	  //if it is an escape character
 	if ( *script->script_p == '\\' ) {
 		if ( !PS_ReadEscapeCharacter( script, &token->string[1] ) ) {
@@ -777,9 +837,10 @@ int PS_ReadLiteral( script_t *script, token_t *token ) {
 		{
 			script->script_p++;
 		} //end while
-		if ( *script->script_p == '\'' ) {
-			script->script_p++;
-		}
+		if ( *script->script_p != '\'' ) {
+			ScriptError( script, "missing trailing quote in literal" );
+			return 0;
+		} //end if
 	} //end if
 	  //store the trailing quote
 	token->string[2] = *script->script_p++;
@@ -814,7 +875,7 @@ int PS_ReadPunctuation( script_t *script, token_t *token ) {
 		p = punc->p;
 		len = strlen( p );
 		//if the script contains at least as much characters as the punctuation
-		if ( script->script_p + len <= script->end_p ) {
+		if ( len <= script->end_p - script->script_p ) {
 			//if the script contains the punctuation
 			if ( !strncmp( script->script_p, p, len ) ) {
 				strncpy( token->string, p, MAX_TOKEN );

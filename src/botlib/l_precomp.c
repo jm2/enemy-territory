@@ -56,6 +56,8 @@ If you have questions concerning this license or the applicable additional terms
 typedef enum {qfalse, qtrue}    qboolean;
 #endif //SCREWUP
 
+#include <float.h>
+
 #ifdef BOTLIB
 #include "../game/q_shared.h"
 #include "../game/botlib.h"
@@ -1883,6 +1885,72 @@ typedef struct value_s
 	struct value_s *prev, *next;
 } value_t;
 
+//integer arithmetic is checked before it can overflow the native long, and
+//shifts are done on the unsigned word, so no expression is undefined
+static int PC_EvalFloatFinite( double value ) {
+	return value >= -DBL_MAX && value <= DBL_MAX;
+} //end of the function PC_EvalFloatFinite
+
+static int PC_EvalAdd( long a, long b, long *out ) {
+	if ( ( b > 0 && a > LONG_MAX - b ) || ( b < 0 && a < LONG_MIN - b ) ) {
+		return qfalse;
+	}
+	*out = a + b;
+	return qtrue;
+} //end of the function PC_EvalAdd
+
+static int PC_EvalSubtract( long a, long b, long *out ) {
+	if ( ( b < 0 && a > LONG_MAX + b ) || ( b > 0 && a < LONG_MIN + b ) ) {
+		return qfalse;
+	}
+	*out = a - b;
+	return qtrue;
+} //end of the function PC_EvalSubtract
+
+static int PC_EvalMultiply( long a, long b, long *out ) {
+	unsigned long left = (unsigned long) a, right = (unsigned long) b, word, limit;
+	int negative = ( a < 0 ) != ( b < 0 );
+
+	if ( a < 0 ) {
+		left = 0UL - left;
+	}
+	if ( b < 0 ) {
+		right = 0UL - right;
+	}
+	limit = (unsigned long) LONG_MAX + ( negative ? 1UL : 0UL );
+	if ( right && left > limit / right ) {
+		return qfalse;
+	}
+	word = left * right;
+	if ( negative ) {
+		word = 0UL - word;
+	}
+	*out = (long) word;
+	return qtrue;
+} //end of the function PC_EvalMultiply
+
+static int PC_EvalShift( long value, long count, int right, long *out ) {
+	unsigned long word = (unsigned long) value;
+	int width = sizeof( word ) * CHAR_BIT;
+
+	if ( count < 0 || count >= width ) {
+		return qfalse;
+	}
+	if ( right ) {
+		//arithmetic shift, as the compilers the scripts were written for did
+		word >>= count;
+		if ( value < 0 && count ) {
+			word |= ~0UL << ( width - count );
+		}
+	} //end if
+	else
+	{
+		word <<= count;
+	} //end else
+	*out = (long) word;
+	return qtrue;
+} //end of the function PC_EvalShift
+
 int PC_OperatorPriority( int op ) {
 	switch ( op )
 	{
@@ -1954,7 +2022,7 @@ int PC_EvaluateTokens( source_t *source, token_t *tokens, signed long int *intva
 	int error = 0;
 	int lastwasvalue = 0;
 	int negativevalue = 0;
-	int questmarkintvalue = 0;
+	signed long int questmarkintvalue = 0;
 	double questmarkfloatvalue = 0;
 	int gotquestmarkvalue = qfalse;
 	int lastoperatortype = 0;
@@ -2043,15 +2111,23 @@ int PC_EvaluateTokens( source_t *source, token_t *tokens, signed long int *intva
 			}     //end if
 				  //v = (value_t *) GetClearedMemory(sizeof(value_t));
 			AllocValue( v );
-			if ( negativevalue ) {
-				v->intvalue = -(signed int) t->intvalue;
-				v->floatvalue = -t->floatvalue;
+			if ( integer ) {
+				//a negated operand is narrowed to an int, as it always was,
+				//without negating INT_MIN
+				if ( negativevalue ) {
+					v->intvalue = (signed int) ( 0u - (unsigned int) t->intvalue );
+				} else { v->intvalue = (signed long int) t->intvalue;}
 			}     //end if
 			else
 			{
-				v->intvalue = t->intvalue;
-				v->floatvalue = t->floatvalue;
+				v->intvalue = 0;
 			}     //end else
+			if ( !( t->floatvalue >= -DBL_MAX && t->floatvalue <= DBL_MAX ) ) {
+				SourceError( source, "expression operand exceeds double range" );
+				error = 1;
+				break;
+			}     //end if
+			v->floatvalue = negativevalue ? -t->floatvalue : t->floatvalue;
 			v->parentheses = parentheses;
 			v->next = NULL;
 			v->prev = lastvalue;
@@ -2258,24 +2334,48 @@ int PC_EvaluateTokens( source_t *source, token_t *tokens, signed long int *intva
 			v1->floatvalue = !v1->floatvalue; break;
 		case P_BIN_NOT:         v1->intvalue = ~v1->intvalue;
 			break;
-		case P_MUL:             v1->intvalue *= v2->intvalue;
+		case P_MUL:             if ( integer && !PC_EvalMultiply( v1->intvalue, v2->intvalue, &v1->intvalue ) ) {
+				SourceError( source, "integer expression multiplication overflow" );
+				error = 1;
+				break;
+		}
 			v1->floatvalue *= v2->floatvalue; break;
-		case P_DIV:             if ( !v2->intvalue || !v2->floatvalue ) {
+		case P_DIV:             if ( ( integer && !v2->intvalue ) || ( !integer && !v2->floatvalue ) ) {
 				SourceError( source, "divide by zero in #if/#elif\n" );
 				error = 1;
 				break;
 		}
-			v1->intvalue /= v2->intvalue;
+			if ( integer ) {
+				if ( v1->intvalue == LONG_MIN && v2->intvalue == -1 ) {
+					SourceError( source, "integer expression division overflow" );
+					error = 1;
+					break;
+				}
+				v1->intvalue /= v2->intvalue;
+			}
 			v1->floatvalue /= v2->floatvalue; break;
 		case P_MOD:             if ( !v2->intvalue ) {
 				SourceError( source, "divide by zero in #if/#elif\n" );
 				error = 1;
 				break;
 		}
+			if ( v1->intvalue == LONG_MIN && v2->intvalue == -1 ) {
+				SourceError( source, "integer expression remainder overflow" );
+				error = 1;
+				break;
+			}
 			v1->intvalue %= v2->intvalue; break;
-		case P_ADD:             v1->intvalue += v2->intvalue;
+		case P_ADD:             if ( integer && !PC_EvalAdd( v1->intvalue, v2->intvalue, &v1->intvalue ) ) {
+				SourceError( source, "integer expression addition overflow" );
+				error = 1;
+				break;
+		}
 			v1->floatvalue += v2->floatvalue; break;
-		case P_SUB:             v1->intvalue -= v2->intvalue;
+		case P_SUB:             if ( integer && !PC_EvalSubtract( v1->intvalue, v2->intvalue, &v1->intvalue ) ) {
+				SourceError( source, "integer expression subtraction overflow" );
+				error = 1;
+				break;
+		}
 			v1->floatvalue -= v2->floatvalue; break;
 		case P_LOGIC_AND:       v1->intvalue = v1->intvalue && v2->intvalue;
 			v1->floatvalue = v1->floatvalue && v2->floatvalue; break;
@@ -2293,9 +2393,17 @@ int PC_EvaluateTokens( source_t *source, token_t *tokens, signed long int *intva
 			v1->floatvalue = v1->floatvalue > v2->floatvalue; break;
 		case P_LOGIC_LESS:      v1->intvalue = v1->intvalue < v2->intvalue;
 			v1->floatvalue = v1->floatvalue < v2->floatvalue; break;
-		case P_RSHIFT:          v1->intvalue >>= v2->intvalue;
+		case P_RSHIFT:          if ( !PC_EvalShift( v1->intvalue, v2->intvalue, qtrue, &v1->intvalue ) ) {
+				SourceError( source, "invalid expression right shift" );
+				error = 1;
+				break;
+		}
 			break;
-		case P_LSHIFT:          v1->intvalue <<= v2->intvalue;
+		case P_LSHIFT:          if ( !PC_EvalShift( v1->intvalue, v2->intvalue, qfalse, &v1->intvalue ) ) {
+				SourceError( source, "invalid expression left shift" );
+				error = 1;
+				break;
+		}
 			break;
 		case P_BIN_AND:         v1->intvalue &= v2->intvalue;
 			break;
@@ -2337,6 +2445,10 @@ int PC_EvaluateTokens( source_t *source, token_t *tokens, signed long int *intva
 			break;
 		}     //end if
 		} //end switch
+		if ( !error && !integer && !PC_EvalFloatFinite( v1->floatvalue ) ) {
+			SourceError( source, "floating expression result is not finite" );
+			error = 1;
+		} //end if
 #ifdef DEBUG_EVAL
 		if ( integer ) {
 			Log_Write( "result value = %d", v1->intvalue );
@@ -2757,6 +2869,25 @@ void UnreadSignToken( source_t *source ) {
 // Returns:					-
 // Changes Globals:		-
 //============================================================================
+//the text of an integer result: its magnitude, LONG_MIN's included
+static unsigned long PC_EvalMagnitude( signed long int value ) {
+	unsigned long magnitude = (unsigned long) value;
+
+	if ( value < 0 ) {
+		magnitude = 0UL - magnitude;
+	}
+	return magnitude;
+} //end of the function PC_EvalMagnitude
+
+//the integer value of a float result, as the old cast gave it on the host,
+//without converting a value outside the range of a long
+static unsigned long PC_EvalFloatInteger( double value ) {
+	if ( !( value > (double) LONG_MIN - 1.0 && value < (double) LONG_MAX ) ) {
+		return value > 0 ? ULONG_MAX : 0;
+	}
+	return (unsigned long) (long) value;
+} //end of the function PC_EvalFloatInteger
+
 int PC_Directive_eval( source_t *source ) {
 	signed long int value;
 	token_t token;
@@ -2769,7 +2900,7 @@ int PC_Directive_eval( source_t *source ) {
 	token.whitespace_p = source->scriptstack->script_p;
 	token.endwhitespace_p = source->scriptstack->script_p;
 	token.linescrossed = 0;
-	sprintf( token.string, "%d", abs( value ) );
+	sprintf( token.string, "%lu", PC_EvalMagnitude( value ) );
 	token.type = TT_NUMBER;
 	token.subtype = TT_INTEGER | TT_LONG | TT_DECIMAL;
 	PC_UnreadSourceToken( source, &token );
@@ -2875,7 +3006,7 @@ int PC_DollarDirective_evalint( source_t *source ) {
 	token.whitespace_p = source->scriptstack->script_p;
 	token.endwhitespace_p = source->scriptstack->script_p;
 	token.linescrossed = 0;
-	sprintf( token.string, "%d", abs( value ) );
+	sprintf( token.string, "%lu", PC_EvalMagnitude( value ) );
 	token.type = TT_NUMBER;
 	token.subtype = TT_INTEGER | TT_LONG | TT_DECIMAL;
 #ifdef NUMBERVALUE
@@ -2909,7 +3040,7 @@ int PC_DollarDirective_evalfloat( source_t *source ) {
 	token.type = TT_NUMBER;
 	token.subtype = TT_FLOAT | TT_LONG | TT_DECIMAL;
 #ifdef NUMBERVALUE
-	token.intvalue = (unsigned long) value;
+	token.intvalue = PC_EvalFloatInteger( value );
 	token.floatvalue = value;
 #endif //NUMBERVALUE
 	PC_UnreadSourceToken( source, &token );
