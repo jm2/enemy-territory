@@ -1295,6 +1295,7 @@ void RE_Shutdown( qboolean destroyWindow ) {
 		// Ridah, release the virtual memory
 		R_Hunk_End();
 		R_FreeImageBuffer();
+		R_ClearPatchGridList();     // its grids are among the blocks Tag_Free frees
 		ri.Tag_Free();  // wipe all render alloc'd zone memory
 	}
 

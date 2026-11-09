@@ -42,12 +42,13 @@ static void Check( int condition, const char *message ) {
 		exit( 1 );
 	}
 }
+static int insertFails;     // the zone has no block for the wider grid: Z_TryMalloc's NULL
 srfGridMesh_t *R_GridInsertColumn( srfGridMesh_t *grid, int column, int row, vec3_t point, float loderror ) {
 	(void)column; (void)row;
 	inserts++;
 	insertedError = loderror;
 	VectorCopy( point, insertedPoint );
-	return grid;
+	return insertFails ? NULL : grid;
 }
 srfGridMesh_t *R_GridInsertRow( srfGridMesh_t *grid, int row, int column, vec3_t point, float loderror ) {
 	return R_GridInsertColumn( grid, column, row, point, loderror );
@@ -93,15 +94,15 @@ static void FreeGrid( srfGridMesh_t *grid ) {
 /* grid2's edge runs the other way from grid1's, so only a reversed loop matches it */
 static void Stitch( int count1, int transposed1, int transposed2, float wantError, const char *name ) {
 	static const float xs1[] = { 0, 1, 2, 3, 4 }, xs2[] = { 2, 0 };
-	msurface_t surfaces[2];
+	srfGridMesh_t *grids[2];
 	srfGridMesh_t *grid1 = Grid( count1, xs1, 0, 100, transposed1 );
 	srfGridMesh_t *grid2 = Grid( 2, xs2, 0, -100, transposed2 );
 
-	memset( surfaces, 0, sizeof( surfaces ) );
-	surfaces[0].data = (void *)grid1;
-	surfaces[1].data = (void *)grid2;
-	s_worldData.surfaces = surfaces;
-	s_worldData.numsurfaces = 2;
+	// the grids the map preflight stitches, in surface order
+	grids[0] = grid1;
+	grids[1] = grid2;
+	s_stitchGrids = grids;
+	s_numStitchGrids = 2;
 	inserts = 0;
 	insertedError = -1;
 
@@ -109,6 +110,34 @@ static void Stitch( int count1, int transposed1, int transposed2, float wantErro
 	Check( insertedPoint[0] == 1 && insertedPoint[1] == 0, "grid1's middle point is inserted" );
 	Check( insertedError == wantError, "the inserted point's LOD error" );
 	printf( "ok   %s\n", name );
+	FreeGrid( grid1 );
+	FreeGrid( grid2 );
+}
+
+/* Each of R_StitchPatches' eight inserts (grid1's width or height edge, walked
+ * forward or reversed, into a column or a row of grid2) with the insert
+ * answering NULL: R_StitchPatches must return qfalse with s_stitchFailed set
+ * and the old grid still in the list, and read nothing through the NULL. */
+static void NullInsert( int transposed1, int transposed2, int reversed, const char *name ) {
+	static const float xs1[] = { 0, 1, 2 }, forward[] = { 0, 2 }, backward[] = { 2, 0 };
+	srfGridMesh_t *grids[2];
+	srfGridMesh_t *grid1 = Grid( 3, xs1, 0, 100, transposed1 );
+	srfGridMesh_t *grid2 = Grid( 2, reversed ? backward : forward, 0, -100, transposed2 );
+
+	grids[0] = grid1;
+	grids[1] = grid2;
+	s_stitchGrids = grids;
+	s_numStitchGrids = 2;
+	s_stitchFailed = qfalse;
+	inserts = 0;
+	insertFails = 1;
+	Check( !R_StitchPatches( 0, 1 ), "a failed insert stitches nothing" );
+	insertFails = 0;
+	Check( inserts == 1 && insertedPoint[0] == 1, "the insert was tried once, with grid1's middle point" );
+	Check( s_stitchFailed, "the failed insert is reported" );
+	Check( grids[1] == grid2 && grids[0] == grid1, "the old grids stay in the list" );
+	printf( "ok   NULL insert: %s\n", name );
+	s_stitchFailed = qfalse;
 	FreeGrid( grid1 );
 	FreeGrid( grid2 );
 }
@@ -264,6 +293,15 @@ int main( void ) {
 	Stitch( 5, 0, 0, 13.0f, "reversed width edge, error inside the array" );
 	Stitch( 5, 1, 1, 23.0f, "reversed height edge, error inside the array" );
 	printf( "bsp stitch: R_StitchPatches reads no LOD error past its array\n" );
+	NullInsert( 0, 0, 0, "width edge into a column" );
+	NullInsert( 0, 1, 0, "width edge into a row" );
+	NullInsert( 1, 0, 0, "height edge into a column" );
+	NullInsert( 1, 1, 0, "height edge into a row" );
+	NullInsert( 0, 0, 1, "reversed width edge into a column" );
+	NullInsert( 0, 1, 1, "reversed width edge into a row" );
+	NullInsert( 1, 0, 1, "reversed height edge into a column" );
+	NullInsert( 1, 1, 1, "reversed height edge into a row" );
+	printf( "bsp stitch: a NULL insert at each of the eight sites is refused, the old grid kept\n" );
 	fflush( stdout );
 	LodRandomGroups();
 	LodChain();

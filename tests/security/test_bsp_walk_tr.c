@@ -30,6 +30,7 @@ static cvar_t zeroCvar, subdivisionsCvar, foliageCvar, nocullCvar, novisCvar;
 cvar_t *r_lightmap = &zeroCvar, *r_mapOverBrightBits = &zeroCvar, *r_singleShader = &zeroCvar;
 cvar_t *r_subdivisions = &subdivisionsCvar, *r_drawfoliage = &foliageCvar;
 cvar_t *r_nocull = &nocullCvar, *r_novis = &novisCvar, *r_lockpvs = &zeroCvar, *r_showcluster = &zeroCvar;
+cvar_t *r_cache = &zeroCvar, *r_cacheShaders = &zeroCvar;
 static shader_t knownShader;
 static image_t knownImage;
 
@@ -59,6 +60,9 @@ void R_SyncRenderThread( void ) {}
 int R_CullPointAndRadius( vec3_t origin, float radius ) { (void)origin; (void)radius; return CULL_IN; }
 static void QDECL TestPrintf( int level, const char *fmt, ... ) { (void)level; (void)fmt; }
 static void *TestRiHunk( int size, ha_pref preference ) { (void)preference; return TestHunk( size ); }
+// an unbudgeted hunk and zone, as large as the test needs (test_bsp_tr.c checks the budgets)
+static int TestMemoryRemaining( void ) { return 0x40000000; }
+static int TestAllocationSize( int size ) { return size < 0 || size > INT_MAX - 31 ? -1 : ( size + 31 ) & ~31; }
 static void TestExecuteText( int when, const char *text ) { (void)when; (void)text; }
 
 static int LoaderTry( const char *name ) {
@@ -462,6 +466,9 @@ int main( int argc, char **argv ) {
 	ri.Hunk_Alloc = TestRiHunk;
 	ri.Z_Malloc = Z_Malloc;
 	ri.Free = Z_Free;
+	ri.Z_TryMalloc = Z_Malloc;
+	ri.Hunk_MemoryRemaining = TestMemoryRemaining;
+	ri.Hunk_AllocationSize = TestAllocationSize;
 	ri.FS_ReadFile = FS_ReadFile;
 	ri.FS_FreeFile = FS_FreeFile;
 	ri.Cmd_ExecuteText = TestExecuteText;
