@@ -1,0 +1,6 @@
+# UBSan reports in the legacy mod, which is kept as released (see
+# docs/security-provenance.md). A strict sanitize.sh run suppresses only these.
+# BG_AnimParseAnimScript: more than MAX_ANIM_DEFINES (16) defines of one condition
+bounds:legacy/src/game/bg_animation.c
+# SP_dlight: a light style level shifted into the sign bit
+shift-base:legacy/src/game/g_misc.c
