@@ -125,7 +125,7 @@ that reply too.
 ## Quake III engine commits since the copy point
 
 Quake III's non-Mac commits after `72dfd69f`, the point `src/mac9` was first copied from, checked
-against this tree on 2026-11-08 (`git log --no-merges 72dfd69f..HEAD -- code ':!code/mac'`). The Mac layer itself is synced separately (to `1b5fe234`).
+against this tree on 2026-11-08, through `da2dd5f9` (`git log --no-merges 72dfd69f..da2dd5f9 -- code ':!code/mac'`). The Mac layer itself is synced separately (to `1b5fe234`).
 
 | Q3A | Here |
 | --- | --- |
@@ -142,5 +142,14 @@ against this tree on 2026-11-08 (`git log --no-merges 72dfd69f..HEAD -- code ':!
 | `05f2071c` bots hanging the server on a spawn point | Does not apply: Quake III game code. `legacy`'s only bots, Omni-bot, are not built (`FEATURE_OMNIBOT` is in no `legacy/static/*.defines`), and its spawn selection has no retry loop |
 | `efab18d9` `AAS_AreaVolume`, `9a39aa4c`, `756caaa4` optimized AAS files | Do not apply: botlib is linked, but an AAS file is loaded only through `BOTLIB_LOAD_MAP` (`sv_game.c:566`), and `legacy` has no such trap (`legacy/src/game/g_public.h` keeps the setup traps only as dummies), so no AAS file is read. Only botlib's script preprocessor runs, for the menus (see Not done) |
 | `18aa471f` `-O2` by default | ET's own (PR #14, `--bringup` for `-O0` in PR #15). Its two code changes: the `teamleader` write is the `70d2a8c4` row. It aligns `tess` for R_Init's `tess.xyz` warning; here `tess.xyz` points at the separate `tess_xyz` array, so that would not help, and the warning is harmless: no SIMD code reads it |
+| `09cf4690` (#555) the CD key file kept from modules in any letter case | Adapted, see the Done row for key files: here the whole last path component must be `etkey` or `rtcwkey`, not a substring, so names such as `presetkey.cfg` still load |
+| `7ef6c86b` (#556) tab completion's match cut | Ported, see the Done row for `FindMatches` |
+| `81449c7f` reliable command overwriting an unacknowledged one | Already here (`7abf659`); Q3A's came from this port's review |
+| `be418fe7`, `76d3e612`, `68d559bc` (#557) `donedl` and gamestate resends from clients in the world | Ported, see the Done row for the host server's gamestate |
+| `e19e3db1` (#558) control characters in player names, and player strings bounded | Server half ported (`SV_CopyClientName`, see the Done row). The game half does not apply: the game is `legacy`, kept as released. With its default `g_extendedNames 1` it keeps control characters in a name, as on every ET: Legacy server, and its `CS_PLAYERS` string holds only the cleaned name and numbers, not free-form color or team strings |
+| `9cbd79e1` (#558) a color escape carrying a control character | Does not apply: game code, see the row above. The engine copy drops every control character whatever precedes it, so `^` then a line break leaves only `^` |
+| `93c386f8` (#559) `nextdl` for blocks the server has not read | Ported, see the Done row |
+| `5ca9d3a9`, `fdb89cac` (#560) configstring changes held for loading clients | Ported, see the Done row |
+| `131c1167`, `fd68c0cd` (#563) a botlib parse failing, not the game, when a file fills the zone | Done here in this port's own form: see the Done rows for the botlib preprocessor (`Z_TryTagMalloc` through `botimport.TryGetMemory`). `LoadScriptFile` try-allocates the punctuation table before `SetScriptPunctuations` (`l_script.c:1407`), so `PS_CreatePunctuationTable`'s fatal allocation is reached only through `LoadScriptMemory`, by a module's own `PC_AddGlobalDefine` string and by the AAS entity loader, which does not run. Weight files are not read: no bot AI is built |
 | `1a3a69d0` (#562) `R_StitchPatches`' reversed loops kept inside the LOD error arrays | Ported (`R_StitchLodError`), see the Done row. The arrays are zone blocks here too, so retail read `ZONEID` or stale bytes past them; 0 keeps every retail map's stitched grids the same |
 | `22bc848a`, `6dd67604` (#561) `Q_rsqrt` and `SquareRootFloat` read a float's bits as a 32-bit int | Ported, see the Done row. ET compiles its C `Q_rsqrt` on the Mac too (no `idppc` path), where `long` is 32 bits and the code is unchanged; only host builds read past the float |
