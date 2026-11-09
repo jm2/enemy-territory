@@ -207,6 +207,7 @@ c=q.index('typedef enum {\n\tTAG_FREE,'); d=q.index('} memtag_t;',c)+len('} memt
 open(sys.argv[1],'w',encoding='latin-1').write(h+q[c:d]+s[a:b])
 B
 # the zone rounds blocks to 4 bytes, as the 32-bit target needs; a 64-bit host
-# would flag its 8-byte pointers in them
-"$CC" $FLAGS -fno-sanitize=alignment "-DZONE_INC=\"$OUT/zone.inc\"" tests/security/test_botlib_precomp.c src/botlib/l_precomp.c src/botlib/l_script.c src/botlib/l_memory.c src/game/q_shared.c src/game/q_math.c -pthread -lm -o "$OUT/botlib_precomp"
+# would flag its 8-byte pointers in them; float-cast-overflow, which
+# -fsanitize=undefined leaves out, checks the number and $evalfloat conversions
+"$CC" $FLAGS -fno-sanitize=alignment -fsanitize=float-cast-overflow -fno-sanitize-recover=float-cast-overflow "-DZONE_INC=\"$OUT/zone.inc\"" tests/security/test_botlib_precomp.c src/botlib/l_precomp.c src/botlib/l_script.c src/botlib/l_memory.c src/game/q_shared.c src/game/q_math.c -pthread -lm -o "$OUT/botlib_precomp"
 "$OUT/botlib_precomp"

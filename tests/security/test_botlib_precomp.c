@@ -2,7 +2,9 @@
    .menu, .char, .weap and hud file the UI, cgame and game load, from pk3s a
    server can supply.  Crafted files go through the REAL LoadSourceFile,
    PC_ReadToken and PC_*Handle code.  Cases adapted from Q3A's
-   tests/bot_preprocessor_bounds_regression.c and bot_macro_regression.c.
+   tests/bot_preprocessor_bounds_regression.c and bot_macro_regression.c,
+   and the numeric ones from bot_eval_arithmetic_regression.c,
+   bot_number_regression.c and bot_escape_regression.c.
 
    Each case runs in its own process, on a 1 MiB thread stack (the Mac OS 9
    stack has no guard page) under an alarm.  Memory comes from ET's real zone
@@ -12,6 +14,8 @@
    fragmented zone, is a fatal Z_Malloc error, so the old code fails a case by
    a sanitizer report, a stack overflow, a hang, a fatal allocation or a
    missing refusal. */
+#include <float.h>
+#include <limits.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -548,6 +552,294 @@ static void ExpressionGoldens( void ) {
 	Finish( source );
 }
 
+/* --- numeric arithmetic (Q3A 8e498ea9, f0493cac, 12cf44d9) -----------------
+   Each case fails on the old code under UBSan (signed overflow, LONG_MIN / -1,
+   shifts past the word or of a negative value, a float converted outside an
+   integer's range) or by a missing refusal or a wrong value.  LMAX and LMIN
+   are the native long's limits, so the same cases hold on the 32-bit target
+   and a 64-bit host. */
+
+static char longMax[32], longMinMagnitude[32], ulongMax[32], ulongPastMax[32];
+
+static void NumericLimits( void ) {
+	size_t n;
+	snprintf( longMax, sizeof( longMax ), "%ld", LONG_MAX );
+	snprintf( longMinMagnitude, sizeof( longMinMagnitude ), "%lu", (unsigned long)LONG_MAX + 1UL );
+	snprintf( ulongMax, sizeof( ulongMax ), "%lu", ULONG_MAX );
+	/* 4294967295 and 18446744073709551615 both end in 5 */
+	memcpy( ulongPastMax, ulongMax, sizeof( ulongMax ) );
+	n = strlen( ulongPastMax );
+	ulongPastMax[n - 1]++;
+}
+/* the limits as macros, then the body */
+static source_t *NumericSource( const char *name, const char *body ) {
+	NumericLimits();
+	Begin();
+	Append( "#define LMAX %s\n#define LMIN (0 - LMAX - 1)\n#define BITS %d\n", longMax, (int)( sizeof( long ) * CHAR_BIT ) );
+	Append( "%s", body );
+	AddFile( name, text );
+	return Load( name );
+}
+
+typedef struct {
+	const char *body, *diagnostic;
+} numericbad_t;
+
+static const numericbad_t badExpressions[] = {
+	{ "marker $evalint(LMAX + 1) tail\n", "addition overflow" },
+	{ "marker $evalint(LMIN - 1) tail\n", "subtraction overflow" },
+	{ "marker $evalint(LMAX * 2) tail\n", "multiplication overflow" },
+	{ "marker $evalint(LMIN * -1) tail\n", "multiplication overflow" },
+	{ "marker $evalint(LMIN / -1) tail\n", "division overflow" },
+	{ "marker $evalint(LMIN % -1) tail\n", "remainder overflow" },
+	{ "marker\n#if LMIN / -1\nyes\n#endif\ntail\n", "division overflow" },
+	{ "marker $evalint(1 << BITS) tail\n", "left shift" },
+	{ "marker $evalint(1 << 999999) tail\n", "left shift" },
+	{ "marker $evalint(1 >> -1) tail\n", "right shift" },
+	{ "marker $evalint(1 >> BITS) tail\n", "right shift" },
+};
+
+static void BadExpression( int i ) {
+	source_t *source = NumericSource( "badexpr.menu", badExpressions[i].body );
+	Expect( source, TT_NAME, "marker" );
+	/* #if unreads the first token of the next line, so only $evalint has
+	   nothing left queued */
+	ExpectRefusal( strstr( badExpressions[i].body, "#if" ) ? NULL : source,
+				   ReadUntilFailure( source, 1 ), 1, badExpressions[i].diagnostic );
+	Finish( source );
+}
+
+/* a float expression that leaves the double range is refused */
+static void BadFloat( int operand ) {
+	char nines[512];
+	source_t *source;
+	if ( operand ) {
+		/* 1e400: past a double; a long double that holds it reaches the
+		   evaluator, one that does not is refused as a number */
+		memset( nines, '9', 400 );
+		strcpy( nines + 400, ".0" );
+		Begin();
+		Append( "marker $evalfloat(%s) tail\n", nines );
+	} else {
+		/* 1e200 * 1e200 */
+		memset( nines, '9', 200 );
+		strcpy( nines + 200, ".0" );
+		Begin();
+		Append( "marker $evalfloat(%s * %s) tail\n", nines, nines );
+	}
+	AddFile( "badfloat.menu", text );
+	source = Load( "badfloat.menu" );
+	Expect( source, TT_NAME, "marker" );
+	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1,
+				   !operand ? "result is not finite" : LDBL_MAX > DBL_MAX ? "exceeds double range" : "unrepresentable number" );
+	Finish( source );
+}
+
+/* results the old code computed with undefined arithmetic, or got wrong */
+static void GoodExpressions( void ) {
+	source_t *source;
+	char body[1024];
+
+	source = NumericSource( "goodexpr.menu",
+							"$evalint(-1 << 1) $evalint(-2 >> 1) $evalint(-1 >> 0) $evalint(1 << 3)\n"
+							"$evalint(-2147483648) $evalint(LMIN) $evalint(LMAX - 1 + 1) $evalint((LMIN + 1) * -1)\n"
+							"$evalint(LMIN / 1) $evalint(7 % -2) $evalint(-7 / 2)\n"
+							"$evalfloat(1.0 / 0.5) $evalfloat(1 / 4) $evalfloat(-2.5)\nend\n" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, "2" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, "1" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, "1" );
+	Expect( source, TT_NUMBER, "8" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, "2147483648" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, longMinMagnitude );
+	Expect( source, TT_NUMBER, longMax );
+	Expect( source, TT_NUMBER, longMax );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, longMinMagnitude );
+	Expect( source, TT_NUMBER, "1" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, "3" );
+	Expect( source, TT_NUMBER, "2.00" );
+	Expect( source, TT_NUMBER, "0.25" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	Expect( source, TT_NUMBER, "2.50" );
+	Expect( source, TT_NAME, "end" );
+	ExpectEnd( source );
+	Finish( source );
+
+	/* the ?: condition keeps the whole long */
+	if ( sizeof( long ) > sizeof( int ) ) {
+		snprintf( body, sizeof( body ), "#if %lu ? 1 : 0\nyes\n#else\nno\n#endif\n", (unsigned long)UINT_MAX + 1UL );
+		source = NumericSource( "wide.menu", body );
+		Expect( source, TT_NAME, "yes" );
+		ExpectEnd( source );
+		Finish( source );
+	}
+}
+
+/* number tokens: refused when they do not fit, exact when they do */
+static void BadNumber( int i ) {
+	const char *numbers[] = { ulongPastMax, "0x", "1.2.3", "99999999999999999999999999999999" };
+	source_t *source;
+	NumericLimits();
+	Begin();
+	Append( "marker %s tail\n", numbers[i] );
+	AddFile( "badnumber.menu", text );
+	source = Load( "badnumber.menu" );
+	Expect( source, TT_NAME, "marker" );
+	ExpectRefusal( source, ReadUntilFailure( source, 1 ), 1, "unrepresentable number" );
+	Finish( source );
+}
+
+static void ReadNumber( source_t *source, token_t *token, const char *string ) {
+	memset( token, 0, sizeof( *token ) );
+	if ( !Read( source, token ) || token->type != TT_NUMBER || strcmp( token->string, string ) ) {
+		printf( "    got \"%.60s\", want number \"%s\"\n", token->string, string );
+		Check( 0, "number token is read whole" );
+	}
+}
+
+static void GoodNumbers( void ) {
+	source_t *source;
+	token_t token;
+	long double fraction;
+
+	NumericLimits();
+	Begin();
+	Append( "%s 0xFF 0XaBcDeF 1. 1000000000000000000000000000000.0 0.49999237060546875 017 end\n", ulongMax );
+	AddFile( "numbers.menu", text );
+	source = Load( "numbers.menu" );
+	ReadNumber( source, &token, ulongMax );
+	Check( token.intvalue == ULONG_MAX, "the largest unsigned long is exact" );
+	/* uppercase hex digits belong to the number, not to a following name */
+	ReadNumber( source, &token, "0xFF" );
+	Check( token.intvalue == 0xFF && token.floatvalue == 0xFF, "0xFF is 255" );
+	ReadNumber( source, &token, "0XaBcDeF" );
+	Check( token.intvalue == 0xABCDEF, "mixed-case hex" );
+	/* a trailing dot ends the number, not a digit past it */
+	ReadNumber( source, &token, "1." );
+	Check( token.intvalue == 1 && token.floatvalue == 1, "1. is 1" );
+	/* a float past the range of its integer value saturates that value */
+	ReadNumber( source, &token, "1000000000000000000000000000000.0" );
+	Check( token.intvalue == ULONG_MAX && token.floatvalue > 9.999e29L && token.floatvalue < 1.001e30L, "1e30 keeps its value and saturates its integer" );
+	/* the old 32-bit divisor wrapped after nine fraction digits */
+	ReadNumber( source, &token, "0.49999237060546875" );
+	fraction = token.floatvalue - 0.49999237060546875L;
+	Check( token.intvalue == 0 && fraction > -1e-15L && fraction < 1e-15L, "17 fraction digits" );
+	ReadNumber( source, &token, "017" );
+	Check( token.intvalue == 15, "octal" );
+	Expect( source, TT_NAME, "end" );
+	ExpectEnd( source );
+	Finish( source );
+}
+
+/* $evalfloat's integer value: what the old cast gave wherever it was defined,
+   saturated only past ULONG_MAX and below LONG_MIN */
+static void FloatIntegers( void ) {
+	/* the text goes through Q_fabs, a float, so only the integer values
+	   are checked */
+	source_t *source;
+	token_t token;
+
+	NumericLimits();
+	Begin();
+	Append( "$evalfloat(2147483647.0) $evalfloat(3000000000.0) $evalfloat(%s.0) $evalfloat(%s0.0)\n", ulongMax, ulongMax );
+	Append( "$evalfloat(-2.5) $evalfloat(-%s.0) $evalfloat(-%s0.0) $evalint(5 / (0|1)) end\n", longMinMagnitude, longMinMagnitude );
+	AddFile( "floatint.menu", text );
+	source = Load( "floatint.menu" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER, "a number" );
+	Check( token.intvalue == 2147483647UL, "2147483647.0 keeps its integer value" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER, "a number" );
+	Check( token.intvalue == 3000000000UL, "3000000000.0 keeps its integer value" );
+	/* ULONG_MAX: exact in a 32-bit long's double, 2^64 for a 64-bit one */
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == ULONG_MAX, "ULONG_MAX.0 is ULONG_MAX" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == ULONG_MAX, "ten times ULONG_MAX saturates" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	ReadNumber( source, &token, "2.50" );
+	Check( token.intvalue == (unsigned long)-2L, "-2.5 converts through a long" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == (unsigned long)LONG_MIN, "LONG_MIN.0 is LONG_MIN" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == 0, "ten times LONG_MIN saturates to 0" );
+	/* an integer divisor whose float value is 0 */
+	Expect( source, TT_NUMBER, "5" );
+	Expect( source, TT_NAME, "end" );
+	ExpectEnd( source );
+	Finish( source );
+}
+
+/* numeric escapes stop growing at 0xFF: no run of digits overflows an int */
+static void Escapes( void ) {
+	char digits[64], want[16];
+	source_t *source;
+
+	Begin();
+	memset( digits, 'f', 40 );
+	digits[40] = '\0';
+	Append( "\"\\x%s!\" a ", digits );
+	memset( digits, '9', 40 );
+	Append( "\"\\%s!\" b ", digits );
+	Append( "\"\\x41\\66\\x7e!\" end\n" );
+	AddFile( "escapes.menu", text );
+	source = Load( "escapes.menu" );
+	snprintf( want, sizeof( want ), "\"%c!\"", (char)0xFF );
+	Expect( source, TT_STRING, want );
+	Expect( source, TT_NAME, "a" );
+	Expect( source, TT_STRING, want );
+	Expect( source, TT_NAME, "b" );
+	Expect( source, TT_STRING, "\"AB~!\"" );
+	Expect( source, TT_NAME, "end" );
+	ExpectEnd( source );
+	Check( warnings == 2, "each oversized escape is one warning" );
+	Finish( source );
+}
+
+/* PS_ReadLiteral, which botlib's tokenizer keeps for callers of its own:
+   it no longer steps past the trailing quote, a newline or the end */
+extern int PS_ReadLiteral( script_t *script, token_t *token );
+static void Literal( const char *body, int ok, const char *string, const char *diagnostic ) {
+	script_t *script;
+	token_t token;
+	int ret;
+
+	errors = warnings = 0;
+	lastError[0] = '\0';
+	script = LoadScriptMemory( (char *)body, (int)strlen( body ), "literal" );
+	memset( &token, 0, sizeof( token ) );
+	ret = PS_ReadLiteral( script, &token );
+	if ( ok ) {
+		Check( ret && !strcmp( token.string, string ), "the literal keeps its trailing quote" );
+		Check( script->script_p <= script->end_p, "the cursor stays inside the script" );
+		memset( &token, 0, sizeof( token ) );
+		Check( PS_ReadToken( script, &token ) && !strcmp( token.string, "x" ), "the next token follows the literal" );
+	} else {
+		Check( !ret && errors == 1 && strstr( lastError, diagnostic ) != NULL, diagnostic );
+		Check( script->script_p <= script->end_p, "the cursor stays inside the script" );
+	}
+	FreeScript( script );
+	Check( !liveOwners, "the script is released" );
+}
+
+static void Literals( void ) {
+	Literal( "'a' x", 1, "'a'", NULL );
+	Literal( "'\\x41' x", 1, "'A'", NULL );
+	Literal( "'ab' x", 1, "'a'", NULL );
+	Literal( "'' x", 0, NULL, "empty literal" );
+	Literal( "'\nx'", 0, NULL, "empty literal" );
+	Literal( "'ab\n' x", 0, NULL, "missing trailing quote" );
+	Literal( "'ab", 0, NULL, "missing trailing quote" );
+}
+
 static void LiveTokens( void ) {
 	source_t *source;
 	int i, j;
@@ -790,6 +1082,14 @@ static void RunChain( int a ) { IncludeChain( a < 0 ? -a : a, a < 0 ); }
 static void RunFanOut( int a ) { (void)a; FanOut(); }
 static void RunExpressions( int a ) { Expressions( a ); }
 static void RunExprGoldens( int a ) { (void)a; ExpressionGoldens(); }
+static void RunBadExpression( int a ) { BadExpression( a ); }
+static void RunBadFloat( int a ) { BadFloat( a ); }
+static void RunGoodExpressions( int a ) { (void)a; GoodExpressions(); }
+static void RunBadNumber( int a ) { BadNumber( a ); }
+static void RunGoodNumbers( int a ) { (void)a; GoodNumbers(); }
+static void RunFloatIntegers( int a ) { (void)a; FloatIntegers(); }
+static void RunEscapes( int a ) { (void)a; Escapes(); }
+static void RunLiterals( int a ) { (void)a; Literals(); }
 static void RunLive( int a ) { (void)a; LiveTokens(); }
 static void RunConditionals( int a ) { Conditionals( a < 0 ? -a : a, a < 0 ); }
 static void RunHandles( int a ) { (void)a; Handles(); }
@@ -817,6 +1117,28 @@ static const testcase_t cases[] = {
 	{ "#if operand list", RunExpressions, 1 },
 	{ "$evalint operand list", RunExpressions, 0 },
 	{ "expression goldens, failures and #if defined", RunExprGoldens, 0 },
+	{ "LONG_MAX + 1 is refused", RunBadExpression, 0 },
+	{ "LONG_MIN - 1 is refused", RunBadExpression, 1 },
+	{ "LONG_MAX * 2 is refused", RunBadExpression, 2 },
+	{ "LONG_MIN * -1 is refused", RunBadExpression, 3 },
+	{ "LONG_MIN / -1 is refused", RunBadExpression, 4 },
+	{ "LONG_MIN % -1 is refused", RunBadExpression, 5 },
+	{ "#if LONG_MIN / -1 is refused", RunBadExpression, 6 },
+	{ "a left shift by the word width is refused", RunBadExpression, 7 },
+	{ "a left shift by 999999 is refused", RunBadExpression, 8 },
+	{ "a right shift by -1 is refused", RunBadExpression, 9 },
+	{ "a right shift by the word width is refused", RunBadExpression, 10 },
+	{ "a float product past the double range is refused", RunBadFloat, 0 },
+	{ "a float operand past the double range is refused", RunBadFloat, 1 },
+	{ "negative shifts, INT_MIN, LONG_MIN, fractional division and wide ?:", RunGoodExpressions, 0 },
+	{ "a decimal number past ULONG_MAX is refused", RunBadNumber, 0 },
+	{ "a hex number without digits is refused", RunBadNumber, 1 },
+	{ "a number with two dots is refused", RunBadNumber, 2 },
+	{ "a 32-digit decimal number is refused", RunBadNumber, 3 },
+	{ "ULONG_MAX, uppercase hex, a trailing dot, 1e30 and long fractions", RunGoodNumbers, 0 },
+	{ "$evalfloat integer values at the unsigned long and LONG_MIN edges", RunFloatIntegers, 0 },
+	{ "40-digit numeric escapes stop at 0xFF", RunEscapes, 0 },
+	{ "PS_ReadLiteral keeps its cursor inside the script", RunLiterals, 0 },
 	{ "live token budget", RunLive, 0 },
 	{ "4096 nested conditionals are accepted", RunConditionals, -4096 },
 	{ "80000 nested conditionals are refused", RunConditionals, 80000 },
@@ -884,6 +1206,6 @@ int main( void ) {
 		printf( "botlib preprocessor: %d case(s) failed\n", bad );
 		return 1;
 	}
-	printf( "botlib preprocessor: names, pastes, strings, macros, includes, expressions, conditionals and handles are bounded\n" );
+	printf( "botlib preprocessor: names, numbers, escapes, pastes, strings, macros, includes, expressions, conditionals and handles are bounded\n" );
 	return 0;
 }
