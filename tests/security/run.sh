@@ -176,6 +176,9 @@ MODELS="tests/security/test_models.c src/renderer/tr_model.c src/renderer/tr_ani
 # BSP preflight: the real CM_LoadMap and RE_LoadWorldMap on corrupted maps. Set
 # BSP_FILES to a list of .bsp files to also load, truncate and mutate each of them.
 "$CC" $FLAGS tests/security/test_bsp_cm.c src/qcommon/cm_load.c src/qcommon/cm_patch.c src/qcommon/cm_test.c src/qcommon/cm_polylib.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/bsp_cm"
+# collision patch plane, facet and border budgets: the test includes cm_patch.c for its statics
+"$CC" $FLAGS tests/security/test_cm_patch.c src/qcommon/cm_polylib.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/cm_patch"
+"$OUT/cm_patch"
 # R_FindLightmap alone: tr_shader.c needs the whole renderer
 python3 - "$OUT/lightmap.inc" <<'L'
 import sys

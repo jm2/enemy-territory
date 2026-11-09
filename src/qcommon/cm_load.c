@@ -604,17 +604,91 @@ unsigned CM_Checksum( dheader_t *header ) {
 
 /*
 ==================
-CM_ValidateBSPPatchGrids
+CM_BudgetAllocation
 
-Runs each patch's collision refinement on a scratch grid. Curvature, not
-the source size, decides how far it subdivides, so this is the only way to
-know CM_GeneratePatchCollide will fit. Spans and sizes are already checked.
+Takes one Hunk_Alloc( size )'s real cost off what is left (Q3A 7cc5d385).
+Subtracting keeps a hostile sum from overflowing. A NULL budget (BSPC)
+checks nothing.
 ==================
 */
-static const char *CM_ValidateBSPPatchGrids( const byte *buf, const dheader_t *header ) {
+#define CM_HUNK_BUDGET_ERROR "collision map needs more hunk memory than is left"
+static qboolean CM_BudgetAllocation( unsigned int size, int *remaining ) {
+#ifndef BSPC
+	int cost;
+
+	if ( !remaining ) {
+		return qtrue;
+	}
+	cost = size > INT_MAX ? -1 : Hunk_AllocationSize( (int)size );
+	if ( cost < 0 || cost > *remaining ) {
+		return qfalse;
+	}
+	*remaining -= cost;
+#endif
+	return qtrue;
+}
+
+/*
+==================
+CM_ValidateBSPDerivedAllocations
+
+The hunk blocks sized by record contents rather than lump lengths: the
+areas and their portal matrix, the visibility rows, and each inline
+model's brush and surface lists. Spans and indexes are already checked.
+==================
+*/
+static const char *CM_ValidateBSPDerivedAllocations( const byte *buf, const dheader_t *header, int *remaining ) {
+	const byte *record;
+	unsigned int i, value, clusters = 0, areas = 0, visibility;
+
+	record = buf + header->lumps[LUMP_LEAFS].fileofs;
+	for ( i = 0 ; i < header->lumps[LUMP_LEAFS].filelen / sizeof( dleaf_t ) ; i++, record += sizeof( dleaf_t ) ) {
+		value = BSP_FileWord( record + offsetof( dleaf_t, cluster ) );
+		if ( value != 0xffffffffu && value >= clusters ) {
+			clusters = value + 1;
+		}
+		value = BSP_FileWord( record + offsetof( dleaf_t, area ) );
+		if ( value != 0xffffffffu && value >= areas ) {
+			areas = value + 1;
+		}
+	}
+	// CMod_LoadVisibility copies the lump whole, header included, or makes novis rows
+	visibility = header->lumps[LUMP_VISIBILITY].filelen;
+	if ( !visibility ) {
+		visibility = ( clusters + 31 ) & ~31u;
+	}
+	// areas is at most MAX_MAP_AREA_BYTES * 8, so the square cannot overflow
+	if ( !CM_BudgetAllocation( areas * sizeof( cArea_t ), remaining ) ||
+		 !CM_BudgetAllocation( areas * areas * sizeof( int ), remaining ) ||
+		 !CM_BudgetAllocation( visibility, remaining ) ) {
+		return CM_HUNK_BUDGET_ERROR;
+	}
+
+	record = buf + header->lumps[LUMP_MODELS].fileofs + sizeof( dmodel_t );
+	for ( i = 1 ; i < header->lumps[LUMP_MODELS].filelen / sizeof( dmodel_t ) ; i++, record += sizeof( dmodel_t ) ) {
+		if ( !CM_BudgetAllocation( BSP_FileWord( record + offsetof( dmodel_t, numBrushes ) ) * 4, remaining ) ||
+			 !CM_BudgetAllocation( BSP_FileWord( record + offsetof( dmodel_t, numSurfaces ) ) * 4, remaining ) ) {
+			return CM_HUNK_BUDGET_ERROR;
+		}
+	}
+	return NULL;
+}
+
+/*
+==================
+CM_ValidateBSPPatchGrids
+
+Runs each patch's collision refinement and plane and facet build on scratch
+storage. Curvature, not the source size, decides how far it subdivides and
+how many planes and facets it makes, so this is the only way to know
+CM_GeneratePatchCollide will fit, and what it will take from the hunk.
+Spans and sizes are already checked.
+==================
+*/
+static const char *CM_ValidateBSPPatchGrids( const byte *buf, const dheader_t *header, int *remaining ) {
 	const byte *surface, *vertices;
 	vec3_t points[MAX_PATCH_VERTS];
-	int i, j, k, count, width, height;
+	int i, j, k, count, width, height, sizes[3];
 	const char *error;
 
 	count = header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t );
@@ -632,9 +706,17 @@ static const char *CM_ValidateBSPPatchGrids( const byte *buf, const dheader_t *h
 				points[j][k] = BSP_GeometryFloat( vertices + j * sizeof( drawVert_t ) + k * 4 );
 			}
 		}
-		error = CM_ValidatePatchCollide( width, height, points );
+		error = CM_ValidatePatchCollideAllocations( width, height, points, sizes );
 		if ( error ) {
 			return error;
+		}
+		if ( !CM_BudgetAllocation( sizeof( cPatch_t ), remaining ) ) {
+			return CM_HUNK_BUDGET_ERROR;
+		}
+		for ( j = 0 ; j < 3 ; j++ ) {
+			if ( !CM_BudgetAllocation( sizes[j], remaining ) ) {
+				return CM_HUNK_BUDGET_ERROR;
+			}
 		}
 	}
 	return NULL;
@@ -645,11 +727,14 @@ static const char *CM_ValidateBSPPatchGrids( const byte *buf, const dheader_t *h
 CM_ValidateBSP
 
 Every lump, cross-lump index, span and patch size the loaders below trust,
-checked on the file buffer before CM_LoadMap changes anything.
+checked on the file buffer before CM_LoadMap changes anything. With a
+budget, every hunk block the load will take is also charged against it,
+so a map too big for the hunk drops here instead of halfway through.
 ==================
 */
-static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *header ) {
+static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *header, int *remaining ) {
 	const char *error;
+	unsigned int i;
 
 	error = BSP_ValidateHeader( buf, length, header );
 	if ( !error ) {
@@ -668,6 +753,12 @@ static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *heade
 			{ header->lumps[LUMP_ENTITIES].filelen, 1, 1 }
 		};
 		error = BSP_ValidateAllocations( arrays, sizeof( arrays ) / sizeof( arrays[0] ) );
+		// each count fits ( INT_MAX - 4096 ) / elementSize with its extras, checked above
+		for ( i = 0 ; !error && i < sizeof( arrays ) / sizeof( arrays[0] ) ; i++ ) {
+			if ( !CM_BudgetAllocation( ( arrays[i].count + arrays[i].extraElements ) * arrays[i].elementSize, remaining ) ) {
+				error = CM_HUNK_BUDGET_ERROR;
+			}
+		}
 	}
 	if ( !error && header->lumps[LUMP_MODELS].filelen / sizeof( dmodel_t ) > MAX_SUBMODELS ) {
 		error = "MAX_SUBMODELS exceeded";
@@ -682,7 +773,10 @@ static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *heade
 		error = BSP_ValidateGeometry( buf, header, MAX_GRID_SIZE, MAX_PATCH_VERTS );
 	}
 	if ( !error ) {
-		error = CM_ValidateBSPPatchGrids( buf, header );
+		error = CM_ValidateBSPDerivedAllocations( buf, header, remaining );
+	}
+	if ( !error ) {
+		error = CM_ValidateBSPPatchGrids( buf, header, remaining );
 	}
 	return error;
 }
@@ -699,6 +793,7 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 	const char      *error;
 	dheader_t header;
 	int length;
+	int remaining, *budget = NULL;
 	static unsigned last_checksum;
 
 	if ( !name || !name[0] ) {
@@ -742,8 +837,13 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 		Com_Error( ERR_DROP, "Couldn't load %s", name );
 	}
 
-	// check the whole file before the old map, checksum or hunk is touched
-	error = CM_ValidateBSP( (const byte *)buf, length, &header );
+	// check the whole file, and that all of it fits beside the file in the
+	// hunk, before the old map, checksum or hunk is touched
+#ifndef BSPC
+	remaining = Hunk_MemoryRemaining();
+	budget = &remaining;
+#endif
+	error = CM_ValidateBSP( (const byte *)buf, length, &header, budget );
 	if ( error ) {
 		FS_FreeFile( buf );
 		Com_Error( ERR_DROP, "CM_LoadMap: %s: %s", name, error );
