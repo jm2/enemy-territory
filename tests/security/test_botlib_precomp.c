@@ -737,6 +737,47 @@ static void GoodNumbers( void ) {
 	Finish( source );
 }
 
+/* $evalfloat's integer value: what the old cast gave wherever it was defined,
+   saturated only past ULONG_MAX and below LONG_MIN */
+static void FloatIntegers( void ) {
+	/* the text goes through Q_fabs, a float, so only the integer values
+	   are checked */
+	source_t *source;
+	token_t token;
+
+	NumericLimits();
+	Begin();
+	Append( "$evalfloat(2147483647.0) $evalfloat(3000000000.0) $evalfloat(%s.0) $evalfloat(%s0.0)\n", ulongMax, ulongMax );
+	Append( "$evalfloat(-2.5) $evalfloat(-%s.0) $evalfloat(-%s0.0) $evalint(5 / (0|1)) end\n", longMinMagnitude, longMinMagnitude );
+	AddFile( "floatint.menu", text );
+	source = Load( "floatint.menu" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER, "a number" );
+	Check( token.intvalue == 2147483647UL, "2147483647.0 keeps its integer value" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER, "a number" );
+	Check( token.intvalue == 3000000000UL, "3000000000.0 keeps its integer value" );
+	/* ULONG_MAX: exact in a 32-bit long's double, 2^64 for a 64-bit one */
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == ULONG_MAX, "ULONG_MAX.0 is ULONG_MAX" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == ULONG_MAX, "ten times ULONG_MAX saturates" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	ReadNumber( source, &token, "2.50" );
+	Check( token.intvalue == (unsigned long)-2L, "-2.5 converts through a long" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == (unsigned long)LONG_MIN, "LONG_MIN.0 is LONG_MIN" );
+	Expect( source, TT_PUNCTUATION, "-" );
+	memset( &token, 0, sizeof( token ) );
+	Check( Read( source, &token ) && token.type == TT_NUMBER && token.intvalue == 0, "ten times LONG_MIN saturates to 0" );
+	/* an integer divisor whose float value is 0 */
+	Expect( source, TT_NUMBER, "5" );
+	Expect( source, TT_NAME, "end" );
+	ExpectEnd( source );
+	Finish( source );
+}
+
 /* numeric escapes stop growing at 0xFF: no run of digits overflows an int */
 static void Escapes( void ) {
 	char digits[64], want[16];
@@ -1046,6 +1087,7 @@ static void RunBadFloat( int a ) { BadFloat( a ); }
 static void RunGoodExpressions( int a ) { (void)a; GoodExpressions(); }
 static void RunBadNumber( int a ) { BadNumber( a ); }
 static void RunGoodNumbers( int a ) { (void)a; GoodNumbers(); }
+static void RunFloatIntegers( int a ) { (void)a; FloatIntegers(); }
 static void RunEscapes( int a ) { (void)a; Escapes(); }
 static void RunLiterals( int a ) { (void)a; Literals(); }
 static void RunLive( int a ) { (void)a; LiveTokens(); }
@@ -1094,6 +1136,7 @@ static const testcase_t cases[] = {
 	{ "a number with two dots is refused", RunBadNumber, 2 },
 	{ "a 32-digit decimal number is refused", RunBadNumber, 3 },
 	{ "ULONG_MAX, uppercase hex, a trailing dot, 1e30 and long fractions", RunGoodNumbers, 0 },
+	{ "$evalfloat integer values at the unsigned long and LONG_MIN edges", RunFloatIntegers, 0 },
 	{ "40-digit numeric escapes stop at 0xFF", RunEscapes, 0 },
 	{ "PS_ReadLiteral keeps its cursor inside the script", RunLiterals, 0 },
 	{ "live token budget", RunLive, 0 },

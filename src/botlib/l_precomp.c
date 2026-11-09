@@ -2353,7 +2353,11 @@ int PC_EvaluateTokens( source_t *source, token_t *tokens, signed long int *intva
 				}
 				v1->intvalue /= v2->intvalue;
 			}
-			v1->floatvalue /= v2->floatvalue; break;
+			//an integer divisor can have a float value of 0, as in 5 / (0|1)
+			if ( v2->floatvalue ) {
+				v1->floatvalue /= v2->floatvalue;
+			}
+			break;
 		case P_MOD:             if ( !v2->intvalue ) {
 				SourceError( source, "divide by zero in #if/#elif\n" );
 				error = 1;
@@ -2879,13 +2883,21 @@ static unsigned long PC_EvalMagnitude( signed long int value ) {
 	return magnitude;
 } //end of the function PC_EvalMagnitude
 
-//the integer value of a float result, as the old cast gave it on the host,
-//without converting a value outside the range of a long
+//the integer value of a float result, as the old cast gave it for every value
+//it could convert: a non-negative value up to ULONG_MAX converts directly, a
+//negative one through a long; only values past those ranges saturate
 static unsigned long PC_EvalFloatInteger( double value ) {
-	if ( !( value > (double) LONG_MIN - 1.0 && value < (double) LONG_MAX ) ) {
-		return value > 0 ? ULONG_MAX : 0;
+	if ( value >= 0 ) {
+		//2 * (ULONG_MAX / 2 + 1) is ULONG_MAX + 1, exact in a double
+		if ( value < 2.0 * (double) ( ULONG_MAX / 2 + 1 ) ) {
+			return (unsigned long) value;
+		}
+		return ULONG_MAX;
+	} //end if
+	if ( value >= (double) LONG_MIN ) {
+		return (unsigned long) (long) value;
 	}
-	return (unsigned long) (long) value;
+	return 0;
 } //end of the function PC_EvalFloatInteger
 
 int PC_Directive_eval( source_t *source ) {
