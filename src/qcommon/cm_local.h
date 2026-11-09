@@ -48,6 +48,13 @@ typedef struct {
 	int children[2];                // negative numbers are leafs
 } cNode_t;
 
+// a swept segment CM_TraceThroughTree has still to trace, through node
+typedef struct {
+	int node;
+	float p1f, p2f;
+	vec3_t p1, p2;
+} cmTraceFrame_t;
+
 typedef struct {
 	int cluster;
 	int area;
@@ -107,6 +114,10 @@ typedef struct {
 
 	int numNodes;
 	cNode_t     *nodes;
+	// explicit stacks for the world tree walks, sized by its depth at load
+	int treeDepth;                  // the most decision nodes on a path from node 0
+	int         *boxStack;          // CM_BoxLeafnums_r [ treeDepth ]
+	cmTraceFrame_t *traceStack;     // CM_TraceThroughTree [ treeDepth ]
 
 	int numLeafs;
 	cLeaf_t     *leafs;

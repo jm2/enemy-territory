@@ -732,18 +732,26 @@ static void R_AddLeafSurfaces( mnode_t *node, int dlightBits, int decalBits ) {
 /*
 ================
 R_RecursiveWorldNode
+
+Walks the tree front side first, as the recursive walk did. Each back child
+waits on tr.world->worldNodeStack, with the culling bits its parent passed
+it, while the front one is walked, so a deep tree takes no C stack: there
+is at most one waiting child per decision node above the current one, and
+R_LoadNodesAndLeafs sized the stack by the tree's depth. Starts at the root.
 ================
 */
 static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, int decalBits ) {
 	int i, r;
 	dlight_t    *dl;
+	worldNodeFrame_t *stack = tr.world->worldNodeStack, *frame;
+	int pending = 0;
 
 
 	do
 	{
 		// if the node wasn't marked as potentially visible, exit
 		if ( node->visframe != tr.visCount ) {
-			return;
+			goto next;
 		}
 
 		// if the bounding volume is outside the frustum, nothing
@@ -753,7 +761,7 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, 
 			if ( planeBits & 1 ) {
 				r = BoxOnPlaneSide( node->mins, node->maxs, &tr.viewParms.frustum[0] );
 				if ( r == 2 ) {
-					return;                     // culled
+					goto next;                  // culled
 				}
 				if ( r == 1 ) {
 					planeBits &= ~1;            // all descendants will also be in front
@@ -763,7 +771,7 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, 
 			if ( planeBits & 2 ) {
 				r = BoxOnPlaneSide( node->mins, node->maxs, &tr.viewParms.frustum[1] );
 				if ( r == 2 ) {
-					return;                     // culled
+					goto next;                  // culled
 				}
 				if ( r == 1 ) {
 					planeBits &= ~2;            // all descendants will also be in front
@@ -773,7 +781,7 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, 
 			if ( planeBits & 4 ) {
 				r = BoxOnPlaneSide( node->mins, node->maxs, &tr.viewParms.frustum[2] );
 				if ( r == 2 ) {
-					return;                     // culled
+					goto next;                  // culled
 				}
 				if ( r == 1 ) {
 					planeBits &= ~4;            // all descendants will also be in front
@@ -783,7 +791,7 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, 
 			if ( planeBits & 8 ) {
 				r = BoxOnPlaneSide( node->mins, node->maxs, &tr.viewParms.frustum[3] );
 				if ( r == 2 ) {
-					return;                     // culled
+					goto next;                  // culled
 				}
 				if ( r == 1 ) {
 					planeBits &= ~8;            // all descendants will also be in front
@@ -794,7 +802,7 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, 
 			if ( planeBits & 16 ) {
 				r = BoxOnPlaneSide( node->mins, node->maxs, &tr.viewParms.frustum[4] );
 				if ( r == 2 ) {
-					return;                     // culled
+					goto next;                  // culled
 				}
 				if ( r == 1 ) {
 					planeBits &= ~8;            // all descendants will also be in front
@@ -840,23 +848,33 @@ static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, 
 
 		// handle leaf nodes
 		if ( node->contents != -1 ) {
-			break;
+			// short circuit
+			if ( node->nummarksurfaces ) {
+				// ydnar: moved off to separate function
+				R_AddLeafSurfaces( node, dlightBits, decalBits );
+			}
+			goto next;
 		}
 
-		// recurse down the children, front side first
-		R_RecursiveWorldNode( node->children[ 0 ], planeBits, dlightBits, decalBits );
+		// walk down the children, front side first; the back one waits
+		frame = &stack[pending++];
+		frame->node = node->children[ 1 ];
+		frame->planeBits = planeBits;
+		frame->dlightBits = dlightBits;
+		frame->decalBits = decalBits;
+		node = node->children[ 0 ];
+		continue;
 
-		// tail recurse
-		node = node->children[ 1 ];
+next:
+		if ( !pending ) {
+			return;
+		}
+		frame = &stack[--pending];
+		node = frame->node;
+		planeBits = frame->planeBits;
+		dlightBits = frame->dlightBits;
+		decalBits = frame->decalBits;
 	} while ( 1 );
-
-	// short circuit
-	if ( node->nummarksurfaces == 0 ) {
-		return;
-	}
-
-	// ydnar: moved off to separate function
-	R_AddLeafSurfaces( node, dlightBits, decalBits );
 }
 
 

@@ -79,4 +79,53 @@ done:
 	free( parents );
 	return error;
 }
+
+/*
+The most decision nodes on any path down from the world root, node 0: what an
+explicit stack for a walk of the world tree must hold, one pending sibling per
+decision node above the current one. BSP_ValidateTree must have accepted the
+tree. A map with no nodes has depth 0.
+*/
+static const char *BSP_TreeDepth( const void *buffer, const dheader_t *header, unsigned int *depth ) {
+	const byte *records = (const byte *)buffer + header->lumps[LUMP_NODES].fileofs;
+	unsigned int nodes = header->lumps[LUMP_NODES].filelen / sizeof( dnode_t );
+	unsigned int *queue, *levels, i, j, child, head = 0, tail = 0;
+	bspArrayAllocation_t allocation;
+	const char *error;
+
+	*depth = 0;
+	if ( !nodes ) {
+		return NULL;
+	}
+	allocation.count = nodes * 2;
+	allocation.elementSize = sizeof( *queue );
+	allocation.extraElements = 0;
+	error = BSP_ValidateAllocations( &allocation, 1 );
+	if ( error ) {
+		return error;
+	}
+	queue = malloc( allocation.count * sizeof( *queue ) );
+	if ( !queue ) {
+		return "BSP tree depth allocation failed";
+	}
+	levels = queue + nodes;
+	// breadth first: a tree reaches each node once, so the queue holds at most every node
+	queue[tail++] = 0;
+	levels[0] = 1;
+	while ( head < tail ) {
+		i = queue[head++];
+		if ( levels[i] > *depth ) {
+			*depth = levels[i];
+		}
+		for ( j = 0; j < 2; j++ ) {
+			child = BSP_FileWord( records + i * sizeof( dnode_t ) + offsetof( dnode_t, children ) + j * 4 );
+			if ( !( child & 0x80000000u ) ) {
+				levels[child] = levels[i] + 1;
+				queue[tail++] = child;
+			}
+		}
+	}
+	free( queue );
+	return NULL;
+}
 #endif

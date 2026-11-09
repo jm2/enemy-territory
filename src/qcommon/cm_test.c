@@ -143,18 +143,27 @@ void CM_StoreBrushes( leafList_t *ll, int nodenum ) {
 =============
 CM_BoxLeafnums
 
-Fills in a list of all the leafs touched
+Fills in a list of all the leafs touched, front side first, as the
+recursive walk did. Where the box crosses a plane, the back child waits on
+cm.boxStack while the front one is walked, so a deep tree takes no C stack:
+there is at most one waiting child per decision node above the current
+one, and CM_LoadMap sized the stack by the world tree's depth. Walks start
+at the world root, node 0, or at a leaf.
 =============
 */
 void CM_BoxLeafnums_r( leafList_t *ll, int nodenum ) {
 	cplane_t    *plane;
 	cNode_t     *node;
-	int s;
+	int s, *stack = cm.boxStack, pending = 0;
 
 	while ( 1 ) {
 		if ( nodenum < 0 ) {
 			ll->storeLeafs( ll, nodenum );
-			return;
+			if ( !pending ) {
+				return;
+			}
+			nodenum = stack[--pending];
+			continue;
 		}
 
 		node = &cm.nodes[nodenum];
@@ -166,8 +175,8 @@ void CM_BoxLeafnums_r( leafList_t *ll, int nodenum ) {
 			nodenum = node->children[1];
 		} else {
 			// go down both
-			CM_BoxLeafnums_r( ll, node->children[0] );
-			nodenum = node->children[1];
+			stack[pending++] = node->children[1];
+			nodenum = node->children[0];
 		}
 
 	}
