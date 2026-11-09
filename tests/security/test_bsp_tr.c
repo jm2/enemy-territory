@@ -15,11 +15,21 @@ int skyboxportal;
 static cvar_t zeroCvar, subdivisionsCvar, foliageCvar;
 cvar_t *r_lightmap = &zeroCvar, *r_mapOverBrightBits = &zeroCvar, *r_singleShader = &zeroCvar;
 cvar_t *r_subdivisions = &subdivisionsCvar, *r_drawfoliage = &foliageCvar;
-static cvar_t ambientScaleCvar, directedScaleCvar;
+static cvar_t ambientScaleCvar, directedScaleCvar, mapOverBrightCvar;
 cvar_t *r_ambientScale = &ambientScaleCvar, *r_directedScale = &directedScaleCvar, *r_debugLight = &zeroCvar;
 static shader_t knownShader;
 static int shaderCalls, imageCalls;
 static image_t knownImage;
+static unsigned int imageHash;
+
+static unsigned int Fnv( unsigned int h, const void *data, size_t size ) {
+	const byte *b = data;
+	size_t i;
+	for ( i = 0; i < size; i++ ) {
+		h = ( h ^ b[i] ) * 16777619u;
+	}
+	return h;
+}
 
 shader_t *R_FindShader( const char *name, int lightmapIndex, qboolean mipRawImage ) {
 	(void)name; (void)lightmapIndex; (void)mipRawImage;
@@ -40,6 +50,7 @@ image_t *R_CreateImage( const char *name, const byte *pic, int width, int height
 	(void)name; (void)mipmap; (void)allowPicmip; (void)wrapClampMode;
 	Check( pic != NULL && width == LIGHTMAP_SIZE && height == LIGHTMAP_SIZE, "lightmap upload" );
 	imageCalls++;
+	imageHash = Fnv( imageHash, pic, width * height * 4 );
 	return &knownImage;
 }
 void R_RemapShader( const char *oldShader, const char *newShader, const char *timeOffset ) { (void)oldShader; (void)newShader; (void)timeOffset; }
@@ -65,6 +76,7 @@ image_t *R_FindImageFile( const char *name, qboolean mipmap, qboolean allowPicmi
 
 static int LoaderTry( const char *name ) {
 	tr.worldMapLoaded = qfalse;     // RE_Shutdown's job between maps
+	imageHash = 2166136261u;
 	if ( realMaps ) {
 		tr.numModels = 0;           // and R_ModelInit's
 	}
@@ -135,6 +147,108 @@ static void LightGridDigest( const char *name ) {
 	}
 	printf( "     %s: %dx%dx%d light grid, %d samples inside it, light digest %08x\n", name,
 			w->lightGridBounds[0], w->lightGridBounds[1], w->lightGridBounds[2], samples, h );
+}
+
+static unsigned int GenericDigest( unsigned int h, const srfGeneric_t *g ) {
+	h = Fnv( h, g->bounds, sizeof( g->bounds ) );
+	h = Fnv( h, g->origin, sizeof( g->origin ) );
+	h = Fnv( h, &g->radius, sizeof( g->radius ) );
+	h = Fnv( h, g->plane.normal, sizeof( g->plane.normal ) );
+	h = Fnv( h, &g->plane.dist, sizeof( g->plane.dist ) );
+	h = Fnv( h, &g->plane.type, 1 );
+	return Fnv( h, &g->plane.signbits, 1 );
+}
+
+/* What the loader published for every surface, lightmap, plane, fog and
+ * model, and the light grid, to compare trees: same bits, same world. */
+static void WorldDigest( const char *name ) {
+	const world_t *w = &s_worldData;
+	unsigned int h = 2166136261u;
+	int i, n;
+
+	for ( i = 0; i < w->numsurfaces; i++ ) {
+		const msurface_t *surf = &w->surfaces[i];
+		int shader = surf->shader == &knownShader ? 1 : surf->shader == tr.defaultShader ? 2 : 0;
+		h = Fnv( h, &surf->fogIndex, sizeof( surf->fogIndex ) );
+		h = Fnv( h, &shader, sizeof( shader ) );
+		h = Fnv( h, surf->data, sizeof( *surf->data ) );
+		switch ( *surf->data ) {
+		case SF_TRIANGLES: {
+			const srfTriangles_t *t = (const srfTriangles_t *)surf->data;
+			h = GenericDigest( h, (const srfGeneric_t *)t );
+			h = Fnv( h, &t->numVerts, sizeof( t->numVerts ) );
+			h = Fnv( h, &t->numIndexes, sizeof( t->numIndexes ) );
+			h = Fnv( h, t->verts, t->numVerts * sizeof( t->verts[0] ) );
+			h = Fnv( h, t->indexes, t->numIndexes * sizeof( t->indexes[0] ) );
+			break;
+		}
+		case SF_GRID: {
+			const srfGridMesh_t *g = (const srfGridMesh_t *)surf->data;
+			h = GenericDigest( h, (const srfGeneric_t *)g );
+			h = Fnv( h, g->lodOrigin, sizeof( g->lodOrigin ) );
+			h = Fnv( h, &g->lodRadius, sizeof( g->lodRadius ) );
+			h = Fnv( h, &g->lodFixed, sizeof( g->lodFixed ) );
+			h = Fnv( h, &g->lodStitched, sizeof( g->lodStitched ) );
+			h = Fnv( h, &g->width, sizeof( g->width ) );
+			h = Fnv( h, &g->height, sizeof( g->height ) );
+			h = Fnv( h, g->widthLodError, g->width * sizeof( float ) );
+			h = Fnv( h, g->heightLodError, g->height * sizeof( float ) );
+			h = Fnv( h, g->verts, g->width * g->height * sizeof( g->verts[0] ) );
+			break;
+		}
+		case SF_FOLIAGE: {
+			const srfFoliage_t *f = (const srfFoliage_t *)surf->data;
+			h = GenericDigest( h, (const srfGeneric_t *)f );
+			h = Fnv( h, &f->numVerts, sizeof( f->numVerts ) );
+			h = Fnv( h, &f->numIndexes, sizeof( f->numIndexes ) );
+			h = Fnv( h, &f->numInstances, sizeof( f->numInstances ) );
+			h = Fnv( h, f->xyz, f->numVerts * sizeof( f->xyz[0] ) );
+			h = Fnv( h, f->normal, f->numVerts * sizeof( f->normal[0] ) );
+			h = Fnv( h, f->texCoords, f->numVerts * sizeof( f->texCoords[0] ) );
+			h = Fnv( h, f->lmTexCoords, f->numVerts * sizeof( f->lmTexCoords[0] ) );
+			h = Fnv( h, f->indexes, f->numIndexes * sizeof( f->indexes[0] ) );
+			for ( n = 0; n < f->numInstances; n++ ) {
+				h = Fnv( h, f->instances[n].origin, sizeof( f->instances[n].origin ) );
+				h = Fnv( h, f->instances[n].color, sizeof( f->instances[n].color ) );
+			}
+			break;
+		}
+		case SF_FLARE: {
+			const srfFlare_t *fl = (const srfFlare_t *)surf->data;
+			h = Fnv( h, fl->origin, sizeof( fl->origin ) );
+			h = Fnv( h, fl->normal, sizeof( fl->normal ) );
+			h = Fnv( h, fl->color, sizeof( fl->color ) );
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	for ( i = 0; i < w->numplanes; i++ ) {
+		h = Fnv( h, w->planes[i].normal, sizeof( w->planes[i].normal ) );
+		h = Fnv( h, &w->planes[i].dist, sizeof( w->planes[i].dist ) );
+		h = Fnv( h, &w->planes[i].type, 1 );
+		h = Fnv( h, &w->planes[i].signbits, 1 );
+	}
+	for ( i = 0; i < w->numfogs; i++ ) {
+		h = Fnv( h, &w->fogs[i].originalBrushNumber, sizeof( w->fogs[i].originalBrushNumber ) );
+		h = Fnv( h, w->fogs[i].bounds, sizeof( w->fogs[i].bounds ) );
+	}
+	for ( i = 0; i < w->numBModels; i++ ) {
+		n = w->bmodels[i].firstSurface - w->surfaces;
+		h = Fnv( h, w->bmodels[i].bounds, sizeof( w->bmodels[i].bounds ) );
+		h = Fnv( h, &n, sizeof( n ) );
+		h = Fnv( h, &w->bmodels[i].numSurfaces, sizeof( w->bmodels[i].numSurfaces ) );
+	}
+	h = Fnv( h, w->lightGridOrigin, sizeof( w->lightGridOrigin ) );
+	h = Fnv( h, w->lightGridSize, sizeof( w->lightGridSize ) );
+	h = Fnv( h, w->lightGridInverseSize, sizeof( w->lightGridInverseSize ) );
+	h = Fnv( h, w->lightGridBounds, sizeof( w->lightGridBounds ) );
+	if ( w->lightGridData ) {
+		h = Fnv( h, w->lightGridData, w->lightGridBounds[0] * w->lightGridBounds[1] * w->lightGridBounds[2] * 8 );
+	}
+	printf( "     %s: %d surfaces, %d lightmaps, world digest %08x, lightmap digest %08x\n",
+			name, w->numsurfaces, tr.numLightmaps, h, imageHash );
 }
 
 static int LoaderAccept( const char *name ) {
@@ -221,6 +335,7 @@ static int LoaderAccept( const char *name ) {
 			printf( "     %s: %d grids, patch digest %08x\n", name, grids, h );
 		}
 		LightGridDigest( name );
+		WorldDigest( name );
 	}
 	if ( !strcmp( name, "maps/previous.bsp" ) ) {
 		// the unmutated fixture, as the unfixed loader also builds it
@@ -264,9 +379,118 @@ static void LoaderReject( const char *name ) {
 static void M_ModelSlots( void ) { tr.numModels = MAX_MOD_KNOWN - 1; }
 static void M_ModelSlotsFit( void ) { tr.numModels = MAX_MOD_KNOWN - 2; }
 
+/* Finite input whose renderer arithmetic overflows (Q3A 8bc70a8a, cc655e82).
+ * The fixture's 3x3 patch, vertices 7-15, has its middle control raised, so
+ * it keeps all nine points; the planar quad is vertices 0-3, the triangle 4-6,
+ * the foliage mesh 16-18 with instance origins 19 and 20. */
+#define VERT( n, field ) ( LumpOfs( LUMP_DRAWVERTS ) + ( n ) * sizeof( drawVert_t ) + offsetof( drawVert_t, field ) )
+#define SURF_VEC( n, v, axis ) ( AT( LUMP_SURFACES, dsurface_t, n, lightmapVecs ) + ( ( v ) * 3 + ( axis ) ) * 4 )
+static void M_PatchMidpoint( void ) {
+	int i;
+	for ( i = 7; i < 16; i++ ) {
+		Float( VERT( i, xyz ), FLT_MAX );   // ( a + 2b + c ) / 4 overflows before the divide
+	}
+}
+static void M_PatchTexCoords( void ) {
+	int i;
+	for ( i = 7; i < 16; i++ ) {
+		Float( VERT( i, st ), FLT_MAX );    // the points put on the curve average two of them
+	}
+}
+static void M_PatchDeviation( void ) {
+	// the first and last controls of a row FLT_MAX apart each way
+	Float( VERT( 7, xyz ), -FLT_MAX );
+	Float( VERT( 9, xyz ), FLT_MAX );
+	Float( VERT( 8, xyz ), 0 );
+}
+static void M_PatchLodBounds( void ) {
+	Float( SURF_VEC( S_PATCH, 0, 0 ), FLT_MAX );
+	Float( SURF_VEC( S_PATCH, 1, 0 ), FLT_MAX );
+}
+static void M_PatchFinite( void ) {
+	// far but representable: the same patch 1e18 away on x still loads. (Past
+	// about 1.8e19 its sphere overflows: ClearBounds starts at +-99999, so the
+	// bounds always reach back to there, and VectorLength squares)
+	int i;
+	for ( i = 7; i < 16; i++ ) {
+		Float( VERT( i, xyz ), 1e18f );
+	}
+	Float( SURF_VEC( S_PATCH, 0, 0 ), 1e18f );
+	Float( SURF_VEC( S_PATCH, 1, 0 ), 1e18f );
+}
+static void M_PlanarPlaneDist( void ) {
+	// a far quad, whose plane distance is 1e18 * 1e21
+	int i;
+	for ( i = 0; i < 4; i++ ) {
+		Float( VERT( i, xyz ), 1e18f );
+	}
+	Float( SURF_VEC( S_PLANAR, 2, 0 ), 1e21f );
+}
+static void M_PlanarPlaneFar( void ) {
+	int i;
+	for ( i = 0; i < 4; i++ ) {
+		Float( VERT( i, xyz ), 1e18f );
+	}
+	Float( SURF_VEC( S_PLANAR, 2, 0 ), 1e20f );     // 1e38 fits
+}
+static void M_TriangleSphere( void ) {
+	// a triangle FLT_MAX each way: the sphere's radius squares past FLT_MAX
+	Float( VERT( 4, xyz ), -FLT_MAX );
+	Float( VERT( 5, xyz ), FLT_MAX );
+}
+static void M_FoliageInstanceFar( void ) { Float( VERT( 19, xyz ), FLT_MAX ); }
+
+/* Surfaces against the tessellator: RB_CHECKOVERFLOW drops a surface of
+ * SHADER_MAX_VERTEXES vertices or SHADER_MAX_INDEXES indexes when it is drawn. */
+static void PlanarVerts( int surf, int count ) {
+	GrowLump( LUMP_DRAWVERTS, sizeof( drawVert_t ), 21 + count );
+	SET( LUMP_SURFACES, dsurface_t, surf, firstVert, 21 );
+	SET( LUMP_SURFACES, dsurface_t, surf, numVerts, count );
+}
+static void TriIndexes( int count ) {
+	GrowLump( LUMP_DRAWINDEXES, 4, 12 + count );    // new indexes are vertex 0
+	SET( LUMP_SURFACES, dsurface_t, S_TRISOUP, firstIndex, 12 );
+	SET( LUMP_SURFACES, dsurface_t, S_TRISOUP, numIndexes, count );
+}
+static void M_PlanarCap( void ) { PlanarVerts( S_PLANAR, SHADER_MAX_VERTEXES ); }
+static void M_PlanarCapFits( void ) { PlanarVerts( S_PLANAR, SHADER_MAX_VERTEXES - 1 ); }
+static void M_TriIndexCap( void ) { TriIndexes( SHADER_MAX_INDEXES ); }
+static void M_TriCapFits( void ) {
+	PlanarVerts( S_TRISOUP, SHADER_MAX_VERTEXES - 1 );
+	TriIndexes( SHADER_MAX_INDEXES - 3 );
+}
+static void M_FoliageMeshCap( void ) {
+	GrowLump( LUMP_DRAWVERTS, sizeof( drawVert_t ), 21 + SHADER_MAX_VERTEXES + 2 );
+	SET( LUMP_SURFACES, dsurface_t, S_FOLIAGE, firstVert, 21 );
+	SET( LUMP_SURFACES, dsurface_t, S_FOLIAGE, numVerts, SHADER_MAX_VERTEXES + 2 );
+	SET( LUMP_SURFACES, dsurface_t, S_FOLIAGE, patchHeight, SHADER_MAX_VERTEXES );
+}
+static void M_FoliageInstancesFit( void ) {
+	// radar has a foliage surface of 17 mesh vertices and 996 instances, 1,013
+	// vertices in all: each instance is drawn alone, so only the mesh counts
+	GrowLump( LUMP_DRAWVERTS, sizeof( drawVert_t ), 16 + 3 + 1100 );
+	SET( LUMP_SURFACES, dsurface_t, S_FOLIAGE, numVerts, 3 + 1100 );
+	SET( LUMP_SURFACES, dsurface_t, S_FOLIAGE, patchWidth, 1100 );
+}
+
 static const bspCase_t rendererCases[] = {
 	{ "submodels past the free model slots", M_ModelSlots, SKIP, REJECT },
 	{ "submodels exactly filling the model slots", M_ModelSlotsFit, SKIP, ACCEPT },
+	{ "patch midpoint overflows", M_PatchMidpoint, SKIP, REJECT },
+	{ "patch texture coordinates overflow on the curve", M_PatchTexCoords, SKIP, REJECT },
+	{ "patch row spans more than FLT_MAX", M_PatchDeviation, SKIP, REJECT },
+	{ "patch LOD bounds overflow", M_PatchLodBounds, SKIP, REJECT },
+	{ "patch 1e18 away", M_PatchFinite, SKIP, ACCEPT },
+	{ "planar plane distance overflows", M_PlanarPlaneDist, SKIP, REJECT },
+	{ "planar plane distance of 1e38", M_PlanarPlaneFar, SKIP, ACCEPT },
+	{ "triangle bounding sphere overflows", M_TriangleSphere, SKIP, REJECT },
+	{ "foliage instance FLT_MAX away: its sphere overflows", M_FoliageInstanceFar, SKIP, REJECT },
+	{ "planar surface of SHADER_MAX_VERTEXES", M_PlanarCap, SKIP, REJECT },
+	{ "planar surface one vertex under the tessellator", M_PlanarCapFits, SKIP, ACCEPT },
+	{ "triangle surface of SHADER_MAX_INDEXES", M_TriIndexCap, SKIP, REJECT },
+	{ "triangle surface just under both caps", M_TriCapFits, SKIP, ACCEPT },
+	{ "foliage mesh of SHADER_MAX_VERTEXES", M_FoliageMeshCap, SKIP, REJECT },
+	{ "foliage of 1,103 vertices with its instances", M_FoliageInstancesFit, SKIP, ACCEPT },
 };
 
 static int RunExtra( const char *name, void ( *test )( void ) ) {
@@ -392,6 +616,82 @@ static void T_LightGridOnePoint( void ) {
 	free( tr.world->lightGridData );
 }
 
+/* q3map writes a fractional grid by float division before ceil and floor:
+ * gridsize 0.1 over one unit is 11 points an axis, where doubles give 10.
+ * The preflight keeps that (Q3A 7ff722bb, d94876f4; here since PR #31). */
+static void T_GridFraction( void ) {
+	int j;
+	unsigned int o;
+	BuildMap();
+	SetEntities( "{ \"gridsize\" \"0.1 0.1 128\" }", 1 );
+	for ( j = 0; j < 2; j++ ) {
+		Float( AT( LUMP_MODELS, dmodel_t, 0, mins ) + j * 4, 0 );
+		Float( AT( LUMP_MODELS, dmodel_t, 0, maxs ) + j * 4, 1 );
+	}
+	o = Append( LUMP_LIGHTGRID, 11 * 11 * 8, 0 );
+	memset( source + o, 0x20, 11 * 11 * 8 );
+	Check( LoaderAccept( "maps/grid.bsp" ), "fractional grid map loads" );
+	Check( s_worldData.lightGridBounds[0] == 11 && s_worldData.lightGridBounds[1] == 11 && s_worldData.lightGridBounds[2] == 1 &&
+		   s_worldData.lightGridData != NULL, "gridsize 0.1 keeps q3map's 11 points an axis" );
+}
+
+/* The old shift, in 64 bits so it is defined at every shift it was defined at
+ * in int (0 to 14), and beyond; a negative shift dims. */
+static void ShiftReference( long long shift, const byte in[3], byte out[3] ) {
+	long long c[3], max;
+	int i;
+	for ( i = 0; i < 3; i++ ) {
+		c[i] = shift < 0 ? in[i] >> ( shift < -31 ? 31 : -shift ) : (long long)in[i] << ( shift > 40 ? 40 : shift );
+	}
+	if ( ( c[0] | c[1] | c[2] ) > 255 ) {
+		max = c[0] > c[1] ? c[0] : c[1];
+		max = max > c[2] ? max : c[2];
+		for ( i = 0; i < 3; i++ ) {
+			c[i] = c[i] * 255 / max;
+		}
+	}
+	for ( i = 0; i < 3; i++ ) {
+		out[i] = (byte)c[i];
+	}
+}
+/* r_mapOverBrightBits is any integer, tr.overbrightBits 0 to 2. A negative
+ * shift or an overflowing difference was undefined (Q3A c743f116). */
+static void T_ColorShift( void ) {
+	static const int settings[][2] = {
+		{ 2, 0 }, { 2, 1 }, { 2, 2 }, { 1, 0 }, { 0, 0 }, { 3, 0 }, { 8, 0 }, { 9, 0 }, { 14, 0 },
+		{ 1, 2 }, { 0, 1 }, { 0, 2 }, { -1, 0 }, { -7, 1 }, { 40, 0 },
+		{ INT_MAX, 0 }, { INT_MAX, 2 }, { INT_MIN, 0 }, { INT_MIN, 2 }, { INT_MAX, INT_MIN }, { INT_MIN, INT_MAX },
+	};
+	static const byte blues[] = { 0, 1, 63, 64, 127, 128, 200, 255 };
+	byte in[4], out[4], want[3];
+	int s, r, g, b;
+	r_mapOverBrightBits = &mapOverBrightCvar;
+	for ( s = 0; s < (int)( sizeof( settings ) / sizeof( settings[0] ) ); s++ ) {
+		mapOverBrightCvar.integer = settings[s][0];
+		tr.overbrightBits = settings[s][1];
+		for ( r = 0; r < 256; r++ ) {
+			for ( g = 0; g < 256; g++ ) {
+				for ( b = 0; b < (int)sizeof( blues ); b++ ) {
+					in[0] = r;
+					in[1] = g;
+					in[2] = blues[b];
+					in[3] = 77;
+					ShiftReference( (long long)settings[s][0] - settings[s][1], in, want );
+					R_ColorShiftLightingBytes( in, out );
+					if ( memcmp( out, want, 3 ) || out[3] != 77 ) {
+						fprintf( stderr, "    r_mapOverBrightBits %d, overbrightBits %d: %d %d %d gives %d %d %d %d, not %d %d %d 77\n",
+								settings[s][0], settings[s][1], in[0], in[1], in[2], out[0], out[1], out[2], out[3], want[0], want[1], want[2] );
+						Fail( "color shift" );
+					}
+					// in place, as R_LoadLightGrid shifts its samples
+					R_ColorShiftLightingBytes( in, in );
+					Check( !memcmp( in, out, 4 ), "color shift in place" );
+				}
+			}
+		}
+	}
+}
+
 #ifdef LIGHTMAP_INC
 static void T_FindLightmapIndex( void ) {
 	int index = MAX_LIGHTMAPS + 100;
@@ -432,6 +732,14 @@ int main( int argc, char **argv ) {
 	ri.Cmd_ExecuteText = TestExecuteText;
 	ambientScaleCvar.value = 0.5f;      // R_Register's defaults
 	directedScaleCvar.value = 1;
+	// to compare trees at other overbright settings: BSP_MAP_OVERBRIGHT, BSP_OVERBRIGHT
+	if ( getenv( "BSP_MAP_OVERBRIGHT" ) ) {
+		mapOverBrightCvar.integer = atoi( getenv( "BSP_MAP_OVERBRIGHT" ) );
+		r_mapOverBrightBits = &mapOverBrightCvar;
+	}
+	if ( getenv( "BSP_OVERBRIGHT" ) ) {
+		tr.overbrightBits = atoi( getenv( "BSP_OVERBRIGHT" ) );
+	}
 	for ( i = 0; i < FUNCTABLE_SIZE; i++ ) {
 		tr.sinTable[i] = sin( DEG2RAD( i * 360.0f / ( (float)( FUNCTABLE_SIZE - 1 ) ) ) );
 	}
@@ -447,6 +755,8 @@ int main( int argc, char **argv ) {
 	failed += RunExtra( "R_GetSurfMemory negative size", T_SurfMemoryNegative );
 	failed += RunExtra( "light grid sampled at and past its upper edge", T_LightGridEdge );
 	failed += RunExtra( "light grid of one point", T_LightGridOnePoint );
+	failed += RunExtra( "overbright shift for every r_mapOverBrightBits", T_ColorShift );
+	failed += RunExtra( "gridsize 0.1 over one unit, as q3map rounds it", T_GridFraction );
 #ifdef LIGHTMAP_INC
 	failed += RunExtra( "R_FindLightmap index past MAX_LIGHTMAPS", T_FindLightmapIndex );
 	failed += RunExtra( "R_FindLightmap long world directory", T_FindLightmapLongDir );

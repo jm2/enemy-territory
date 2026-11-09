@@ -706,6 +706,10 @@ typedef struct srfGridMesh_s
 	float lodRadius;
 	int lodFixed;
 	int lodStitched;
+	// R_FixSharedVertexLodError's walk: the grid it came from and the next
+	// surface to try; cleared when it leaves the grid
+	struct srfGridMesh_s *lodParent;
+	int lodNextSurface;
 
 	// vertexes
 	int width, height;
@@ -1743,6 +1747,13 @@ CURVE TESSELATION
 
 #define PATCH_STITCHING
 
+// R_SubdividePatchToGrid's working grid; the map preflight refines each patch in one too
+typedef struct {
+	drawVert_t ctrl[MAX_GRID_SIZE][MAX_GRID_SIZE];
+	float errorTable[2][MAX_GRID_SIZE];
+} patchGrid_t;
+
+const char *R_RefinePatchGrid( int *width, int *height, patchGrid_t *grid, const drawVert_t *points );
 srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
 									   drawVert_t points[MAX_PATCH_SIZE * MAX_PATCH_SIZE] );
 srfGridMesh_t *R_GridInsertColumn( srfGridMesh_t *grid, int column, int row, vec3_t point, float loderror );

@@ -359,20 +359,48 @@ void R_FreeSurfaceGridMesh( srfGridMesh_t *grid ) {
 	ri.Free( grid );
 }
 
+/* No infinity or NaN: the exponent bits of each float are not all set. */
+static qboolean R_PatchFinite( const float *values, int count ) {
+	unsigned int word;
+	int i;
+
+	for ( i = 0 ; i < count ; i++ ) {
+		memcpy( &word, values + i, sizeof( word ) );
+		if ( ( word & 0x7f800000u ) == 0x7f800000u ) {
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
 /*
 =================
-R_SubdividePatchToGrid
+R_RefinePatchGrid
+
+R_SubdividePatchToGrid's refinement, into a caller's grid. RE_LoadWorldMap's
+preflight runs it on every drawn patch before it changes anything, so finite
+controls whose curve arithmetic overflows (a midpoint, a normalization, the
+interpolated texture coordinates, a normal) refuse the map instead of putting
+an infinity or NaN in the world. Lightmap coordinates are left out, as in
+bsp_geometry.h: retail maps carry NaN ones on vertex-lit surfaces.
+Adapted from Q3A 8bc70a8a.
 =================
 */
-srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
-									   drawVert_t points[MAX_PATCH_SIZE*MAX_PATCH_SIZE] ) {
+const char *R_RefinePatchGrid( int *widthOut, int *heightOut, patchGrid_t *grid, const drawVert_t *points ) {
 	int i, j, k, l;
+	int width = *widthOut, height = *heightOut;
 	drawVert_t prev, next, mid;
-	float len, maxLen;
+	float len, maxLen, radius;
 	int dir;
 	int t;
-	MAC_STATIC drawVert_t ctrl[MAX_GRID_SIZE][MAX_GRID_SIZE];
-	float errorTable[2][MAX_GRID_SIZE];
+	drawVert_t ( *ctrl )[MAX_GRID_SIZE] = grid->ctrl;
+	float ( *errorTable )[MAX_GRID_SIZE] = grid->errorTable;
+	vec3_t bounds[2], origin, delta;
+
+	if ( !points || width < 3 || height < 3 || !( width & 1 ) || !( height & 1 ) ||
+		 width > MAX_GRID_SIZE || height > MAX_GRID_SIZE || width > MAX_PATCH_SIZE * MAX_PATCH_SIZE / height ) {
+		return "invalid renderer patch controls";
+	}
 
 	for ( i = 0 ; i < width ; i++ ) {
 		for ( j = 0 ; j < height ; j++ ) {
@@ -405,6 +433,9 @@ srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
 					midxyz[l] = ( ctrl[i][j].xyz[l] + ctrl[i][j + 1].xyz[l] * 2
 								  + ctrl[i][j + 2].xyz[l] ) * 0.25f;
 				}
+				if ( !R_PatchFinite( midxyz, 3 ) ) {
+					return "nonfinite renderer patch midpoint";
+				}
 
 				// see how far off the line it is
 				// using dist-from-line will not account for internal
@@ -412,12 +443,25 @@ srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
 				// dist-from-midpoint
 				VectorSubtract( midxyz, ctrl[i][j].xyz, midxyz );
 				VectorSubtract( ctrl[i][j + 2].xyz, ctrl[i][j].xyz, dir );
-				VectorNormalize( dir );
+				if ( !R_PatchFinite( midxyz, 3 ) || !R_PatchFinite( dir, 3 ) ) {
+					return "nonfinite renderer patch deviation";
+				}
+				d = VectorNormalize( dir );
+				if ( !R_PatchFinite( &d, 1 ) || !R_PatchFinite( dir, 3 ) ) {
+					return "nonfinite renderer patch normalization";
+				}
 
 				d = DotProduct( midxyz, dir );
+				if ( !R_PatchFinite( &d, 1 ) ) {
+					return "nonfinite renderer patch projection";
+				}
 				VectorScale( dir, d, projected );
 				VectorSubtract( midxyz, projected, midxyz );
 				len = VectorLengthSquared( midxyz );            // we will do the sqrt later
+				// a NaN would never be the largest, and pass unseen
+				if ( !R_PatchFinite( midxyz, 3 ) || !R_PatchFinite( &len, 1 ) ) {
+					return "nonfinite renderer patch distance";
+				}
 
 				if ( len > maxLen ) {
 					maxLen = len;
@@ -518,7 +562,48 @@ srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
 	// calculate normals
 	MakeMeshNormals( width, height, ctrl );
 
-	return R_CreateSurfaceGridMesh( width, height, ctrl, errorTable );
+	// what R_CreateSurfaceGridMesh will copy and compute
+	ClearBounds( bounds[0], bounds[1] );
+	for ( i = 0 ; i < height ; i++ ) {
+		for ( j = 0 ; j < width ; j++ ) {
+			drawVert_t *v = &ctrl[i][j];
+			if ( !R_PatchFinite( v->xyz, 3 ) || !R_PatchFinite( v->st, 2 ) || !R_PatchFinite( v->normal, 3 ) ) {
+				return "nonfinite renderer patch vertex";
+			}
+			AddPointToBounds( v->xyz, bounds[0], bounds[1] );
+		}
+	}
+	if ( !R_PatchFinite( errorTable[0], width ) || !R_PatchFinite( errorTable[1], height ) ) {
+		return "nonfinite renderer patch LOD error";
+	}
+	VectorAdd( bounds[0], bounds[1], origin );
+	VectorScale( origin, 0.5f, origin );
+	VectorSubtract( bounds[0], origin, delta );
+	radius = VectorLength( delta );
+	if ( !R_PatchFinite( origin, 3 ) || !R_PatchFinite( &radius, 1 ) ) {
+		return "nonfinite renderer patch bounds";
+	}
+	*widthOut = width;
+	*heightOut = height;
+	return NULL;
+}
+
+/*
+=================
+R_SubdividePatchToGrid
+=================
+*/
+srfGridMesh_t *R_SubdividePatchToGrid( int width, int height,
+									   drawVert_t points[MAX_PATCH_SIZE*MAX_PATCH_SIZE] ) {
+	MAC_STATIC patchGrid_t grid;
+	const char *error;
+
+	// the preflight refused any patch this would refuse
+	error = R_RefinePatchGrid( &width, &height, &grid, points );
+	if ( error ) {
+		ri.Error( ERR_DROP, "R_SubdividePatchToGrid: %s", error );
+	}
+	return R_CreateSurfaceGridMesh( width, height, grid.ctrl, grid.errorTable );
 }
 
 /*

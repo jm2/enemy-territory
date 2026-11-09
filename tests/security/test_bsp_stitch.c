@@ -10,8 +10,14 @@
  * give that zero; every read inside the array keeps its value, so stitching
  * on valid maps is unchanged. The real tr_bsp.c, with the grid inserts
  * stubbed. Adapted from Quake III's tests/bsp_stitch_regression.c
- * (1b5fe234). */
+ * (1b5fe234).
+ *
+ * Also R_FixSharedVertexLodError, which recursed once per touching patch of a
+ * LOD group: a 4,096-patch chain must not overflow a 256 KB stack, and random
+ * small groups print a digest of every grid after it, to compare trees with
+ * (Q3A 41ac424f). */
 #include "../../src/renderer/tr_bsp.c"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -107,6 +113,147 @@ static void Stitch( int count1, int transposed1, int transposed2, float wantErro
 	FreeGrid( grid2 );
 }
 
+/* ---- R_FixSharedVertexLodError ---- */
+
+/* A grid of exactly its own bytes, its LOD errors exact-size heap arrays. */
+static srfGridMesh_t *LodGrid( int width, int height ) {
+	srfGridMesh_t *grid = calloc( 1, sizeof( *grid ) + ( width * height - 1 ) * sizeof( drawVert_t ) );
+	Check( grid != NULL, "grid allocation" );
+	grid->surfaceType = SF_GRID;
+	grid->width = width;
+	grid->height = height;
+	grid->widthLodError = calloc( width, sizeof( float ) );
+	grid->heightLodError = calloc( height, sizeof( float ) );
+	Check( grid->widthLodError && grid->heightLodError, "LOD error arrays" );
+	return grid;
+}
+
+static void SetSurfaces( msurface_t *surfaces, srfGridMesh_t **grids, int count ) {
+	int i;
+	memset( surfaces, 0, count * sizeof( *surfaces ) );
+	for ( i = 0; i < count; i++ ) {
+		surfaces[i].data = (surfaceType_t *)grids[i];
+	}
+	s_worldData.surfaces = surfaces;
+	s_worldData.numsurfaces = count;
+}
+
+static void CheckWalkCleared( srfGridMesh_t **grids, int count ) {
+	int i;
+	for ( i = 0; i < count; i++ ) {
+		if ( grids[i]->surfaceType == SF_GRID ) {
+			Check( grids[i]->lodParent == NULL && grids[i]->lodNextSurface == 0, "the walk leaves no continuation behind" );
+		}
+	}
+}
+
+#define CHAIN 4096
+static srfGridMesh_t *chain[CHAIN];
+static msurface_t chainSurfaces[CHAIN];
+
+static void *ChainThread( void *unused ) {
+	(void)unused;
+	R_FixSharedVertexLodError();
+	return NULL;
+}
+
+/* Patch i spans x 2i to 2i + 2: its right column is patch i + 1's left one,
+ * whose middle point is the only one they share, so the walk goes from each
+ * patch to the next, CHAIN deep. Run in a thread with a 256 KB stack. */
+static void LodChain( void ) {
+	pthread_attr_t attr;
+	pthread_t thread;
+	int i, x, y;
+
+	for ( i = 0; i < CHAIN; i++ ) {
+		chain[i] = LodGrid( 3, 3 );
+		for ( y = 0; y < 3; y++ ) {
+			for ( x = 0; x < 3; x++ ) {
+				chain[i]->verts[y * 3 + x].xyz[0] = 2 * i + x;
+				chain[i]->verts[y * 3 + x].xyz[1] = y;
+			}
+			chain[i]->heightLodError[y] = 100.0f + i;
+		}
+		chain[i]->lodRadius = 50;     // one LOD group
+	}
+	chain[0]->heightLodError[1] = 7;
+	SetSurfaces( chainSurfaces, chain, CHAIN );
+	Check( !pthread_attr_init( &attr ) && !pthread_attr_setstacksize( &attr, 256 * 1024 ), "thread attributes" );
+	Check( !pthread_create( &thread, &attr, ChainThread, NULL ) && !pthread_join( thread, NULL ), "LOD thread" );
+	for ( i = 0; i < CHAIN; i++ ) {
+		Check( chain[i]->lodFixed == 2 && chain[i]->heightLodError[1] == 7, "the first patch's error reaches the whole chain" );
+		Check( chain[i]->heightLodError[0] == 100.0f + i && chain[i]->heightLodError[2] == 100.0f + i, "edge corners keep their errors" );
+	}
+	CheckWalkCleared( chain, CHAIN );
+	printf( "ok   R_FixSharedVertexLodError down a %d-patch chain in a 256 KB stack\n", CHAIN );
+}
+
+static unsigned int lodRng = 1;
+static int LodRandom( int n ) {
+	lodRng = lodRng * 1103515245u + 12345u;
+	return ( lodRng >> 8 ) % n;
+}
+
+/* 3,000 groups of up to 8 surfaces: grids of 2 to 5 points a side on a
+ * coarse lattice, so edges often meet, with jitter around the 0.1 match
+ * distance, two LOD groups, some surfaces not grids and some grids already
+ * fixed. Prints a digest of every grid's errors and lodFixed afterwards. */
+static void LodRandomGroups( void ) {
+	static const float jitter[] = { 0, 0, 0, 0.05f, 0.099f, 0.11f, -0.05f };
+	srfGridMesh_t *grids[8];
+	msurface_t surfaces[8];
+	surfaceType_t other = SF_SKIP;
+	unsigned int h = 2166136261u;
+	int fixture, count, i, j, k, changed = 0;
+
+	for ( fixture = 0; fixture < 3000; fixture++ ) {
+		count = 2 + LodRandom( 7 );
+		for ( i = 0; i < count; i++ ) {
+			grids[i] = LodGrid( 2 + LodRandom( 4 ), 2 + LodRandom( 4 ) );
+			for ( j = 0; j < grids[i]->width * grids[i]->height; j++ ) {
+				for ( k = 0; k < 3; k++ ) {
+					grids[i]->verts[j].xyz[k] = LodRandom( 3 ) + jitter[LodRandom( 7 )];
+				}
+			}
+			for ( j = 0; j < grids[i]->width; j++ ) {
+				grids[i]->widthLodError[j] = LodRandom( 50 );
+			}
+			for ( j = 0; j < grids[i]->height; j++ ) {
+				grids[i]->heightLodError[j] = 100 + LodRandom( 50 );
+			}
+			grids[i]->lodRadius = LodRandom( 4 ) ? 10 : 20;
+			grids[i]->lodOrigin[LodRandom( 3 )] = LodRandom( 8 ) ? 0 : 1;
+			grids[i]->lodFixed = LodRandom( 10 ) ? 0 : 1 + LodRandom( 2 );
+		}
+		SetSurfaces( surfaces, grids, count );
+		for ( i = 0; i < count; i++ ) {
+			if ( !LodRandom( 6 ) ) {
+				surfaces[i].data = &other;
+			}
+		}
+		R_FixSharedVertexLodError();
+		for ( i = 0; i < count; i++ ) {
+			srfGridMesh_t *g = grids[i];
+			for ( j = 0; j < g->width; j++ ) {
+				changed += g->widthLodError[j] >= 100;     // a height error moved into a width one
+				h = ( h ^ (unsigned int)g->widthLodError[j] ) * 16777619u;
+			}
+			for ( j = 0; j < g->height; j++ ) {
+				changed += g->heightLodError[j] < 100;
+				h = ( h ^ (unsigned int)g->heightLodError[j] ) * 16777619u;
+			}
+			h = ( h ^ (unsigned int)g->lodFixed ) * 16777619u;
+		}
+		CheckWalkCleared( grids, count );
+		for ( i = 0; i < count; i++ ) {
+			FreeGrid( grids[i] );
+		}
+	}
+	Check( changed > 1000, "the random groups exercise the walk" );
+	printf( "ok   R_FixSharedVertexLodError on 3000 random groups, %d errors crossed edges, LOD digest %08x\n", changed, h );
+	fflush( stdout );
+}
+
 int main( void ) {
 	/* the last point's error, past the array: retail's zero */
 	Stitch( 3, 0, 0, 0.0f, "reversed width edge into a column" );
@@ -117,5 +264,9 @@ int main( void ) {
 	Stitch( 5, 0, 0, 13.0f, "reversed width edge, error inside the array" );
 	Stitch( 5, 1, 1, 23.0f, "reversed height edge, error inside the array" );
 	printf( "bsp stitch: R_StitchPatches reads no LOD error past its array\n" );
+	fflush( stdout );
+	LodRandomGroups();
+	LodChain();
+	printf( "bsp LOD: R_FixSharedVertexLodError takes constant stack\n" );
 	return 0;
 }
