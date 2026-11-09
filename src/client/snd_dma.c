@@ -1084,14 +1084,7 @@ void S_AddLoopingSound( const vec3_t origin, const vec3_t velocity, const int ra
 	}
 
 	// ydnar: allow looped sounds to start when initially triggered, rather than in the middle of the sample
-	snd.loopSounds[ snd.numLoopSounds ].startSample = sfx->soundLength
-													  ? ( ( s_khz->integer * soundTime ) - s_paintedtime ) % sfx->soundLength
-													  : 0;
-
-	snd.loopSounds[ snd.numLoopSounds ].startSample = sfx->soundLength
-													  ?  s_paintedtime - ( (int) ( dma.speed * ( cl.serverTime - soundTime ) / 1000.0f ) )
-													  : 0;
-
+	// (two earlier tries, overwritten here, multiplied the module's soundTime past an int)
 	snd.loopSounds[ snd.numLoopSounds ].startSample = soundTime % sfx->soundLength;
 
 	VectorCopy( origin, snd.loopSounds[snd.numLoopSounds].origin );

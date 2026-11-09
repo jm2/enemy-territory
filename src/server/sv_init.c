@@ -617,7 +617,7 @@ void SV_SpawnServer( char *server, qboolean killBots ) {
 #if !defined( DO_LIGHT_DEDICATED )
 	// get a new checksum feed and restart the file system
 	srand( Sys_Milliseconds() );
-	sv.checksumFeed = ( ( (int) rand() << 16 ) ^ rand() ) ^ Sys_Milliseconds();
+	sv.checksumFeed = (int)( ( (unsigned)rand() << 16 ) ^ rand() ) ^ Sys_Milliseconds();
 
 	// DO_LIGHT_DEDICATED
 	// only comment out when you need a new pure checksum string and it's associated random feed
