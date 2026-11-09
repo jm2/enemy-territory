@@ -1,10 +1,11 @@
 /* RE_LoadWorldMap against corrupted BSPs, with the real tr_bsp.c and
  * tr_curve.c; shaders, images and models are stubs. A refused map must drop
  * before tr, the world, the hunk or any shader changes. Also R_GetSurfMemory,
- * and R_FindLightmap extracted from tr_shader.c (LIGHTMAP_INC). With BSP files
- * as arguments, loads each one, then truncates and mutates it. Run under ASan
- * and UBSan. */
+ * and R_FindLightmap extracted from tr_shader.c (LIGHTMAP_INC), and the light
+ * grid sampler of the real tr_light.c. With BSP files as arguments, loads each
+ * one, then truncates and mutates it. Run under ASan and UBSan. */
 #include "../../src/renderer/tr_bsp.c"
+#include "../../src/renderer/tr_light.c"
 #include "bsp_fixture.h"
 
 trGlobals_t tr;
@@ -14,6 +15,8 @@ int skyboxportal;
 static cvar_t zeroCvar, subdivisionsCvar, foliageCvar;
 cvar_t *r_lightmap = &zeroCvar, *r_mapOverBrightBits = &zeroCvar, *r_singleShader = &zeroCvar;
 cvar_t *r_subdivisions = &subdivisionsCvar, *r_drawfoliage = &foliageCvar;
+static cvar_t ambientScaleCvar, directedScaleCvar;
+cvar_t *r_ambientScale = &ambientScaleCvar, *r_directedScale = &directedScaleCvar, *r_debugLight = &zeroCvar;
 static shader_t knownShader;
 static int shaderCalls, imageCalls;
 static image_t knownImage;
@@ -44,6 +47,7 @@ void R_SetFog( int fogvar, int var1, int var2, float r, float g, float b, float 
 	(void)fogvar; (void)var1; (void)var2; (void)r; (void)g; (void)b; (void)density;
 }
 void R_SyncRenderThread( void ) {}
+int R_CullPointAndRadius( vec3_t origin, float radius ) { (void)origin; (void)radius; return CULL_IN; }
 static void QDECL TestPrintf( int level, const char *fmt, ... ) { (void)level; (void)fmt; }
 static void *TestRiHunk( int size, ha_pref preference ) { (void)preference; return TestHunk( size ); }
 static void TestExecuteText( int when, const char *text ) { (void)when; (void)text; }
@@ -75,6 +79,62 @@ static int LoaderTry( const char *name ) {
 	RE_LoadWorldMap( name );
 	expectDrop = 0;
 	return 1;
+}
+
+/* R_LightForPoint at every grid cell inside the grid, where a sample has all
+ * eight corners: three offsets per axis, from the cell's low corner. Hashes the
+ * bits of what it returns, to compare trees. */
+static void LightGridDigest( const char *name ) {
+	static const float offsets[] = { 0, 0.25f, 0.625f };
+	const world_t *w = &s_worldData;
+	unsigned int h = 2166136261u, k;
+	int c[3], o[3], i, samples = 0;
+	vec3_t point, ambient, directed, dir;
+	float v;
+	const byte *b;
+
+	if ( !w->lightGridData ) {
+		printf( "     %s: no light grid\n", name );
+		return;
+	}
+	for ( c[2] = 0; c[2] < w->lightGridBounds[2] - 1; c[2]++ ) {
+		for ( c[1] = 0; c[1] < w->lightGridBounds[1] - 1; c[1]++ ) {
+			for ( c[0] = 0; c[0] < w->lightGridBounds[0] - 1; c[0]++ ) {
+				for ( o[0] = 0; o[0] < 27; o[0]++ ) {
+					o[1] = o[0];
+					for ( i = 0; i < 3; i++, o[1] /= 3 ) {
+						point[i] = w->lightGridOrigin[i] + ( c[i] + offsets[o[1] % 3] ) * w->lightGridSize[i];
+						// in range as R_SetupEntityLightingGrid computes it
+						v = ( point[i] - w->lightGridOrigin[i] ) * w->lightGridInverseSize[i];
+						if ( !( v >= 0 && v < w->lightGridBounds[i] - 1 ) ) {
+							break;
+						}
+					}
+					if ( i < 3 ) {
+						continue;
+					}
+					Check( R_LightForPoint( point, ambient, directed, dir ), "grid sample" );
+					samples++;
+					for ( i = 0; i < 3; i++ ) {
+						b = (const byte *)&ambient[i];
+						for ( k = 0; k < 4; k++ ) {
+							h = ( h ^ b[k] ) * 16777619u;
+						}
+						b = (const byte *)&directed[i];
+						for ( k = 0; k < 4; k++ ) {
+							h = ( h ^ b[k] ) * 16777619u;
+						}
+						b = (const byte *)&dir[i];
+						for ( k = 0; k < 4; k++ ) {
+							h = ( h ^ b[k] ) * 16777619u;
+						}
+					}
+				}
+			}
+		}
+	}
+	printf( "     %s: %dx%dx%d light grid, %d samples inside it, light digest %08x\n", name,
+			w->lightGridBounds[0], w->lightGridBounds[1], w->lightGridBounds[2], samples, h );
 }
 
 static int LoaderAccept( const char *name ) {
@@ -160,6 +220,7 @@ static int LoaderAccept( const char *name ) {
 			}
 			printf( "     %s: %d grids, patch digest %08x\n", name, grids, h );
 		}
+		LightGridDigest( name );
 	}
 	if ( !strcmp( name, "maps/previous.bsp" ) ) {
 		// the unmutated fixture, as the unfixed loader also builds it
@@ -248,6 +309,89 @@ static void T_SurfMemoryNegative( void ) {
 	}
 	expectDrop = 0;
 }
+/* A grid of exactly its own bytes, so ASan sees a read past it. Point p has
+ * ambient 8p + 1 + channel and directed 100 + p + channel, light straight up:
+ * linear in the grid coordinates, so a trilinear sample is that same line at
+ * the sample's clamped coordinates. */
+static void LightGrid( int x, int y, int z ) {
+	static world_t world;
+	int p, c;
+	memset( &world, 0, sizeof( world ) );
+	VectorSet( world.lightGridOrigin, -64, -64, 0 );
+	VectorSet( world.lightGridSize, 64, 64, 128 );
+	VectorSet( world.lightGridInverseSize, 1 / 64.0f, 1 / 64.0f, 1 / 128.0f );
+	world.lightGridBounds[0] = x;
+	world.lightGridBounds[1] = y;
+	world.lightGridBounds[2] = z;
+	world.lightGridData = malloc( x * y * z * 8 );
+	ambientScaleCvar.value = 1;     // the grid's own bytes
+	for ( p = 0; p < x * y * z; p++ ) {
+		for ( c = 0; c < 3; c++ ) {
+			world.lightGridData[p * 8 + c] = 8 * p + 1 + c;
+			world.lightGridData[p * 8 + 3 + c] = 100 + p + c;
+		}
+		world.lightGridData[p * 8 + 6] = world.lightGridData[p * 8 + 7] = 0;
+	}
+	tr.world = &world;
+}
+static float GridClamp( float v, int bounds ) {
+	return !( v > 0 ) ? 0 : v > bounds - 1 ? bounds - 1 : v;
+}
+/* A sample at grid coordinates gx, gy, gz must give the clamped coordinates' light. */
+static void LightSample( float gx, float gy, float gz ) {
+	const world_t *w = tr.world;
+	vec3_t point, ambient, directed, dir;
+	float p;
+	int c;
+	point[0] = w->lightGridOrigin[0] + gx * w->lightGridSize[0];
+	point[1] = w->lightGridOrigin[1] + gy * w->lightGridSize[1];
+	point[2] = w->lightGridOrigin[2] + gz * w->lightGridSize[2];
+	Check( R_LightForPoint( point, ambient, directed, dir ), "grid sample" );
+	p = GridClamp( gx, w->lightGridBounds[0] ) + w->lightGridBounds[0] * ( GridClamp( gy, w->lightGridBounds[1] ) +
+		w->lightGridBounds[1] * GridClamp( gz, w->lightGridBounds[2] ) );
+	for ( c = 0; c < 3; c++ ) {
+		if ( !( fabs( ambient[c] - ( 8 * p + 1 + c ) ) < 0.001 && fabs( directed[c] - ( 100 + p + c ) ) < 0.001 ) ) {
+			fprintf( stderr, "    sample %g %g %g: ambient %g, directed %g; the grid there has %g and %g\n",
+					gx, gy, gz, ambient[c], directed[c], 8 * p + 1 + c, 100 + p + c );
+			Fail( "light grid sample" );
+		}
+	}
+	Check( fabs( dir[0] ) < 0.001 && fabs( dir[1] ) < 0.001 && fabs( dir[2] - 1 ) < 0.001, "light direction" );
+}
+static void T_LightGridEdge( void ) {
+	static const float edge[] = { 2, 2.25f, 2.999f, 3, 7.5f, 1e30f };
+	int i;
+	LightGrid( 3, 3, 2 );
+	// inside: plain trilinear, all eight corners
+	LightSample( 0, 0, 0 );
+	LightSample( 0.5f, 1.25f, 0.75f );
+	LightSample( 1.75f, 1.5f, 0.25f );
+	LightSample( 1.999f, 1.999f, 0.999f );
+	// on the last plane of each axis and past it: that plane, nothing past it
+	LightSample( 2, 2, 1 );
+	LightSample( 2.5f, 2.5f, 1.5f );
+	for ( i = 0; i < (int)( sizeof( edge ) / sizeof( edge[0] ) ); i++ ) {
+		LightSample( edge[i], 0.5f, 0.5f );
+		LightSample( 0.5f, edge[i], 0.5f );
+		LightSample( 0.5f, 0.5f, edge[i] - 1 );
+		LightSample( edge[i], edge[i], edge[i] - 1 );
+	}
+	// below the grid, and coordinates no int can hold
+	LightSample( -0.25f, 0.5f, 0.5f );
+	LightSample( -1e30f, -1e30f, -1e30f );
+	LightSample( FLT_MAX, FLT_MAX, FLT_MAX );
+	LightSample( INFINITY, -INFINITY, NAN );
+	free( tr.world->lightGridData );
+}
+static void T_LightGridOnePoint( void ) {
+	LightGrid( 1, 1, 1 );
+	LightSample( 0, 0, 0 );
+	LightSample( 0.5f, 0.5f, 0.5f );
+	LightSample( -0.5f, -0.5f, -0.5f );
+	LightSample( NAN, INFINITY, -INFINITY );
+	free( tr.world->lightGridData );
+}
+
 #ifdef LIGHTMAP_INC
 static void T_FindLightmapIndex( void ) {
 	int index = MAX_LIGHTMAPS + 100;
@@ -286,6 +430,11 @@ int main( int argc, char **argv ) {
 	ri.FS_ReadFile = FS_ReadFile;
 	ri.FS_FreeFile = FS_FreeFile;
 	ri.Cmd_ExecuteText = TestExecuteText;
+	ambientScaleCvar.value = 0.5f;      // R_Register's defaults
+	directedScaleCvar.value = 1;
+	for ( i = 0; i < FUNCTABLE_SIZE; i++ ) {
+		tr.sinTable[i] = sin( DEG2RAD( i * 360.0f / ( (float)( FUNCTABLE_SIZE - 1 ) ) ) );
+	}
 	if ( argc > 1 ) {
 		return RunRealMaps( argc, argv, m ? atoi( m ) : 200 ) ? 1 : 0;
 	}
@@ -296,6 +445,8 @@ int main( int argc, char **argv ) {
 	}
 	failed += RunExtra( "R_GetSurfMemory larger than a chunk", T_SurfMemoryLarge );
 	failed += RunExtra( "R_GetSurfMemory negative size", T_SurfMemoryNegative );
+	failed += RunExtra( "light grid sampled at and past its upper edge", T_LightGridEdge );
+	failed += RunExtra( "light grid of one point", T_LightGridOnePoint );
 #ifdef LIGHTMAP_INC
 	failed += RunExtra( "R_FindLightmap index past MAX_LIGHTMAPS", T_FindLightmapIndex );
 	failed += RunExtra( "R_FindLightmap long world directory", T_FindLightmapLongDir );
