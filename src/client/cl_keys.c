@@ -1365,7 +1365,8 @@ Key_IsDown
 ===================
 */
 qboolean Key_IsDown( int keynum ) {
-	if ( keynum == -1 ) {
+	// modules pass any number: legacy's keycodes go past MAX_KEYS
+	if ( keynum < 0 || keynum >= MAX_KEYS ) {
 		return qfalse;
 	}
 
@@ -1532,7 +1533,7 @@ void Key_SetBinding( int keynum, const char *binding ) {
 						// so name toggle scripts work again: bind x name BzZIfretn?
 						// resulted into bzzifretn?
 
-	if ( keynum == -1 ) {
+	if ( keynum < 0 || keynum >= MAX_KEYS ) {
 		return;
 	}
 
@@ -1547,6 +1548,7 @@ void Key_SetBinding( int keynum, const char *binding ) {
 	Q_strlwr( lcbinding ); // saves doing it on all the generateHashValues in Key_GetBindingByString
 
 	keys[keynum].hash = generateHashValue( lcbinding );
+	Z_Free( lcbinding );
 
 	// consider this like modifying an archived cvar, so the
 	// file write will be triggered at the next oportunity
@@ -1560,7 +1562,7 @@ Key_GetBinding
 ===================
 */
 char *Key_GetBinding( int keynum ) {
-	if ( keynum == -1 ) {
+	if ( keynum < 0 || keynum >= MAX_KEYS ) {
 		return "";
 	}
 
@@ -1620,7 +1622,8 @@ void Key_Unbind_f( void ) {
 	}
 
 	b = Key_StringToKeynum( Cmd_Argv( 1 ) );
-	if ( b == -1 ) {
+	// a single byte past 0x7f is negative with -fsigned-char
+	if ( b < 0 || b >= MAX_KEYS ) {
 		Com_Printf( "\"%s\" isn't a valid key\n", Cmd_Argv( 1 ) );
 		return;
 	}
@@ -1659,7 +1662,8 @@ void Key_Bind_f( void ) {
 		return;
 	}
 	b = Key_StringToKeynum( Cmd_Argv( 1 ) );
-	if ( b == -1 ) {
+	// a single byte past 0x7f is negative with -fsigned-char
+	if ( b < 0 || b >= MAX_KEYS ) {
 		Com_Printf( "\"%s\" isn't a valid key\n", Cmd_Argv( 1 ) );
 		return;
 	}

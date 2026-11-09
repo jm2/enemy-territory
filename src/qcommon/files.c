@@ -1083,6 +1083,24 @@ char *FS_ShiftStr( const char *string, int shift ) {
 
 /*
 ===========
+FS_HasExtension
+
+Whether filename ends in extension. The checks it replaces compared from
+strlen( filename ) - strlen( extension ), before the start of a shorter name.
+===========
+*/
+static qboolean FS_HasExtension( const char *filename, const char *extension ) {
+	size_t filenameLen = strlen( filename );
+	size_t extensionLen = strlen( extension );
+
+	if ( filenameLen < extensionLen ) {
+		return qfalse;
+	}
+	return Q_stricmp( filename + filenameLen - extensionLen, extension ) == 0;
+}
+
+/*
+===========
 FS_FOpenFileRead
 
 Finds the file in the search path.
@@ -1105,7 +1123,6 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 	long hash;
 	unz_s           *zfi;
 	FILE            *temp;
-	int l;
 	char demoExt[16];
 
 	hash = 0;
@@ -1224,16 +1241,15 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 					// shaders, txt, arena files  by themselves do not count as a reference as
 					// these are loaded from all pk3s
 					// from every pk3 file..
-					l = strlen( filename );
 					if ( !( pak->referenced & FS_GENERAL_REF ) ) {
-						if ( Q_stricmp( filename + l - 7, ".shader" ) != 0 &&
-							 Q_stricmp( filename + l - 4, ".txt" ) != 0 &&
-							 Q_stricmp( filename + l - 4, ".cfg" ) != 0 &&
-							 Q_stricmp( filename + l - 7, ".config" ) != 0 &&
+						if ( !FS_HasExtension( filename, ".shader" ) &&
+							 !FS_HasExtension( filename, ".txt" ) &&
+							 !FS_HasExtension( filename, ".cfg" ) &&
+							 !FS_HasExtension( filename, ".config" ) &&
 							 strstr( filename, "levelshots" ) == NULL &&
-							 Q_stricmp( filename + l - 4, ".bot" ) != 0 &&
-							 Q_stricmp( filename + l - 6, ".arena" ) != 0 &&
-							 Q_stricmp( filename + l - 5, ".menu" ) != 0 ) {
+							 !FS_HasExtension( filename, ".bot" ) &&
+							 !FS_HasExtension( filename, ".arena" ) &&
+							 !FS_HasExtension( filename, ".menu" ) ) {
 							pak->referenced |= FS_GENERAL_REF;
 						}
 					}
@@ -1365,16 +1381,15 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 
 			// if we are running restricted, or if the filesystem is configured for pure (fs_numServerPaks)
 			// the only files we will allow to come from the directory are .cfg files
-			l = strlen( filename );
 			if ( fs_restrict->integer || fs_numServerPaks ) {
 
-				if ( Q_stricmp( filename + l - 4, ".cfg" )       // for config files
-					 && Q_stricmp( filename + l - 5, ".menu" )  // menu files
-					 && Q_stricmp( filename + l - 5, ".game" )  // menu files
-					 && Q_stricmp( filename + l - strlen( demoExt ), demoExt ) // menu files
-					 && Q_stricmp( filename + l - 4, ".dat" ) // for journal files
-					 && Q_stricmp( filename + l - 8, "bots.txt" )
-					 && Q_stricmp( filename + l - 8, ".botents" )
+				if ( !FS_HasExtension( filename, ".cfg" )       // for config files
+					 && !FS_HasExtension( filename, ".menu" )  // menu files
+					 && !FS_HasExtension( filename, ".game" )  // menu files
+					 && !FS_HasExtension( filename, demoExt ) // menu files
+					 && !FS_HasExtension( filename, ".dat" ) // for journal files
+					 && !FS_HasExtension( filename, "bots.txt" )
+					 && !FS_HasExtension( filename, ".botents" )
 #ifdef __MACOS__
 					 // even when pure is on, let the server game be loaded
 					 && Q_stricmp( filename, "qagame_mac" )
@@ -1392,12 +1407,12 @@ int FS_FOpenFileRead( const char *filename, fileHandle_t *file, qboolean uniqueF
 				continue;
 			}
 
-			if ( Q_stricmp( filename + l - 4, ".cfg" )       // for config files
-				 && Q_stricmp( filename + l - 5, ".menu" )  // menu files
-				 && Q_stricmp( filename + l - 5, ".game" )  // menu files
-				 && Q_stricmp( filename + l - strlen( demoExt ), demoExt ) // menu files
-				 && Q_stricmp( filename + l - 4, ".dat" )
-				 && Q_stricmp( filename + l - 8, ".botents" )
+			if ( !FS_HasExtension( filename, ".cfg" )       // for config files
+				 && !FS_HasExtension( filename, ".menu" )  // menu files
+				 && !FS_HasExtension( filename, ".game" )  // menu files
+				 && !FS_HasExtension( filename, demoExt ) // menu files
+				 && !FS_HasExtension( filename, ".dat" )
+				 && !FS_HasExtension( filename, ".botents" )
 				 /*&& !strstr( filename, "botfiles" )*/ ) { // RF, need this for dev
 				fs_fakeChkSum = random();
 			}

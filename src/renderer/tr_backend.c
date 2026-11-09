@@ -886,15 +886,30 @@ RB_SetColor
 
 =============
 */
+/*
+A module's color past 0 to 1 went straight to a byte, which is undefined (legacy's
+health bar sends 254.8). Both targets converted through an int and kept its low
+byte, so that is kept for every value an int holds; beyond that, and for NaN, the
+result is now 255 or 0.
+*/
+static byte RB_ColorByte( float c ) {
+	float v = c * 255;
+
+	if ( !( v > -2147483648.0f && v < 2147483648.0f ) ) {
+		return v > 0 ? 255 : 0;
+	}
+	return (byte)(int)v;
+}
+
 const void  *RB_SetColor( const void *data ) {
 	const setColorCommand_t *cmd;
 
 	cmd = (const setColorCommand_t *)data;
 
-	backEnd.color2D[0] = cmd->color[0] * 255;
-	backEnd.color2D[1] = cmd->color[1] * 255;
-	backEnd.color2D[2] = cmd->color[2] * 255;
-	backEnd.color2D[3] = cmd->color[3] * 255;
+	backEnd.color2D[0] = RB_ColorByte( cmd->color[0] );
+	backEnd.color2D[1] = RB_ColorByte( cmd->color[1] );
+	backEnd.color2D[2] = RB_ColorByte( cmd->color[2] );
+	backEnd.color2D[3] = RB_ColorByte( cmd->color[3] );
 
 	return (const void *)( cmd + 1 );
 }

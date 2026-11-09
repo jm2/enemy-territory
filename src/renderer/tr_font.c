@@ -306,7 +306,8 @@ static int fdOffset;
 static byte *fdFile;
 
 int readInt() {
-	int i = fdFile[fdOffset] + ( fdFile[fdOffset + 1] << 8 ) + ( fdFile[fdOffset + 2] << 16 ) + ( fdFile[fdOffset + 3] << 24 );
+	// unsigned: a top byte of 0x80 or more shifted into an int's sign bit
+	int i = (int)( fdFile[fdOffset] | ( fdFile[fdOffset + 1] << 8 ) | ( fdFile[fdOffset + 2] << 16 ) | ( (unsigned)fdFile[fdOffset + 3] << 24 ) );
 	fdOffset += 4;
 	return i;
 }

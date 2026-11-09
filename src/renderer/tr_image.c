@@ -1868,8 +1868,12 @@ void R_DeleteTextures( void ) {
 
 	for ( i = 0; i < tr.numImages ; i++ ) {
 		qglDeleteTextures( 1, &tr.images[i]->texnum );
+		// with r_cache and r_cacheShaders the image_t is malloced: every
+		// vid_restart lost them all (on the hunk otherwise, and this does nothing)
+		R_CacheImageFree( tr.images[i] );
 	}
 	memset( tr.images, 0, sizeof( tr.images ) );
+	memset( hashTable, 0, sizeof( hashTable ) );
 	// Ridah
 	//%	R_InitTexnumImages(qtrue);
 	// done.

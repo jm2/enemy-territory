@@ -611,8 +611,10 @@ void *VM_ArgPtr( int intValue ) {
 		return NULL;
 	}
 
+	// a native module's dataBase is NULL and its arguments are addresses:
+	// add as integers, as pointer arithmetic on NULL is undefined
 	if ( currentVM->entryPoint ) {
-		return ( void * )( currentVM->dataBase + intValue );
+		return ( void * )( (long)currentVM->dataBase + intValue );
 	} else {
 		return ( void * )( currentVM->dataBase + ( intValue & currentVM->dataMask ) );
 	}
@@ -630,7 +632,7 @@ void *VM_ExplicitArgPtr( vm_t *vm, int intValue ) {
 
 	//
 	if ( vm->entryPoint ) {
-		return ( void * )( vm->dataBase + intValue );
+		return ( void * )( (long)vm->dataBase + intValue );
 	} else {
 		return ( void * )( vm->dataBase + ( intValue & vm->dataMask ) );
 	}

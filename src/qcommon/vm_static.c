@@ -12,6 +12,30 @@ static int VM_StaticRangesOverlap( const unsigned char *a, const unsigned char *
 }
 
 /*
+A module's data and bss are copied and cleared whole, from one bracket to the
+other. Under AddressSanitizer they hold the redzones between its globals too,
+which memcpy and memset report as overflows, so a sanitized build copies them
+byte by byte without instrumentation (and without the loop becoming a memcpy).
+*/
+#if defined( __SANITIZE_ADDRESS__ )
+__attribute__( ( no_sanitize_address, noinline, optimize( "no-tree-loop-distribute-patterns" ) ) )
+static void VM_StaticCopy( unsigned char *to, const unsigned char *from, size_t size ) {
+	while ( size-- ) {
+		*to++ = *from++;
+	}
+}
+__attribute__( ( no_sanitize_address, noinline, optimize( "no-tree-loop-distribute-patterns" ) ) )
+static void VM_StaticClear( unsigned char *to, size_t size ) {
+	while ( size-- ) {
+		*to++ = 0;
+	}
+}
+#else
+#define VM_StaticCopy( to, from, size ) memcpy( ( to ), ( from ), ( size ) )
+#define VM_StaticClear( to, size ) memset( ( to ), 0, ( size ) )
+#endif
+
+/*
 =================
 VM_InitStaticModules
 =================
@@ -51,7 +75,7 @@ const char *VM_InitStaticModules( vmStaticModule_t *modules, int count ) {
 		if ( !m->image ) {
 			return "out of memory for the static module images";
 		}
-		memcpy( m->image, m->dataStart, size );
+		VM_StaticCopy( m->image, m->dataStart, size );
 	}
 	return NULL;
 }
@@ -93,8 +117,8 @@ const char *VM_LoadStaticModule( vmStaticModule_t *module ) {
 	if ( !module->image ) {
 		return "the static module's image was never saved";
 	}
-	memcpy( module->dataStart, module->image, (size_t)( module->dataEnd - module->dataStart ) );
-	memset( module->bssStart, 0, (size_t)( module->bssEnd - module->bssStart ) );
+	VM_StaticCopy( module->dataStart, module->image, (size_t)( module->dataEnd - module->dataStart ) );
+	VM_StaticClear( module->bssStart, (size_t)( module->bssEnd - module->bssStart ) );
 	module->loaded = 1;
 	return NULL;
 }
