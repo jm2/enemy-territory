@@ -57,7 +57,7 @@ open(sys.argv[1],'w',encoding='latin-1').write(s[a:b]+s[c:d]+s[e:f])
 Z
 "$CC" $FLAGS "-DZIP_INC=\"$OUT/zip.inc\"" tests/security/test_zip.c src/qcommon/unzip.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/zip"
 "$OUT/zip"
-# COM_ParseExt and Info_SetValueForKey from q_shared.c, and tab completion's FindMatches
+# COM_ParseExt, Info_SetValueForKey and va from q_shared.c, and tab completion's FindMatches
 # with the statics it works on, verbatim from common.c (adapted from Quake III 7ef6c86b)
 python3 - "$OUT/findmatches.inc" <<'F'
 import sys
