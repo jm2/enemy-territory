@@ -1709,9 +1709,6 @@ int R_StitchPatches( int grid1num, int grid2num ) {
 					grid2 = R_GridInsertRow( grid2, l + 1, column,
 											 grid1->verts[k - 1 + offset1].xyz, R_StitchLodError( grid1->widthLodError, grid1->width, k + 1 ) );
 					if ( !grid2 ) {
-						break;
-					}
-					if ( !grid2 ) {
 						// no zone for the wider grid: the old one stays, and the map is refused
 						s_stitchFailed = qtrue;
 						return qfalse;
