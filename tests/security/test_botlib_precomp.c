@@ -899,6 +899,63 @@ static void EmptyDefines( void ) {
 	Finish( source );
 }
 
+/* Quake III a82523ed: a macro that expands to nothing used to end the read
+   there, without an error, as if the file had ended */
+static void EmptyExpansion( void ) {
+	source_t *source;
+	token_t token;
+	pc_token_t pc;
+	int handle;
+
+	AddFile( "expand.menu",
+			 "#define EMPTY\n#define DROP(a)\n#define ID(a) a\n#define TWICE EMPTY EMPTY\n"
+			 "before EMPTY after\n"
+			 "EMPTY EMPTY TWICE 7\n"
+			 "DROP(1 2 3) dropped\n"
+			 "ID() id\n"
+			 "ID(EMPTY 4) arg\n"
+			 "$evalint(EMPTY 5 + EMPTY 1)\n"
+			 "#if EMPTY 1\nif\n#endif\n"
+			 "\"first\" EMPTY \"second\" tail\n"
+			 "EMPTY\n" );
+	source = Load( "expand.menu" );
+	Expect( source, TT_NAME, "before" );
+	Expect( source, TT_NAME, "after" );
+	Expect( source, TT_NUMBER, "7" );
+	Expect( source, TT_NAME, "dropped" );
+	Expect( source, TT_NAME, "id" );
+	Expect( source, TT_NUMBER, "4" );
+	Expect( source, TT_NAME, "arg" );
+	Expect( source, TT_NUMBER, "6" );
+	Expect( source, TT_NAME, "if" );
+	Expect( source, TT_STRING, "\"firstsecond\"" );
+	Expect( source, TT_NAME, "tail" );
+	ExpectEnd( source );
+	Finish( source );
+
+	/* an error after an empty macro is reported, not hidden as the end */
+	AddFile( "expand-error.menu", "#define EMPTY\nEMPTY \"unterminated\n" );
+	source = Load( "expand-error.menu" );
+	Check( !Read( source, &token ), "the read fails" );
+	Check( errors == 1, "the lexical error after an empty macro is reported" );
+	Finish( source );
+
+	/* what a module's menu parser sees through the handle */
+	AddFile( "expand-handle.menu", "#define EMPTY\nmenuDef { EMPTY name x }\n" );
+	PS_SetBaseFolder( "" );
+	handle = PC_LoadSourceHandle( "expand-handle.menu", PC_OWNER_UI );
+	Check( handle != 0, "the handle opens" );
+	Check( PC_ReadTokenHandle( handle, &pc ) && !strcmp( pc.string, "menuDef" ), "menuDef" );
+	Check( PC_ReadTokenHandle( handle, &pc ) && !strcmp( pc.string, "{" ), "{" );
+	Check( PC_ReadTokenHandle( handle, &pc ) && !strcmp( pc.string, "name" ), "the menu reads on past the empty macro" );
+	Check( PC_ReadTokenHandle( handle, &pc ) && !strcmp( pc.string, "x" ), "x" );
+	Check( PC_ReadTokenHandle( handle, &pc ) && !strcmp( pc.string, "}" ), "}" );
+	Check( !PC_ReadTokenHandle( handle, &pc ), "then the menu ends" );
+	PC_FreeSourceHandle( handle );
+	Check( !numtokens, "every token copy is released" );
+	Check( !liveOwners, "every script, source and token allocation is released" );
+}
+
 static void Fragmented( void ) {
 	source_t *source;
 	int i, j;
@@ -1095,6 +1152,7 @@ static void RunConditionals( int a ) { Conditionals( a < 0 ? -a : a, a < 0 ); }
 static void RunHandles( int a ) { (void)a; Handles(); }
 static void RunEmptyDefines( int a ) { (void)a; EmptyDefines(); }
 static void RunRecursive( int a ) { (void)a; RecursiveIncludes(); }
+static void RunEmptyExpansion( int a ) { (void)a; EmptyExpansion(); }
 static void RunFragmented( int a ) { (void)a; Fragmented(); }
 static void RunFragmentedHandle( int a ) { (void)a; FragmentedHandle(); }
 
@@ -1145,6 +1203,7 @@ static const testcase_t cases[] = {
 	{ "handle ranges and owner-tagged release", RunHandles, 0 },
 	{ "120000 empty definitions are refused before the zone runs out", RunEmptyDefines, 0 },
 	{ "300 recursive includes of a file count against the include budget", RunRecursive, 0 },
+	{ "a macro that expands to nothing is consumed and the read goes on", RunEmptyExpansion, 0 },
 	{ "a fragmented zone refuses the source instead of failing fatally", RunFragmented, 0 },
 	{ "a module read after an out-of-memory failure gets an empty token", RunFragmentedHandle, 0 },
 };
