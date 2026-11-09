@@ -1157,7 +1157,9 @@ int PC_ExpandDefineIntoSource( source_t *source, token_t *deftoken, define_t *de
 		source->tokens = firsttoken;
 		return qtrue;
 	} //end if
-	return qfalse;
+	//a macro that expands to nothing is consumed, and the caller reads on
+	//(Quake III a82523ed); returning qfalse here ended the read without an error
+	return qtrue;
 } //end of the function PC_ExpandDefineIntoSource
 //============================================================================
 //
