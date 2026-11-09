@@ -204,12 +204,17 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent ) {
 		float v;
 
 		v = lightOrigin[i] * tr.world->lightGridInverseSize[i];
-		pos[i] = floor( v );
-		frac[i] = v - pos[i];
-		if ( pos[i] < 0 ) {
+		// clamp to the grid before converting, NaN and infinities included: on
+		// the last plane, or past either end, there is no neighbor to blend with
+		if ( !( v > 0 ) ) {
 			pos[i] = 0;
-		} else if ( pos[i] >= tr.world->lightGridBounds[i] - 1 ) {
+			frac[i] = 0;
+		} else if ( (double)v >= tr.world->lightGridBounds[i] - 1 ) {
 			pos[i] = tr.world->lightGridBounds[i] - 1;
+			frac[i] = 0;
+		} else {
+			pos[i] = floor( v );
+			frac[i] = v - pos[i];
 		}
 	}
 
@@ -234,13 +239,18 @@ static void R_SetupEntityLightingGrid( trRefEntity_t *ent ) {
 		vec3_t normal;
 
 		factor = 1.0;
+		for ( j = 0 ; j < 3 ; j++ ) {
+			factor *= ( i & ( 1 << j ) ) ? frac[j] : ( 1.0f - frac[j] );
+		}
+		// a corner of no weight adds nothing, and past the last plane it is
+		// not in the grid
+		if ( factor <= 0 ) {
+			continue;
+		}
 		data = gridData;
 		for ( j = 0 ; j < 3 ; j++ ) {
 			if ( i & ( 1 << j ) ) {
-				factor *= frac[j];
 				data += gridStep[j];
-			} else {
-				factor *= ( 1.0f - frac[j] );
 			}
 		}
 
