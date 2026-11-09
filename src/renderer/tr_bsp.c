@@ -110,25 +110,39 @@ R_ColorShiftLightingBytes
 ===============
 */
 static void R_ColorShiftLightingRGB( const byte in[3], byte out[4] ) {
-	int shift, r, g, b;
+	int shift, max, r = in[0], g = in[1], b = in[2];
+	unsigned int difference;
 
-	// shift the color data based on overbright range
-	shift = r_mapOverBrightBits->integer - tr.overbrightBits;
+	// shift the color data based on overbright range. r_mapOverBrightBits is
+	// any integer: the difference is taken unsigned, so it cannot overflow, and
+	// past eight bits a byte is all black or all normalized anyway (Q3A c743f116)
+	if ( r_mapOverBrightBits->integer >= tr.overbrightBits ) {
+		difference = (unsigned int)r_mapOverBrightBits->integer - (unsigned int)tr.overbrightBits;
+		shift = difference > 8 ? 8 : (int)difference;
+	} else {
+		difference = (unsigned int)tr.overbrightBits - (unsigned int)r_mapOverBrightBits->integer;
+		shift = difference > 8 ? -8 : -(int)difference;
+	}
 
-	// shift the data based on overbright range
-	r = in[0] << shift;
-	g = in[1] << shift;
-	b = in[2] << shift;
-
-	// normalize by color instead of saturating to white
-	if ( ( r | g | b ) > 255 ) {
-		int max;
-
+	if ( shift < 0 ) {
+		// fewer map bits than the display's: dim, where a negative shift was undefined
+		r >>= -shift;
+		g >>= -shift;
+		b >>= -shift;
+	} else {
+		// normalize by color instead of saturating to white. The shift cancels
+		// out of r * 255 / max, so the unshifted bytes give the same result
 		max = r > g ? r : g;
 		max = max > b ? max : b;
-		r = r * 255 / max;
-		g = g * 255 / max;
-		b = b * 255 / max;
+		if ( max > ( 255 >> shift ) ) {
+			r = r * 255 / max;
+			g = g * 255 / max;
+			b = b * 255 / max;
+		} else {
+			r <<= shift;
+			g <<= shift;
+			b <<= shift;
+		}
 	}
 
 	out[0] = r;
@@ -753,6 +767,27 @@ static void ParseTriSurf( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, i
 
 
 /*
+R_FoliageScale
+
+r_drawfoliage scales foliage height by 0 to 2. ParseFoliage and the map
+preflight both use it; a NaN value scales by 1, as a negative one does.
+*/
+
+static float R_FoliageScale( void ) {
+	float scale = r_drawfoliage->value;
+
+	if ( !( scale >= 0.0f ) ) {
+		return 1.0f;
+	}
+	if ( scale > 2.0f ) {
+		return 2.0f;
+	}
+	return scale;
+}
+
+
+
+/*
 ParseFoliage() - ydnar
 parses a foliage drawsurface
 */
@@ -808,12 +843,7 @@ static void ParseFoliage( dsurface_t *ds, drawVert_t *verts, msurface_t *surf, i
 	surf->data = (surfaceType_t*) foliage;
 
 	// get foliage drawscale
-	scale = r_drawfoliage->value;
-	if ( scale < 0.0f ) {
-		scale = 1.0f;
-	} else if ( scale > 2.0f ) {
-		scale = 2.0f;
-	}
+	scale = R_FoliageScale();
 
 	// copy vertexes
 	ClearBounds( bounds[ 0 ], bounds[ 1 ] );
@@ -972,168 +1002,192 @@ int R_MergedHeightPoints( srfGridMesh_t *grid, int offset ) {
 
 /*
 =================
-R_FixSharedVertexLodError_r
+R_FixSharedVertexLodErrorWalk
 
 NOTE: never sync LoD through grid edges with merged points!
 
 FIXME: write generalized version that also avoids cracks between a patch and one that meets half way?
+
+This was R_FixSharedVertexLodError_r, which recursed once per grid it
+touched: a chain of touching patches in one LOD group recursed as deep as the
+chain, 128 bytes a level on the PPC, so about 16,000 patches overran the Mac's
+2 MB stack. Each grid now keeps where its scan stopped (lodNextSurface) and the
+grid it came from (lodParent), so the walk takes constant C stack and visits
+the grids in the same order, with the same assignments (Q3A 41ac424f).
 =================
 */
-void R_FixSharedVertexLodError_r( int start, srfGridMesh_t *grid1 ) {
+static void R_FixSharedVertexLodErrorWalk( int start, srfGridMesh_t *grid1 ) {
 	int j, k, l, m, n, offset1, offset2, touch;
-	srfGridMesh_t *grid2;
+	srfGridMesh_t *grid2, *parent;
 
-	for ( j = start; j < s_worldData.numsurfaces; j++ ) {
-		//
-		grid2 = (srfGridMesh_t *) s_worldData.surfaces[j].data;
-		// if this surface is not a grid
-		if ( grid2->surfaceType != SF_GRID ) {
-			continue;
-		}
-		// if the LOD errors are already fixed for this patch
-		if ( grid2->lodFixed == 2 ) {
-			continue;
-		}
-		// grids in the same LOD group should have the exact same lod radius
-		if ( grid1->lodRadius != grid2->lodRadius ) {
-			continue;
-		}
-		// grids in the same LOD group should have the exact same lod origin
-		if ( grid1->lodOrigin[0] != grid2->lodOrigin[0] ) {
-			continue;
-		}
-		if ( grid1->lodOrigin[1] != grid2->lodOrigin[1] ) {
-			continue;
-		}
-		if ( grid1->lodOrigin[2] != grid2->lodOrigin[2] ) {
-			continue;
-		}
-		//
-		touch = qfalse;
-		for ( n = 0; n < 2; n++ ) {
+	grid1->lodParent = NULL;
+	grid1->lodNextSurface = start;
+	while ( grid1 ) {
+		for ( j = grid1->lodNextSurface; j < s_worldData.numsurfaces; j++ ) {
+			grid1->lodNextSurface = j + 1;
 			//
-			if ( n ) {
-				offset1 = ( grid1->height - 1 ) * grid1->width;
-			} else { offset1 = 0;}
-			if ( R_MergedWidthPoints( grid1, offset1 ) ) {
+			grid2 = (srfGridMesh_t *) s_worldData.surfaces[j].data;
+			// if this surface is not a grid
+			if ( grid2->surfaceType != SF_GRID ) {
 				continue;
 			}
-			for ( k = 1; k < grid1->width - 1; k++ ) {
-				for ( m = 0; m < 2; m++ ) {
-
-					if ( m ) {
-						offset2 = ( grid2->height - 1 ) * grid2->width;
-					} else { offset2 = 0;}
-					if ( R_MergedWidthPoints( grid2, offset2 ) ) {
-						continue;
-					}
-					for ( l = 1; l < grid2->width - 1; l++ ) {
-						//
-						if ( Q_fabs( grid1->verts[k + offset1].xyz[0] - grid2->verts[l + offset2].xyz[0] ) > .1 ) {
-							continue;
-						}
-						if ( Q_fabs( grid1->verts[k + offset1].xyz[1] - grid2->verts[l + offset2].xyz[1] ) > .1 ) {
-							continue;
-						}
-						if ( Q_fabs( grid1->verts[k + offset1].xyz[2] - grid2->verts[l + offset2].xyz[2] ) > .1 ) {
-							continue;
-						}
-						// ok the points are equal and should have the same lod error
-						grid2->widthLodError[l] = grid1->widthLodError[k];
-						touch = qtrue;
-					}
-				}
-				for ( m = 0; m < 2; m++ ) {
-
-					if ( m ) {
-						offset2 = grid2->width - 1;
-					} else { offset2 = 0;}
-					if ( R_MergedHeightPoints( grid2, offset2 ) ) {
-						continue;
-					}
-					for ( l = 1; l < grid2->height - 1; l++ ) {
-						//
-						if ( Q_fabs( grid1->verts[k + offset1].xyz[0] - grid2->verts[grid2->width * l + offset2].xyz[0] ) > .1 ) {
-							continue;
-						}
-						if ( Q_fabs( grid1->verts[k + offset1].xyz[1] - grid2->verts[grid2->width * l + offset2].xyz[1] ) > .1 ) {
-							continue;
-						}
-						if ( Q_fabs( grid1->verts[k + offset1].xyz[2] - grid2->verts[grid2->width * l + offset2].xyz[2] ) > .1 ) {
-							continue;
-						}
-						// ok the points are equal and should have the same lod error
-						grid2->heightLodError[l] = grid1->widthLodError[k];
-						touch = qtrue;
-					}
-				}
-			}
-		}
-		for ( n = 0; n < 2; n++ ) {
-			//
-			if ( n ) {
-				offset1 = grid1->width - 1;
-			} else { offset1 = 0;}
-			if ( R_MergedHeightPoints( grid1, offset1 ) ) {
+			// if the LOD errors are already fixed for this patch
+			if ( grid2->lodFixed == 2 ) {
 				continue;
 			}
-			for ( k = 1; k < grid1->height - 1; k++ ) {
-				for ( m = 0; m < 2; m++ ) {
-
-					if ( m ) {
-						offset2 = ( grid2->height - 1 ) * grid2->width;
-					} else { offset2 = 0;}
-					if ( R_MergedWidthPoints( grid2, offset2 ) ) {
-						continue;
-					}
-					for ( l = 1; l < grid2->width - 1; l++ ) {
-						//
-						if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[0] - grid2->verts[l + offset2].xyz[0] ) > .1 ) {
-							continue;
-						}
-						if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[1] - grid2->verts[l + offset2].xyz[1] ) > .1 ) {
-							continue;
-						}
-						if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[2] - grid2->verts[l + offset2].xyz[2] ) > .1 ) {
-							continue;
-						}
-						// ok the points are equal and should have the same lod error
-						grid2->widthLodError[l] = grid1->heightLodError[k];
-						touch = qtrue;
-					}
+			// grids in the same LOD group should have the exact same lod radius
+			if ( grid1->lodRadius != grid2->lodRadius ) {
+				continue;
+			}
+			// grids in the same LOD group should have the exact same lod origin
+			if ( grid1->lodOrigin[0] != grid2->lodOrigin[0] ) {
+				continue;
+			}
+			if ( grid1->lodOrigin[1] != grid2->lodOrigin[1] ) {
+				continue;
+			}
+			if ( grid1->lodOrigin[2] != grid2->lodOrigin[2] ) {
+				continue;
+			}
+			//
+			touch = qfalse;
+			for ( n = 0; n < 2; n++ ) {
+				//
+				if ( n ) {
+					offset1 = ( grid1->height - 1 ) * grid1->width;
+				} else { offset1 = 0;}
+				if ( R_MergedWidthPoints( grid1, offset1 ) ) {
+					continue;
 				}
-				for ( m = 0; m < 2; m++ ) {
+				for ( k = 1; k < grid1->width - 1; k++ ) {
+					for ( m = 0; m < 2; m++ ) {
 
-					if ( m ) {
-						offset2 = grid2->width - 1;
-					} else { offset2 = 0;}
-					if ( R_MergedHeightPoints( grid2, offset2 ) ) {
-						continue;
+						if ( m ) {
+							offset2 = ( grid2->height - 1 ) * grid2->width;
+						} else { offset2 = 0;}
+						if ( R_MergedWidthPoints( grid2, offset2 ) ) {
+							continue;
+						}
+						for ( l = 1; l < grid2->width - 1; l++ ) {
+							//
+							if ( Q_fabs( grid1->verts[k + offset1].xyz[0] - grid2->verts[l + offset2].xyz[0] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[k + offset1].xyz[1] - grid2->verts[l + offset2].xyz[1] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[k + offset1].xyz[2] - grid2->verts[l + offset2].xyz[2] ) > .1 ) {
+								continue;
+							}
+							// ok the points are equal and should have the same lod error
+							grid2->widthLodError[l] = grid1->widthLodError[k];
+							touch = qtrue;
+						}
 					}
-					for ( l = 1; l < grid2->height - 1; l++ ) {
-						//
-						if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[0] - grid2->verts[grid2->width * l + offset2].xyz[0] ) > .1 ) {
+					for ( m = 0; m < 2; m++ ) {
+
+						if ( m ) {
+							offset2 = grid2->width - 1;
+						} else { offset2 = 0;}
+						if ( R_MergedHeightPoints( grid2, offset2 ) ) {
 							continue;
 						}
-						if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[1] - grid2->verts[grid2->width * l + offset2].xyz[1] ) > .1 ) {
-							continue;
+						for ( l = 1; l < grid2->height - 1; l++ ) {
+							//
+							if ( Q_fabs( grid1->verts[k + offset1].xyz[0] - grid2->verts[grid2->width * l + offset2].xyz[0] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[k + offset1].xyz[1] - grid2->verts[grid2->width * l + offset2].xyz[1] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[k + offset1].xyz[2] - grid2->verts[grid2->width * l + offset2].xyz[2] ) > .1 ) {
+								continue;
+							}
+							// ok the points are equal and should have the same lod error
+							grid2->heightLodError[l] = grid1->widthLodError[k];
+							touch = qtrue;
 						}
-						if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[2] - grid2->verts[grid2->width * l + offset2].xyz[2] ) > .1 ) {
-							continue;
-						}
-						// ok the points are equal and should have the same lod error
-						grid2->heightLodError[l] = grid1->heightLodError[k];
-						touch = qtrue;
 					}
 				}
 			}
+			for ( n = 0; n < 2; n++ ) {
+				//
+				if ( n ) {
+					offset1 = grid1->width - 1;
+				} else { offset1 = 0;}
+				if ( R_MergedHeightPoints( grid1, offset1 ) ) {
+					continue;
+				}
+				for ( k = 1; k < grid1->height - 1; k++ ) {
+					for ( m = 0; m < 2; m++ ) {
+
+						if ( m ) {
+							offset2 = ( grid2->height - 1 ) * grid2->width;
+						} else { offset2 = 0;}
+						if ( R_MergedWidthPoints( grid2, offset2 ) ) {
+							continue;
+						}
+						for ( l = 1; l < grid2->width - 1; l++ ) {
+							//
+							if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[0] - grid2->verts[l + offset2].xyz[0] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[1] - grid2->verts[l + offset2].xyz[1] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[2] - grid2->verts[l + offset2].xyz[2] ) > .1 ) {
+								continue;
+							}
+							// ok the points are equal and should have the same lod error
+							grid2->widthLodError[l] = grid1->heightLodError[k];
+							touch = qtrue;
+						}
+					}
+					for ( m = 0; m < 2; m++ ) {
+
+						if ( m ) {
+							offset2 = grid2->width - 1;
+						} else { offset2 = 0;}
+						if ( R_MergedHeightPoints( grid2, offset2 ) ) {
+							continue;
+						}
+						for ( l = 1; l < grid2->height - 1; l++ ) {
+							//
+							if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[0] - grid2->verts[grid2->width * l + offset2].xyz[0] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[1] - grid2->verts[grid2->width * l + offset2].xyz[1] ) > .1 ) {
+								continue;
+							}
+							if ( Q_fabs( grid1->verts[grid1->width * k + offset1].xyz[2] - grid2->verts[grid2->width * l + offset2].xyz[2] ) > .1 ) {
+								continue;
+							}
+							// ok the points are equal and should have the same lod error
+							grid2->heightLodError[l] = grid1->heightLodError[k];
+							touch = qtrue;
+						}
+					}
+				}
+			}
+			if ( touch ) {
+				// descend into grid2, as the recursion did; grid1 resumes at j + 1
+				grid2->lodFixed = 2;
+				//NOTE: this would be correct but makes things really slow
+				//grid2->lodFixed = 1;
+				grid2->lodParent = grid1;
+				grid2->lodNextSurface = start;
+				grid1 = grid2;
+				break;
+			}
 		}
-		if ( touch ) {
-			grid2->lodFixed = 2;
-			R_FixSharedVertexLodError_r( start, grid2 );
-			//NOTE: this would be correct but makes things really slow
-			//grid2->lodFixed = 1;
+		if ( j < s_worldData.numsurfaces ) {
+			continue;
 		}
+		// grid1's scan is done: back to the grid it came from
+		parent = grid1->lodParent;
+		grid1->lodParent = NULL;
+		grid1->lodNextSurface = 0;
+		grid1 = parent;
 	}
 }
 
@@ -1162,8 +1216,8 @@ void R_FixSharedVertexLodError( void ) {
 		}
 		//
 		grid1->lodFixed = 2;
-		// recursively fix other patches in the same LOD group
-		R_FixSharedVertexLodError_r( i + 1, grid1 );
+		// fix other patches in the same LOD group
+		R_FixSharedVertexLodErrorWalk( i + 1, grid1 );
 	}
 }
 
@@ -2802,27 +2856,145 @@ static qboolean R_BSPSurfaceBytes( unsigned int *total, unsigned int count, unsi
 	return qtrue;
 }
 
+/* No infinity or NaN: the exponent bits of each float are not all set. */
+static qboolean R_BSPFinite( const float *values, int count ) {
+	unsigned int word;
+	int i;
+
+	for ( i = 0; i < count; i++ ) {
+		memcpy( &word, values + i, sizeof( word ) );
+		if ( ( word & 0x7f800000u ) == 0x7f800000u ) {
+			return qfalse;
+		}
+	}
+	return qtrue;
+}
+
+/* The sphere and plane distance FinishGenericSurface will give a surface with
+ * these bounds and first point; the normal is the record's lightmapVecs[2]. */
+static qboolean R_BSPFiniteGeneric( vec3_t bounds[2], vec3_t point, const byte *record ) {
+	vec3_t origin, normal;
+	float radius, dist;
+	int i;
+
+	SphereFromBounds( bounds[0], bounds[1], origin, &radius );
+	for ( i = 0; i < 3; i++ ) {
+		normal[i] = BSP_GeometryFloat( record + offsetof( dsurface_t, lightmapVecs ) + ( 6 + i ) * 4 );
+	}
+	dist = DotProduct( point, normal );
+	return R_BSPFinite( origin, 3 ) && R_BSPFinite( &radius, 1 ) && R_BSPFinite( &dist, 1 );
+}
+
+/* A surface's first vertex; its span was validated by BSP_ValidateReferences. */
+static const byte *R_BSPSurfaceVertex( const byte *buffer, const dheader_t *header, const byte *record ) {
+	return buffer + header->lumps[LUMP_DRAWVERTS].fileofs + BSP_FileWord( record + offsetof( dsurface_t, firstVert ) ) * sizeof( drawVert_t );
+}
+
+static void R_BSPVertexXYZ( const byte *vertex, vec3_t xyz ) {
+	int i;
+
+	for ( i = 0; i < 3; i++ ) {
+		xyz[i] = BSP_GeometryFloat( vertex + offsetof( drawVert_t, xyz ) + i * 4 );
+	}
+}
+
+/* ParseMesh's control points and R_SubdividePatchToGrid's grid, off the stack */
+typedef struct {
+	drawVert_t points[MAX_PATCH_SIZE * MAX_PATCH_SIZE];
+	patchGrid_t grid;
+} bspPatchWork_t;
+
+/*
+=================
+R_ValidateBSPPatch
+
+Runs a drawn patch through R_RefinePatchGrid as ParseMesh will, then checks
+the sphere, plane and LOD sphere ParseMesh computes from it (Q3A 8bc70a8a).
+=================
+*/
+static const char *R_ValidateBSPPatch( const byte *buffer, const dheader_t *header, const byte *record, bspPatchWork_t *work ) {
+	const byte *vertex;
+	int width = BSP_FileWord( record + offsetof( dsurface_t, patchWidth ) );
+	int height = BSP_FileWord( record + offsetof( dsurface_t, patchHeight ) );
+	int i, k;
+	vec3_t bounds[2], lodOrigin, delta;
+	float lodRadius;
+	const char *error;
+
+	// BSP_ValidateGeometry has bounded both by MAX_PATCH_SIZE * MAX_PATCH_SIZE
+	if ( width > MAX_GRID_SIZE || height > MAX_GRID_SIZE ) {
+		return "BSP patch exceeds the renderer grid";
+	}
+	vertex = R_BSPSurfaceVertex( buffer, header, record );
+	for ( i = 0; i < width * height; i++, vertex += sizeof( drawVert_t ) ) {
+		R_BSPVertexXYZ( vertex, work->points[i].xyz );
+		for ( k = 0; k < 3; k++ ) {
+			work->points[i].normal[k] = BSP_GeometryFloat( vertex + offsetof( drawVert_t, normal ) + k * 4 );
+		}
+		for ( k = 0; k < 2; k++ ) {
+			work->points[i].st[k] = BSP_GeometryFloat( vertex + offsetof( drawVert_t, st ) + k * 4 );
+			work->points[i].lightmap[k] = BSP_GeometryFloat( vertex + offsetof( drawVert_t, lightmap ) + k * 4 );
+		}
+		// colors take no part in the float arithmetic
+		memcpy( work->points[i].color, vertex + offsetof( drawVert_t, color ), sizeof( work->points[i].color ) );
+	}
+	error = R_RefinePatchGrid( &width, &height, &work->grid, work->points );
+	if ( error ) {
+		return error;
+	}
+	// R_CreateSurfaceGridMesh's bounds, then FinishGenericSurface on its first vertex
+	ClearBounds( bounds[0], bounds[1] );
+	for ( i = 0; i < height; i++ ) {
+		for ( k = 0; k < width; k++ ) {
+			AddPointToBounds( work->grid.ctrl[i][k].xyz, bounds[0], bounds[1] );
+		}
+	}
+	if ( !R_BSPFiniteGeneric( bounds, work->grid.ctrl[0][0].xyz, record ) ) {
+		return "nonfinite renderer patch sphere or plane";
+	}
+	// the LOD sphere of the patch's group, as ParseMesh computes it
+	for ( i = 0; i < 3; i++ ) {
+		bounds[0][i] = BSP_GeometryFloat( record + offsetof( dsurface_t, lightmapVecs ) + i * 4 );
+		bounds[1][i] = BSP_GeometryFloat( record + offsetof( dsurface_t, lightmapVecs ) + ( 3 + i ) * 4 );
+	}
+	VectorAdd( bounds[0], bounds[1], bounds[1] );
+	VectorScale( bounds[1], 0.5f, lodOrigin );
+	VectorSubtract( bounds[0], lodOrigin, delta );
+	lodRadius = VectorLength( delta );
+	if ( !R_BSPFinite( lodOrigin, 3 ) || !R_BSPFinite( &lodRadius, 1 ) ) {
+		return "nonfinite renderer patch LOD bounds";
+	}
+	return NULL;
+}
+
 /*
 =================
 R_ValidateBSPGeometry
 
-Shared geometry checks with the renderer's patch storage, then the
-R_GetSurfMemory size each triangle and foliage surface will ask for.
+Shared geometry checks with the renderer's patch storage, then for each
+surface: the R_GetSurfMemory size of a triangle or foliage surface, its
+vertex and index counts against the tessellator, and the floats the parsers
+compute from finite input (refined patches, bounding spheres, plane
+distances, foliage bounds), which can still overflow.
 =================
 */
 static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *header ) {
-	const byte *record, *shader;
-	unsigned int i, count, type, size, verts, indexes, instances;
+	const byte *record, *shader, *vertex;
+	unsigned int i, j, count, type, size, verts, indexes, instances;
 	srfTriangles_t *tri = NULL;
 	srfFoliage_t *foliage = NULL;
+	bspPatchWork_t *work = NULL;
+	vec3_t point, first, bounds[2], meshBounds[2], translated;
+	float scale;
 	const char *error;
 
 	error = BSP_ValidateGeometry( buffer, header, MAX_PATCH_SIZE * MAX_PATCH_SIZE, MAX_PATCH_SIZE * MAX_PATCH_SIZE );
 	if ( error ) {
 		return error;
 	}
+	scale = R_FoliageScale();
 	count = header->lumps[LUMP_SURFACES].filelen / sizeof( dsurface_t );
-	for ( i = 0; i < count; i++ ) {
+	for ( i = 0; i < count && !error; i++ ) {
 		record = buffer + header->lumps[LUMP_SURFACES].fileofs + i * sizeof( dsurface_t );
 		type = BSP_FileWord( record + offsetof( dsurface_t, surfaceType ) );
 		verts = BSP_FileWord( record + offsetof( dsurface_t, numVerts ) );
@@ -2834,31 +3006,78 @@ static const char *R_ValidateBSPGeometry( const byte *buffer, const dheader_t *h
 			if ( BSP_FileWord( shader + offsetof( dshader_t, surfaceFlags ) ) & SURF_NODRAW ) {
 				continue;
 			}
-			if ( BSP_FileWord( record + offsetof( dsurface_t, patchWidth ) ) > MAX_GRID_SIZE ||
-				 BSP_FileWord( record + offsetof( dsurface_t, patchHeight ) ) > MAX_GRID_SIZE ) {
-				return "BSP patch exceeds the renderer grid";
+			if ( !work ) {
+				work = malloc( sizeof( *work ) );
+				if ( !work ) {
+					return "BSP patch validation allocation failed";
+				}
 			}
+			error = R_ValidateBSPPatch( buffer, header, record, work );
 		} else if ( type == MST_PLANAR || type == MST_TRIANGLE_SOUP ) {
-			// ParseTriSurf
-			if ( !R_BSPSurfaceBytes( &size, 1, sizeof( *tri ) ) ||
-				 !R_BSPSurfaceBytes( &size, verts, sizeof( tri->verts[0] ) ) ||
-				 !R_BSPSurfaceBytes( &size, indexes, sizeof( tri->indexes[0] ) ) ) {
-				return "BSP triangle surface too large";
+			// ParseTriSurf. RB_SurfaceTriangles drops with ERR_DROP, every
+			// frame it is drawn, a surface the tessellator cannot hold (Q3A 7b4ba9c6)
+			if ( verts >= SHADER_MAX_VERTEXES || indexes >= SHADER_MAX_INDEXES ) {
+				error = "BSP surface exceeds the tessellator";
+			} else if ( !R_BSPSurfaceBytes( &size, 1, sizeof( *tri ) ) ||
+						!R_BSPSurfaceBytes( &size, verts, sizeof( tri->verts[0] ) ) ||
+						!R_BSPSurfaceBytes( &size, indexes, sizeof( tri->indexes[0] ) ) ) {
+				error = "BSP triangle surface too large";
+			} else {
+				vertex = R_BSPSurfaceVertex( buffer, header, record );
+				ClearBounds( bounds[0], bounds[1] );
+				for ( j = 0; j < verts; j++, vertex += sizeof( drawVert_t ) ) {
+					R_BSPVertexXYZ( vertex, point );
+					if ( !j ) {
+						VectorCopy( point, first );
+					}
+					AddPointToBounds( point, bounds[0], bounds[1] );
+				}
+				// Q3A cc655e82 checks a face's plane distance; every surface here has one
+				if ( !R_BSPFiniteGeneric( bounds, first, record ) ) {
+					error = "nonfinite renderer surface sphere or plane";
+				}
 			}
 		} else if ( type == MST_FOLIAGE ) {
-			// ParseFoliage
+			// ParseFoliage; RB_SurfaceFoliage draws each instance whole
 			verts = BSP_FileWord( record + offsetof( dsurface_t, patchHeight ) );
 			instances = BSP_FileWord( record + offsetof( dsurface_t, patchWidth ) );
-			if ( !R_BSPSurfaceBytes( &size, 1, sizeof( *foliage ) ) ||
-				 !R_BSPSurfaceBytes( &size, verts, sizeof( foliage->xyz[0] ) + sizeof( foliage->normal[0] ) +
-									 sizeof( foliage->texCoords[0] ) + sizeof( foliage->lmTexCoords[0] ) ) ||
-				 !R_BSPSurfaceBytes( &size, indexes, sizeof( foliage->indexes[0] ) ) ||
-				 !R_BSPSurfaceBytes( &size, instances, sizeof( foliage->instances[0] ) ) ) {
-				return "BSP foliage surface too large";
+			if ( verts >= SHADER_MAX_VERTEXES || indexes >= SHADER_MAX_INDEXES ) {
+				error = "BSP foliage exceeds the tessellator";
+			} else if ( !R_BSPSurfaceBytes( &size, 1, sizeof( *foliage ) ) ||
+						!R_BSPSurfaceBytes( &size, verts, sizeof( foliage->xyz[0] ) + sizeof( foliage->normal[0] ) +
+											sizeof( foliage->texCoords[0] ) + sizeof( foliage->lmTexCoords[0] ) ) ||
+						!R_BSPSurfaceBytes( &size, indexes, sizeof( foliage->indexes[0] ) ) ||
+						!R_BSPSurfaceBytes( &size, instances, sizeof( foliage->instances[0] ) ) ) {
+				error = "BSP foliage surface too large";
+			} else {
+				// the scaled mesh, then its bounds moved to each instance: the
+				// surface's bounds, which also hold every vertex drawn
+				vertex = R_BSPSurfaceVertex( buffer, header, record );
+				ClearBounds( meshBounds[0], meshBounds[1] );
+				for ( j = 0; j < verts; j++, vertex += sizeof( drawVert_t ) ) {
+					R_BSPVertexXYZ( vertex, point );
+					point[2] *= scale;
+					if ( !j ) {
+						VectorCopy( point, first );
+					}
+					AddPointToBounds( point, meshBounds[0], meshBounds[1] );
+				}
+				ClearBounds( bounds[0], bounds[1] );
+				for ( j = 0; j < instances; j++, vertex += sizeof( drawVert_t ) ) {
+					R_BSPVertexXYZ( vertex, point );
+					VectorAdd( meshBounds[0], point, translated );
+					AddPointToBounds( translated, bounds[0], bounds[1] );
+					VectorAdd( meshBounds[1], point, translated );
+					AddPointToBounds( translated, bounds[0], bounds[1] );
+				}
+				if ( !R_BSPFinite( bounds[0], 3 ) || !R_BSPFinite( bounds[1], 3 ) || !R_BSPFiniteGeneric( bounds, first, record ) ) {
+					error = "nonfinite renderer foliage bounds";
+				}
 			}
 		}
 	}
-	return NULL;
+	free( work );
+	return error;
 }
 
 /*
