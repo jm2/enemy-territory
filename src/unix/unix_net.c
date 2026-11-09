@@ -571,6 +571,7 @@ void NET_GetInterfaces( void ) {
 			if ( errno != EINVAL || lastlen != 0 ) {
 				Com_Printf( "NET_GetInterfaces: SIOCGIFCONF error - %d\n", errno );
 				free( buf );
+				close( s );
 				return;
 			}
 		} else {
@@ -592,7 +593,7 @@ void NET_GetInterfaces( void ) {
 		rc = ioctl( s, SIOCGIFADDR, ifr );
 		if ( rc < 0 ) {
 			Com_Printf( "NET_GetInterfaces: SIOCGIFADDR %s error - %d\n", ifr->ifr_name, rc );
-			return;
+			break;
 		}
 		p = ( unsigned long * )&ifr->ifr_addr.sa_data[2];
 		ifr_ip = ntohl( *p );
@@ -604,7 +605,7 @@ void NET_GetInterfaces( void ) {
 		rc = ioctl( s, SIOCGIFNETMASK, ifr );
 		if ( rc < 0 ) {
 			Com_Printf( "NET_GetInterfaces: SIOCGIFNETMASK %s error - %d\n", ifr->ifr_name, rc );
-			return;
+			break;
 		}
 		p = ( unsigned long * )&ifr->ifr_addr.sa_data[2];
 		ifr_mask = ntohl( *p );
@@ -623,9 +624,12 @@ void NET_GetInterfaces( void ) {
 		num_interfaces++;
 		if ( num_interfaces >= MAX_INTERFACES ) {
 			Com_Printf( "NET_GetInterfaces: MAX_INTERFACES(%d) hit.\n", MAX_INTERFACES );
-			return;
+			break;
 		}
 	}
+	// netint holds the addresses: the list and the socket were leaked
+	free( buf );
+	close( s );
 }
 
 /*

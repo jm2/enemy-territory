@@ -420,11 +420,9 @@ void GetClockTicks( double *t ) {
 #if defined( __i386__ )
 	unsigned long lo, hi;
 
-	__asm__ __volatile__ (
-		"rdtsc ;\
-		movl %%eax, %0 ;\
-		movl %%edx, %1 "
-		: : "m" ( lo ), "m" ( hi ) );
+	// outputs, not inputs: as inputs, the compiler kept values in the eax and
+	// edx that rdtsc overwrites (a sanitized host build crashed here)
+	__asm__ __volatile__ ( "rdtsc" : "=a" ( lo ), "=d" ( hi ) );
 
 	*t = (double) lo + (double) 0xFFFFFFFF * hi ;
 #else
