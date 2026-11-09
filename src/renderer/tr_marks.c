@@ -140,18 +140,28 @@ static void R_ChopPolyBehindPlane( int numInPoints, vec3_t inPoints[MAX_VERTS_ON
 =================
 R_BoxSurfaces_r
 
+Where the box crosses a plane, the back child waits on tr.world->boxNodeStack
+while the front one is walked, as the recursive walk did, so a deep tree
+takes no C stack: there is at most one waiting child per decision node above
+the current one, and R_LoadNodesAndLeafs sized the stack by the tree's depth.
+As before, only the first node and each front child crossed into are checked
+for having been rendered recently. Starts at the root.
 =================
 */
 void R_BoxSurfaces_r( mnode_t *node, vec3_t mins, vec3_t maxs, surfaceType_t **list, int listsize, int *listlength, vec3_t dir ) {
 
 	int s, c;
 	msurface_t  *surf, **mark;
+	mnode_t     **stack = tr.world->boxNodeStack;
+	int pending = 0;
 
+enter:
 	// RF, if this node hasn't been rendered recently, ignore it
 	if ( node->visframe < tr.visCount - 2 ) { // allow us to be a few frames behind
-		return;
+		goto next;
 	}
 
+descend:
 	// do the tail recursion in a loop
 	while ( node->contents == -1 ) {
 		s = BoxOnPlaneSide( mins, maxs, node->plane );
@@ -160,14 +170,15 @@ void R_BoxSurfaces_r( mnode_t *node, vec3_t mins, vec3_t maxs, surfaceType_t **l
 		} else if ( s == 2 ) {
 			node = node->children[1];
 		} else {
-			R_BoxSurfaces_r( node->children[0], mins, maxs, list, listsize, listlength, dir );
-			node = node->children[1];
+			stack[pending++] = node->children[1];
+			node = node->children[0];
+			goto enter;
 		}
 	}
 
 	// Ridah, don't mark alpha surfaces
 	if ( node->contents & CONTENTS_TRANSLUCENT ) {
-		return;
+		goto next;
 	}
 
 	// add the individual surfaces
@@ -209,6 +220,13 @@ void R_BoxSurfaces_r( mnode_t *node, vec3_t mins, vec3_t maxs, surfaceType_t **l
 			( *listlength )++;
 		}
 		mark++;
+	}
+
+next:
+	if ( pending ) {
+		// the recursive walk reached a back child by its tail loop, without the check
+		node = stack[--pending];
+		goto descend;
 	}
 }
 

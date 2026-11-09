@@ -730,9 +730,10 @@ Every lump, cross-lump index, span and patch size the loaders below trust,
 checked on the file buffer before CM_LoadMap changes anything. With a
 budget, every hunk block the load will take is also charged against it,
 so a map too big for the hunk drops here instead of halfway through.
+Also measures the world tree's depth, which sizes the walk stacks.
 ==================
 */
-static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *header, int *remaining ) {
+static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *header, int *remaining, unsigned int *treeDepth ) {
 	const char *error;
 	unsigned int i;
 
@@ -770,6 +771,15 @@ static const char *CM_ValidateBSP( const byte *buf, int length, dheader_t *heade
 		error = BSP_ValidateTree( buf, header );
 	}
 	if ( !error ) {
+		error = BSP_TreeDepth( buf, header, treeDepth );
+	}
+	// the depth is at most the node count, which a file under 2 GB keeps below
+	// INT_MAX / sizeof( dnode_t ); the stacks' frames are no larger than a dnode_t
+	if ( !error && ( !CM_BudgetAllocation( *treeDepth * sizeof( int ), remaining ) ||
+					 !CM_BudgetAllocation( *treeDepth * sizeof( cmTraceFrame_t ), remaining ) ) ) {
+		error = CM_HUNK_BUDGET_ERROR;
+	}
+	if ( !error ) {
 		error = BSP_ValidateGeometry( buf, header, MAX_GRID_SIZE, MAX_PATCH_VERTS );
 	}
 	if ( !error ) {
@@ -794,6 +804,7 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 	dheader_t header;
 	int length;
 	int remaining, *budget = NULL;
+	unsigned int treeDepth = 0;
 	static unsigned last_checksum;
 
 	if ( !name || !name[0] ) {
@@ -843,7 +854,7 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 	remaining = Hunk_MemoryRemaining();
 	budget = &remaining;
 #endif
-	error = CM_ValidateBSP( (const byte *)buf, length, &header, budget );
+	error = CM_ValidateBSP( (const byte *)buf, length, &header, budget, &treeDepth );
 	if ( error ) {
 		FS_FreeFile( buf );
 		Com_Error( ERR_DROP, "CM_LoadMap: %s: %s", name, error );
@@ -868,6 +879,11 @@ void CM_LoadMap( const char *name, qboolean clientload, int *checksum ) {
 	CMod_LoadBrushes( &header.lumps[LUMP_BRUSHES] );
 	CMod_LoadSubmodels( &header.lumps[LUMP_MODELS] );
 	CMod_LoadNodes( &header.lumps[LUMP_NODES] );
+	// a walk keeps one pending sibling per decision node above it, so a tree of
+	// any depth the file holds is walked without recursion
+	cm.treeDepth = treeDepth;
+	cm.boxStack = Hunk_Alloc( treeDepth * sizeof( *cm.boxStack ), h_high );
+	cm.traceStack = Hunk_Alloc( treeDepth * sizeof( *cm.traceStack ), h_high );
 	CMod_LoadEntityString( &header.lumps[LUMP_ENTITIES] );
 	CMod_LoadVisibility( &header.lumps[LUMP_VISIBILITY] );
 	CMod_LoadPatches( &header.lumps[LUMP_SURFACES], &header.lumps[LUMP_DRAWVERTS] );

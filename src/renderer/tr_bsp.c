@@ -2073,21 +2073,27 @@ Sets every parent reachable from the world root and folds surface bounds up
 the tree, children before parents, in the order the old recursive walk used.
 It walks back up by parent pointers instead of recursing, so a deep tree
 cannot overflow the stack: BSP_ValidateTree has given every decision node one
-parent and refused cycles.
+parent and refused cycles. Returns the most decision nodes on a path down
+from the root, which sizes the world walks' stacks.
 =================
 */
-static void R_SetParents( mnode_t *root ) {
+static int R_SetParents( mnode_t *root ) {
 	mnode_t *node, *child, *parent;
+	int depth = 1, maxDepth = 1;
 
 	node = root;
 	node->parent = NULL;
 
 descend:
 	// node is a decision node whose children are not walked yet
+	if ( depth > maxDepth ) {
+		maxDepth = depth;
+	}
 	child = node->children[ 0 ];
 	if ( child->contents == CONTENTS_NODE ) {
 		child->parent = node;
 		node = child;
+		depth++;
 		goto descend;
 	}
 	R_SetLeafParent( child, node );
@@ -2097,6 +2103,7 @@ second:
 	if ( child->contents == CONTENTS_NODE ) {
 		child->parent = node;
 		node = child;
+		depth++;
 		goto descend;
 	}
 	R_SetLeafParent( child, node );
@@ -2110,8 +2117,9 @@ finish:
 
 	parent = node->parent;
 	if ( !parent ) {
-		return;
+		return maxDepth;
 	}
+	depth--;
 	if ( node == parent->children[ 0 ] ) {
 		node = parent;
 		goto second;
@@ -2205,7 +2213,9 @@ static void R_LoadNodesAndLeafs( lump_t *nodeLump, lump_t *leafLump ) {
 	}
 
 	// chain decendants
-	R_SetParents( s_worldData.nodes );
+	s_worldData.nodeDepth = R_SetParents( s_worldData.nodes );
+	s_worldData.worldNodeStack = ri.Hunk_Alloc( s_worldData.nodeDepth * sizeof( *s_worldData.worldNodeStack ), h_low );
+	s_worldData.boxNodeStack = ri.Hunk_Alloc( s_worldData.nodeDepth * sizeof( *s_worldData.boxNodeStack ), h_low );
 }
 
 //=============================================================================

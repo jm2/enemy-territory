@@ -918,6 +918,12 @@ typedef struct bmodel_s {
 // ydnar: optimization
 #define WORLD_MAX_SKY_NODES 32
 
+// a back child R_RecursiveWorldNode has still to walk, with the culling bits it inherits
+typedef struct {
+	mnode_t     *node;
+	int planeBits, dlightBits, decalBits;
+} worldNodeFrame_t;
+
 typedef struct {
 	char name[MAX_QPATH];               // ie: maps/tim_dm2.bsp
 	char baseName[MAX_QPATH];           // ie: tim_dm2
@@ -936,6 +942,11 @@ typedef struct {
 	int numnodes;               // includes leafs
 	int numDecisionNodes;
 	mnode_t     *nodes;
+
+	// explicit stacks for the walks down from nodes[0], sized by the tree's depth at load
+	int nodeDepth;              // the most decision nodes on a path from the root
+	worldNodeFrame_t *worldNodeStack;   // R_RecursiveWorldNode [ nodeDepth ]
+	mnode_t     **boxNodeStack;         // R_BoxSurfaces_r [ nodeDepth ]
 
 	int numSkyNodes;
 	mnode_t     **skyNodes;     // ydnar: don't walk the entire bsp when rendering sky

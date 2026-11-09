@@ -190,11 +190,35 @@ L
 # R_StitchPatches alone, its grid inserts stubbed, with exact-size LOD error arrays
 "$CC" $FLAGS -fno-sanitize-recover=all -ffunction-sections -fdata-sections tests/security/test_bsp_stitch.c src/game/q_shared.c src/game/q_math.c -Wl,--gc-sections -lm -o "$OUT/bsp_stitch"
 "$OUT/bsp_stitch"
+# the world tree walks down a 65,536-node chain in a 256 KB thread stack: the
+# collision ones with the real cm_*.c, the renderer ones extracted from their files
+"$CC" $FLAGS -DWALK_STACKS -pthread tests/security/test_bsp_walk_cm.c src/qcommon/cm_load.c src/qcommon/cm_patch.c src/qcommon/cm_test.c src/qcommon/cm_trace.c src/qcommon/cm_polylib.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/bsp_walk_cm"
+python3 - "$OUT/walk.inc" <<'X'
+import sys
+def fn(path, sig):
+    s = open(path, encoding='latin-1').read()
+    a = s.index(sig); b = s.index('\n}\n', a) + 3
+    return '#line %d "%s"\n' % (s.count('\n', 0, a) + 1, path) + s[a:b]
+out = [fn('src/renderer/tr_decals.c', 'qboolean R_TestDecalBoundingBox( decalProjector_t *dp, vec3_t mins, vec3_t maxs ) {'),
+       fn('src/renderer/tr_main.c', 'void R_SetupFrustum( void ) {'),
+       fn('src/renderer/tr_world.c', 'static void R_RecursiveWorldNode( mnode_t *node, int planeBits, int dlightBits, int decalBits ) {'),
+       fn('src/renderer/tr_world.c', 'static mnode_t *R_PointInLeaf( const vec3_t p ) {'),
+       fn('src/renderer/tr_world.c', 'static const byte *R_ClusterPVS( int cluster ) {'),
+       fn('src/renderer/tr_world.c', 'static void R_MarkLeaves( void ) {'),
+       fn('src/renderer/tr_marks.c', 'void R_BoxSurfaces_r( mnode_t *node, vec3_t mins, vec3_t maxs, surfaceType_t **list, int listsize, int *listlength, vec3_t dir ) {')]
+open(sys.argv[1], 'w', encoding='latin-1').write(''.join(out))
+X
+"$CC" $FLAGS -DWALK_STACKS -pthread "-DWALK_INC=\"$OUT/walk.inc\"" tests/security/test_bsp_walk_tr.c src/renderer/tr_curve.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/bsp_walk_tr"
+"$OUT/bsp_walk_cm"
+"$OUT/bsp_walk_tr"
 "$OUT/bsp_cm" | grep -v '^case: \|^    '
 "$OUT/bsp_tr" | grep -v '^case: \|^    '
 if [ -n "${BSP_FILES:-}" ]; then
     "$OUT/bsp_cm" $BSP_FILES
     "$OUT/bsp_tr" $BSP_FILES
+    # tree depths, and digests of random traces, box queries and world walks
+    "$OUT/bsp_walk_cm" $BSP_FILES
+    "$OUT/bsp_walk_tr" $BSP_FILES
 fi
 # the botlib preprocessor that reads menus, characters and weapons from pk3s, on
 # the real zone allocator: its file needs the whole engine
