@@ -107,9 +107,10 @@ for f in $JPEG; do "$CC" $FLAGS -fno-sanitize=shift,signed-integer-overflow -c "
 "$CC" $FLAGS tests/security/test_images.c src/renderer/tr_image_bmp.c src/renderer/tr_image_pcx.c src/renderer/tr_image_tga.c src/renderer/tr_image_jpeg.c "$OUT"/jpeg/*.o src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/images"
 "$OUT/images"
 # Shader and skin parsing: the tests include the real tr_shader.c and tr_image.c, and
-# the linker drops the parts of the renderer they do not reach
+# the linker drops the parts of the renderer they do not reach. float-cast-overflow is
+# not in -fsanitize=undefined: it catches shader numbers converted to bytes and ints
 for t in shader skin; do
-    "$CC" $FLAGS -ffunction-sections -fdata-sections tests/security/test_$t.c src/game/q_shared.c src/game/q_math.c -Wl,--gc-sections -lm -o "$OUT/$t"
+    "$CC" $FLAGS -fsanitize=float-cast-overflow -fno-sanitize-recover=float-cast-overflow -ffunction-sections -fdata-sections tests/security/test_$t.c src/game/q_shared.c src/game/q_math.c -Wl,--gc-sections -lm -o "$OUT/$t"
     ASAN_OPTIONS=detect_leaks=0 "$OUT/$t"
 done
 # The RoQ decoder, cl_cin.c included whole. Its motion copies move unaligned doubles
