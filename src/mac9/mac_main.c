@@ -631,7 +631,6 @@ void Sys_EndStreamedFile( int handle ) {}
 int Sys_StreamedRead( void *buffer, int size, int count, int handle ) {
     return FS_Read( buffer, size * count, handle );
 }
-void Sys_ShowIP( void ) {}
 char *Sys_GetClipboardData( void ) { return NULL; }
 qboolean Sys_LowPhysicalMemory( void ) { return qfalse; }
 

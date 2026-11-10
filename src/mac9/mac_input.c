@@ -19,6 +19,7 @@ ISpDeviceReference	devices[MAX_INPUT_DEVICES];
 // more buttons than there are mouse keys.
 typedef struct {
 	ISpElementReference	xAxis, yAxis;
+	ISpElementReference	wheel;			// NULL: no wheel
 	ISpElementReference	buttons[MAX_MOUSE_BUTTONS];	// NULL: no such button
 } macMouse_t;
 
@@ -86,7 +87,13 @@ static qboolean Sys_InitMouse( ISpDeviceReference device, macMouse_t *mouse, qbo
 			} else if ( ( info.theLabel == kISpElementLabel_Delta_Y
 				|| info.theLabel == kISpElementLabel_Delta_Cursor_Y ) && !mouse->yAxis ) {
 				mouse->yAxis = elements[i];
-			} else if ( info.theLabel != kISpElementLabel_Delta_Z && numDeltas < 2 ) {
+			} else if ( info.theLabel == kISpElementLabel_Delta_Z ) {
+				// the wheel: retail ignored it, so it never reached the
+				// K_MWHEELUP and K_MWHEELDOWN binds
+				if ( !mouse->wheel ) {
+					mouse->wheel = elements[i];
+				}
+			} else if ( numDeltas < 2 ) {
 				deltas[numDeltas++] = elements[i];
 			}
 		} else if ( info.theKind == kISpElementKind_Button ) {
@@ -416,6 +423,16 @@ void Sys_Input( void ) {
 			xtotal += xmove;
 			ytotal += ymove;
 			Sys_QueEvent( 0, SE_MOUSE, xmove, ymove, 0, NULL );
+		}
+
+		// The wheel's scale is not documented, so any turn since the last
+		// frame is one notch, up when positive, as HID wheels count away
+		// from the user.  A wheel key is pressed and released at once, as
+		// on win32.
+		if ( mouse->wheel && !ISpElement_GetSimpleState( mouse->wheel, &state ) && state ) {
+			button = (int)state > 0 ? K_MWHEELUP : K_MWHEELDOWN;
+			Sys_QueEvent( 0, SE_KEY, button, qtrue, 0, NULL );
+			Sys_QueEvent( 0, SE_KEY, button, qfalse, 0, NULL );
 		}
 	}
 	

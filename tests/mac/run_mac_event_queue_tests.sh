@@ -83,7 +83,7 @@ for Q3_TEST_CASE in modifier-alone modifier-alone-fullscreen background-modifier
         cursor-after-shutdown \
         overflow overflow-releases \
         console-dedicated console-long console-client wait-cancel \
-        isp-shuffled isp-many-buttons isp-other-kinds isp-axes-beside-mouse isp-axis-labels isp-dpad-only \
+        isp-shuffled isp-wheel isp-many-buttons isp-other-kinds isp-axes-beside-mouse isp-axis-labels isp-dpad-only \
         isp-over-capacity isp-many-devices isp-errors \
         isp-no-usable-mouse isp-activate-fails \
         apple-event-quit apple-event-open update-events suspend-hilite pump-events; do

@@ -989,6 +989,43 @@ static void IspShuffled( void ) {
 	CheckMouse( x, y, buttons, 3 );
 }
 
+/* The wheel (Delta_Z) turns into a press and release of K_MWHEELUP or
+ * K_MWHEELDOWN, one per frame it moved; a second wheel is ignored. */
+static void CheckWheel( fakeElement_t *wheel, int turn, int key ) {
+	ClearCounts();
+	mouseX = mouseY = 0;
+	wheel->state = (UInt32)turn;
+	Frame();
+	Check( downEvents[key] == 1 && upEvents[key] == 1 && !keyDownState[key],
+		"a wheel turn presses and releases its wheel key" );
+	Check( mouseX == 0 && mouseY == 0, "the wheel is not movement" );
+	Check( downEvents[key == K_MWHEELUP ? K_MWHEELDOWN : K_MWHEELUP] == 0, "and not the other" );
+}
+
+static void IspWheel( void ) {
+	fakeDevice_t	*mouse;
+	fakeElement_t	*x, *y, *wheel, *second, *buttons[1];
+
+	mouse = AddDevice( kISpDeviceClass_Mouse );
+	x = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_X );
+	wheel = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_Z );
+	y = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_Y );
+	second = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_Z );
+	buttons[0] = AddElement( mouse, kISpElementKind_Button, kISpElementLabel_Btn_MouseOne );
+	Sys_InitInput();
+	CheckMouse( x, y, buttons, 1 );
+	CheckWheel( wheel, 0x10000, K_MWHEELUP );
+	CheckWheel( wheel, -0x10000, K_MWHEELDOWN );
+	CheckWheel( wheel, 3 * 0x10000, K_MWHEELUP );
+	ClearCounts();
+	second->state = 0x10000;
+	mouseX = mouseY = 0;
+	Frame();
+	Check( !downEvents[K_MWHEELUP] && !downEvents[K_MWHEELDOWN], "a still wheel, or a second one, sends nothing" );
+	Check( mouseX == 0 && mouseY == 0, "a second wheel is not movement either" );
+	Check( !AnyKeyDown(), "nothing is left down" );
+}
+
 /* #17: more buttons than mouse keys */
 static void IspManyButtons( void ) {
 	fakeDevice_t	*mouse;
@@ -1383,6 +1420,8 @@ int main( int argc, char **argv ) {
 		OverflowReleases();
 	} else if ( !strcmp( currentCase, "isp-shuffled" ) ) {
 		IspShuffled();
+	} else if ( !strcmp( currentCase, "isp-wheel" ) ) {
+		IspWheel();
 	} else if ( !strcmp( currentCase, "isp-many-buttons" ) ) {
 		IspManyButtons();
 	} else if ( !strcmp( currentCase, "isp-other-kinds" ) ) {

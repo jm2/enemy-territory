@@ -47,6 +47,8 @@ Q3_TEST_EXTRACT_SPAN '^#define[[:space:]]+DROPPED_PACKET_REPORT_MSEC' \
     '^static[[:space:]]+void[[:space:]]+Sys_ReportDroppedPacket' "$Q3_TEST_NET" "$Q3_TEST_DIR/mac_net_extracted.c"
 Q3_TEST_EXTRACT '^qboolean[[:space:]]+Sys_GetPacket[[:space:]]*[(]' \
     "$Q3_TEST_NET" "$Q3_TEST_DIR/mac_net_extracted.c"
+Q3_TEST_EXTRACT '^void[[:space:]]+Sys_ShowIP[[:space:]]*[(]' \
+    "$Q3_TEST_NET" "$Q3_TEST_DIR/mac_net_showip_extracted.c"
 Q3_TEST_EXTRACT '^void[[:space:]]+NET_Sleep[[:space:]]*[(]' \
     "$Q3_TEST_NET" "$Q3_TEST_DIR/mac_net_sleep_extracted.c"
 Q3_TEST_EXTRACT '^int[[:space:]]+Com_EventLoop[[:space:]]*[(]' \
@@ -67,7 +69,7 @@ for Q3_TEST_CASE in host-normal host-255 host-256 host-1023 \
         init-fail-notifier init-fail-resolver-notifier init-fail-resolver-async \
         host-dotted host-disabled resolve-async resolve-error resolve-ot-timeout \
         resolve-timeout resolve-cancel \
-        sleep-timeout sleep-packet sleep-queued sleep-event sleep-client; do
+        showip sleep-timeout sleep-packet sleep-queued sleep-event sleep-client; do
     ASAN_OPTIONS=detect_leaks=${Q3_TEST_DETECT_LEAKS:-1}:halt_on_error=1 \
     UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
         "$Q3_TEST_DIR/mac_net" "$Q3_TEST_CASE"
