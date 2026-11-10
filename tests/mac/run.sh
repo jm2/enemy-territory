@@ -5,7 +5,7 @@ set -uo pipefail
 export TMPDIR="${TMPDIR:-/var/tmp}"
 cd "$(dirname "$0")"
 fails=0
-for test in crash event_queue glimp net startup_parms toolbox_init; do
+for test in clipboard crash event_queue glimp net startup_parms toolbox_init; do
     log=$(mktemp)
     if bash "run_mac_${test}_tests.sh" > "$log" 2>&1; then
         echo "mac $test: passed"

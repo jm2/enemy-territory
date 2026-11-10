@@ -866,6 +866,7 @@ void Field_KeyDownEvent( field_t *edit, int key ) {
 
 	if ( key == K_HOME || key == K_KP_HOME || ( tolower( key ) == 'a' && keys[K_CTRL].down ) ) {
 		edit->cursor = 0;
+		edit->scroll = 0;   // as Ctrl-A's character does, or a long line keeps its scroll (Quake III #569)
 		return;
 	}
 
