@@ -1017,7 +1017,7 @@ static void SV_ConSay_f( void ) {
 		return;
 	}
 
-	strcpy( text, "console: " );
+	Q_strncpyz( text, "console: ", sizeof( text ) );
 	p = Cmd_Args();
 
 	if ( *p == '"' ) {
@@ -1025,7 +1025,9 @@ static void SV_ConSay_f( void ) {
 		p[strlen( p ) - 1] = 0;
 	}
 
-	strcat( text, p );
+	// Cmd_Args can return 1023 characters, more than fit after the prefix:
+	// strcat overran text by up to 9 bytes (Quake III #573, as ioquake3)
+	Q_strcat( text, sizeof( text ), p );
 
 	SV_SendServerCommand( NULL, "chat \"%s\"", text );
 }

@@ -1281,12 +1281,13 @@ void CL_Setenv_f( void ) {
 		char buffer[1024];
 		int i;
 
-		strcpy( buffer, Cmd_Argv( 1 ) );
-		strcat( buffer, "=" );
+		// bounded: the arguments of a long line could fill more than the buffer
+		Q_strncpyz( buffer, Cmd_Argv( 1 ), sizeof( buffer ) );
+		Q_strcat( buffer, sizeof( buffer ), "=" );
 
 		for ( i = 2; i < argc; i++ ) {
-			strcat( buffer, Cmd_Argv( i ) );
-			strcat( buffer, " " );
+			Q_strcat( buffer, sizeof( buffer ), Cmd_Argv( i ) );
+			Q_strcat( buffer, sizeof( buffer ), " " );
 		}
 
 		Q_putenv( buffer );

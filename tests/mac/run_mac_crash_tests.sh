@@ -42,5 +42,5 @@ case "$Q3_TEST_OUTPUT" in
     *ordinary*) echo 'mac_symbolize.py printed a line with no address' >&2; exit 1 ;;
 esac
 printf '[     1.000] an ordinary line\n' > "$Q3_TEST_DIR/q3boot.log"
-ADDR2LINE="$Q3_TEST_DIR/addr2line" python3 "$Q3_TEST_ROOT/mac_symbolize.py" "$Q3_TEST_DIR/q3boot.log" "$Q3_TEST_DIR/fake.xcoff" | grep -q 'No crash addresses'
+ADDR2LINE="$Q3_TEST_DIR/addr2line" python3 "$Q3_TEST_ROOT/mac_symbolize.py" "$Q3_TEST_DIR/q3boot.log" "$Q3_TEST_DIR/fake.xcoff" | grep 'No crash addresses' > /dev/null
 echo "mac_symbolize.py turns log offsets into source lines"
