@@ -1454,13 +1454,15 @@ void CL_Rcon_f( void ) {
 	message[3] = -1;
 	message[4] = 0;
 
-	strcat( message, "rcon " );
+	// bounded, as Quake III and ET: Legacy do: a long console line plus the
+	// password overran message
+	Q_strcat( message, sizeof( message ), "rcon " );
 
-	strcat( message, rcon_client_password->string );
-	strcat( message, " " );
+	Q_strcat( message, sizeof( message ), rcon_client_password->string );
+	Q_strcat( message, sizeof( message ), " " );
 
 	// ATVI Wolfenstein Misc #284
-	strcat( message, Cmd_Cmd() + 5 );
+	Q_strcat( message, sizeof( message ), Cmd_Cmd() + 5 );
 
 	if ( cls.state >= CA_CONNECTED ) {
 		to = clc.netchan.remoteAddress;
@@ -3370,7 +3372,7 @@ void CL_SaveNewTranslations_f( void ) {
 		return;
 	}
 
-	strcpy( fileName, va( "translations/%s.cfg", Cmd_Argv( 1 ) ) );
+	Com_sprintf( fileName, sizeof( fileName ), "translations/%s.cfg", Cmd_Argv( 1 ) );
 
 	CL_SaveTransTable( fileName, qtrue );
 }
