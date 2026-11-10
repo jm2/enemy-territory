@@ -271,3 +271,18 @@ open(sys.argv[1],'w',encoding='latin-1').write('#line %d "src/qcommon/files.c"\n
 E
 "$CC" $FLAGS -fno-sanitize-recover=all "-DFS_EXT_INC=\"$OUT/fs_ext.inc\"" tests/security/test_fs_ext.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/fs_ext"
 "$OUT/fs_ext"
+# Cmd_Args, Cmd_ArgsFrom and their tokenizer, SV_ConSay_f and CL_Setenv_f alone:
+# their files need the whole engine
+python3 - "$OUT/cmd_args.inc" <<'A'
+import sys
+def take(path, start, end_after):
+    s=open(path,encoding='latin-1').read()
+    a=s.index(start); b=s.index('\n}\n',s.index(end_after,a))+3
+    return '#line %d "%s"\n'%(s.count('\n',0,a)+1,path)+s[a:b]
+out=take('src/qcommon/cmd.c','static int cmd_argc;','void Cmd_TokenizeString( const char *text_in ) {')
+out+=take('src/server/sv_ccmds.c','static void SV_ConSay_f( void ) {','static void SV_ConSay_f( void ) {')
+out+=take('src/client/cl_main.c','void CL_Setenv_f( void ) {','void CL_Setenv_f( void ) {')
+open(sys.argv[1],'w',encoding='latin-1').write(out)
+A
+"$CC" $FLAGS -fno-sanitize-recover=all "-DCMD_ARGS_INC=\"$OUT/cmd_args.inc\"" tests/security/test_cmd_args.c src/game/q_shared.c src/game/q_math.c -lm -o "$OUT/cmd_args"
+"$OUT/cmd_args"
