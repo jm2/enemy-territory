@@ -3,8 +3,10 @@
  * Cmd_TokenizeString takes up to BIG_INFO_STRING, so a long line overran
  * them (CVE-2019-1010043; Quake III #573). SV_ConSay_f (sv_ccmds.c) put
  * "console: " and Cmd_Args() into 1024 bytes the same way, and CL_Setenv_f
- * (cl_main.c) joined its arguments unbounded into 1024. The real functions
- * are extracted by run.sh into CMD_ARGS_INC. */
+ * (cl_main.c) joined its arguments unbounded into 1024. Cvar_Set_f
+ * (cvar.c) undercounted its words into combined[MAX_STRING_TOKENS], and
+ * CL_Rcon_f (cl_main.c) appended the password and the line into 1024. The
+ * real functions are extracted by run.sh into CMD_ARGS_INC. */
 #include "../../src/game/q_shared.h"
 #include "../../src/qcommon/qcommon.h"
 #include <stdarg.h>
@@ -39,6 +41,27 @@ static int TestPutenv( const char *str ) {
 }
 #undef Q_putenv
 #define Q_putenv TestPutenv
+
+static char setValue[BIG_INFO_STRING * 2];
+cvar_t *com_crashed;
+cvar_t *Cvar_Set2( const char *var_name, const char *value, qboolean force ) {
+	(void)var_name; (void)force;
+	Q_strncpyz( setValue, value, sizeof( setValue ) );
+	return NULL;
+}
+static cvar_t rconPassword, rconAddr;
+cvar_t *rcon_client_password = &rconPassword, *rconAddress = &rconAddr;
+netadr_t cl_rconTarget;
+static struct { connstate_t state; } cls;
+static struct { struct { netadr_t remoteAddress; } netchan; } clc;
+static char packet[BIG_INFO_STRING * 2];
+static int packetLength;
+void NET_SendPacket( netsrc_t sock, int length, const void *data, netadr_t to ) {
+	(void)sock; (void)to;
+	packetLength = length;
+	memcpy( packet, data, length < (int)sizeof( packet ) ? length : (int)sizeof( packet ) );
+}
+qboolean NET_StringToAdr( const char *s, netadr_t *a ) { (void)s; memset( a, 0, sizeof( *a ) ); return qtrue; }
 
 typedef struct cmd_function_s cmd_function_t;
 #include CMD_ARGS_INC
@@ -105,6 +128,34 @@ int main( void ) {
 	Cmd_TokenizeString( line );
 	CL_Setenv_f();
 	Check( strlen( env ) == 1023 && !strncmp( env, "NAME=xxx", 8 ), "a long setenv stops at its 1024-byte buffer" );
+
+	/* Cvar_Set_f */
+	Cmd_TokenizeString( "set v a b  c" );
+	Cvar_Set_f();
+	Check( !strcmp( setValue, "a b c" ), "a short set is unchanged" );
+	{
+		int i, n = strlen( "set v" );
+		Q_strncpyz( line, "set v", sizeof( line ) );
+		for ( i = 0 ; i < 254 ; i++ ) {
+			line[n++] = ' ';
+			line[n++] = 'a';
+		}
+		line[n] = 0;
+	}
+	Cmd_TokenizeString( line );
+	Cvar_Set_f();
+	Check( strlen( setValue ) < MAX_STRING_TOKENS && !strncmp( setValue, "a a a", 5 ), "a set of 254 short words stays in combined" );
+
+	/* CL_Rcon_f */
+	cls.state = CA_CONNECTED;
+	rconPassword.string = "secret";
+	Cmd_TokenizeString( "rcon status" );
+	CL_Rcon_f();
+	Check( packetLength == 4 + (int)strlen( "rcon secret status" ) + 1 && !memcmp( packet + 4, "rcon secret status", 19 ), "a short rcon is unchanged" );
+	LongLine( line, sizeof( line ), "rcon ", MAX_STRING_CHARS - 1 );
+	Cmd_TokenizeString( line );
+	CL_Rcon_f();
+	Check( packetLength == 1024 && !memcmp( packet + 4, "rcon secret xxx", 15 ), "a long rcon stops at its 1024-byte message" );
 
 	if ( failures ) {
 		return 1;
