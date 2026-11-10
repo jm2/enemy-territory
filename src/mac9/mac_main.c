@@ -631,8 +631,6 @@ void Sys_EndStreamedFile( int handle ) {}
 int Sys_StreamedRead( void *buffer, int size, int count, int handle ) {
     return FS_Read( buffer, size * count, handle );
 }
-void Sys_ShowIP( void ) {}
-char *Sys_GetClipboardData( void ) { return NULL; }
 qboolean Sys_LowPhysicalMemory( void ) { return qfalse; }
 
 cvar_t *sys_waitNextEvent;
@@ -1499,6 +1497,67 @@ static void Sys_MaskStartupSecrets( char *line ) {
 			}
 		}
 	}
+}
+
+/*
+==================
+Sys_ClipboardText
+
+The clipboard text the console and UI fields paste: its first line, as on
+win32 (which stops at CR, LF or backspace), at most MAX_STRING_CHARS - 1
+bytes, in a zone copy the caller frees.  NULL when that line is empty.
+==================
+*/
+static char *Sys_ClipboardText( const char *text, long length ) {
+	char	*copy;
+	long	i;
+
+	if ( length > MAX_STRING_CHARS - 1 ) {
+		length = MAX_STRING_CHARS - 1;
+	}
+	for ( i = 0 ; i < length ; i++ ) {
+		if ( text[i] == '\r' || text[i] == '\n' || text[i] == '\b' || !text[i] ) {
+			break;
+		}
+	}
+	if ( !i ) {
+		return NULL;
+	}
+	copy = Z_Malloc( i + 1 );
+	memcpy( copy, text, i );
+	copy[i] = 0;
+	return copy;
+}
+
+/*
+==================
+Sys_GetClipboardData
+
+Paste (#266): the Scrap Manager's TEXT.  It was a stub returning NULL, so
+Shift-Insert and Ctrl-V (Cmd-V, from DoKeyDown) pasted nothing.
+==================
+*/
+char *Sys_GetClipboardData( void ) {
+	Handle	text;
+	SInt32	offset;
+	long	length;
+	char	*copy;
+
+	text = NewHandle( 0 );
+	if ( !text ) {
+		return NULL;
+	}
+	copy = NULL;
+	length = GetScrap( text, kScrapFlavorTypeText, &offset );
+	if ( length > 0 ) {
+		// GetScrap sized the handle to the text.  Nothing before the copy
+		// can move it (Z_Malloc never calls the Memory Manager), so it is
+		// not locked: NewHandle, GetScrap and DisposeHandle are the only
+		// new imports (InterfaceLib 7.1 and later).
+		copy = Sys_ClipboardText( *text, length );
+	}
+	DisposeHandle( text );
+	return copy;
 }
 
 int main( int argc, char **argv ) {

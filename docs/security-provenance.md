@@ -167,7 +167,7 @@ that reply too.
 ## Quake III engine commits since the copy point
 
 Quake III's non-Mac commits after `72dfd69f`, the point `src/mac9` was first copied from, checked
-against this tree on 2026-11-08, through `da2dd5f9` (`git log --no-merges 72dfd69f..da2dd5f9 -- code ':!code/mac'`). The Mac layer itself is synced separately (to `02dc6ff6`).
+against this tree on 2026-11-08, through `da2dd5f9` (`git log --no-merges 72dfd69f..da2dd5f9 -- code ':!code/mac'`), and on 2026-11-10 through `1068d37b`. The Mac layer itself is synced separately (to `1068d37b`).
 
 | Q3A | Here |
 | --- | --- |
@@ -194,5 +194,10 @@ against this tree on 2026-11-08, through `da2dd5f9` (`git log --no-merges 72dfd6
 | `5ca9d3a9`, `fdb89cac` (#560) configstring changes held for loading clients | Ported, see the Done row |
 | `131c1167`, `fd68c0cd` (#563) a botlib parse failing, not the game, when a file fills the zone | Done here in this port's own form: see the Done rows for the botlib preprocessor (`Z_TryTagMalloc` through `botimport.TryGetMemory`). `LoadScriptFile` try-allocates the punctuation table before `SetScriptPunctuations` (`l_script.c:1407`), so `PS_CreatePunctuationTable`'s fatal allocation is reached only through `LoadScriptMemory`, whose buffer also keeps the fatal allocator here (Q3A try-allocates it), by a module's own `PC_AddGlobalDefine` string and by the AAS entity loader, which does not run. Weight files are not read: no bot AI is built |
 | `60b8909e` (#564, merged as `ec763d1d`) `R_MovePatchSurfacesToHunk` copied `heightLodError` onto itself | Already here: ET 2.60 shipped the fix (`tr_bsp.c:1811`, its `rain - copy into hunkgrid` comment) |
+| `f6f4fbf3`, `b9d74e14` (#566) a module's 2D colour converted to bytes without an undefined conversion | Already here: Q3A took ET's `RB_ColorByte` (ET #48) |
+| `8ad3dad6`, `d1214e86` (#567) Mac stubs: Rage Pro by renderer name, `r_ext_transform_hint`, the mouse wheel, `showip`, the GLM lines | Ported with the Mac layer sync (`src/mac9`, byte-identical delta) |
+| `ad0618e1`, `7e663372`, `72536628` (#569, merged as `1068d37b`) Mac console keys and paste: no `SE_CHAR` for navigation and editing keys, the PowerBook Enter, Cmd-V, `GetScrap` clipboard; Home resets the field's scroll | Ported with the Mac layer sync; the `cl_keys.c` line applied to ET's `Field_KeyDownEvent`, which has the same fault. Q3A's `key_up_regression.c` case is not taken: ET has no such test |
+| `7b7276aa` (#570) a whole screen field per stereo eye | Does not apply: ET's `cl_scrn.c` is the GPL release's, without Q3A's `f2b0bcb8` split |
+| `3d3a1aec` (#570) `cg_particles.c` in the legacy native cgame recipes | Does not apply: Quake III game build files |
 | `1a3a69d0` (#562) `R_StitchPatches`' reversed loops kept inside the LOD error arrays | Ported (`R_StitchLodError`), see the Done row. The arrays are zone blocks here too, so retail read `ZONEID` or stale bytes past them; 0 keeps every retail map's stitched grids the same |
 | `22bc848a`, `6dd67604` (#561) `Q_rsqrt` and `SquareRootFloat` read a float's bits as a 32-bit int | Ported, see the Done row. ET compiles its C `Q_rsqrt` on the Mac too (no `idppc` path), where `long` is 32 bits and the code is unchanged; only host builds read past the float |

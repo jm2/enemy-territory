@@ -660,6 +660,8 @@ extern UInt32		numDevices;
 /* ---- the engine side ---- */
 
 static int			keyDownState[256];
+static char			charsTyped[256];
+static int			numCharsTyped;
 static int			downEvents[256], upEvents[256];
 static int			packetsSeen, lastPacket;
 static int			mouseX, mouseY;
@@ -699,6 +701,10 @@ static void Frame( void ) {
 			} else {
 				upEvents[ev.evValue]++;
 			}
+		}
+		if ( ev.evType == SE_CHAR && numCharsTyped < (int)sizeof( charsTyped ) - 1 ) {
+			charsTyped[numCharsTyped++] = (char)ev.evValue;
+			charsTyped[numCharsTyped] = 0;
 		}
 		if ( ev.evType == SE_MOUSE ) {
 			mouseX += ev.evValue;
@@ -797,6 +803,49 @@ static void BackgroundModifiers( void ) {
 	macModifiers = btnState;
 	Frame();
 	Check( !keyDownState[K_SHIFT] && upEvents[K_SHIFT] == 1, "and released once" );
+}
+
+/* #266: navigation and editing keys type no character, which the text
+ * fields would read as a Ctrl shortcut; Cmd-V types Ctrl-V's, to paste. */
+static void CheckTyped( int keyCode, int charCode, int modifiers, int key, const char *chars, const char *what ) {
+	Frame();
+	ClearCounts();
+	numCharsTyped = 0;
+	charsTyped[0] = 0;
+	macModifiers = btnState | modifiers;
+	PostEvent( keyDown, ( keyCode << 8 ) | charCode );
+	PostEvent( keyUp, ( keyCode << 8 ) | charCode );
+	Frame();
+	macModifiers = btnState;
+	if ( key ) {
+		Check( downEvents[key] == 1 && upEvents[key] == 1, "the key is pressed and released" );
+	}
+	if ( numCharsTyped != (int)strlen( chars ) || memcmp( charsTyped, chars, numCharsTyped ) ) {
+		fprintf( stderr, "%s typed %d characters, first 0x%02x\n", what, numCharsTyped, (unsigned char)charsTyped[0] );
+	}
+	Check( numCharsTyped == (int)strlen( chars ) && !memcmp( charsTyped, chars, numCharsTyped ), what );
+}
+
+static void TypedChars( void ) {
+	CheckTyped( 0x72, 0x05, 0, K_INS, "", "Help types nothing (not Ctrl-E)" );
+	CheckTyped( 0x4C, 0x03, 0, K_KP_ENTER, "", "keypad Enter types nothing (not Ctrl-C)" );
+	CheckTyped( 0x75, 0x7F, 0, K_DEL, "", "Forward Delete types nothing" );
+	CheckTyped( 0x7B, 0x1C, 0, K_LEFTARROW, "", "an arrow types nothing" );
+	CheckTyped( 0x7A, 0x10, 0, K_F1, "", "a function key types nothing" );
+	CheckTyped( 0x00, 'a', 0, 'a', "a", "a letter types itself" );
+	CheckTyped( 0x57, '5', 0, K_KP_5, "5", "a keypad digit types itself" );
+	CheckTyped( 0x24, '\r', 0, K_ENTER, "\r", "Return keeps its character" );
+	CheckTyped( 0x33, '\b', 0, K_BACKSPACE, "\b", "Backspace keeps its character" );
+	CheckTyped( 0x0A, 0xA7, 0, 0, "\xa7", "a key with no Quake key keeps its character" );
+	CheckTyped( 0x09, 'v', cmdKey, 'v', "\x16", "Cmd-V types Ctrl-V, and V still goes to the binds" );
+	CheckTyped( 0x09, 'V', cmdKey | shiftKey, 'v', "\x16", "Cmd-Shift-V too" );
+	CheckTyped( 0x09, 'v', 0, 'v', "v", "V alone types v" );
+	CheckTyped( 0x08, 'c', cmdKey, 'c', "c", "other Cmd keys type as before" );
+	CheckTyped( 0x34, 0x03, 0, K_KP_ENTER, "", "a PowerBook's Enter is keypad Enter and types nothing (not Ctrl-C)" );
+	CheckTyped( 0x6A, 0x10, 0, 0, "", "an unmapped key's control character types nothing" );
+	CheckTyped( 0x73, 0x01, 0, K_HOME, "", "Home types nothing (not Ctrl-A)" );
+	CheckTyped( 0x08, 0x03, controlKey, 'c', "\x03", "Ctrl-C still types its character" );
+	CheckTyped( 0x35, 0x1B, 0, K_ESCAPE, "\x1b", "Escape keeps its character" );
 }
 
 /* #291: keys held across Cmd-Tab */
@@ -987,6 +1036,43 @@ static void IspShuffled( void ) {
 	buttons[2] = AddElement( mouse, kISpElementKind_Button, kISpElementLabel_Btn_MouseThree );
 	Sys_InitInput();
 	CheckMouse( x, y, buttons, 3 );
+}
+
+/* The wheel (Delta_Z) turns into a press and release of K_MWHEELUP or
+ * K_MWHEELDOWN, one per frame it moved; a second wheel is ignored. */
+static void CheckWheel( fakeElement_t *wheel, int turn, int key ) {
+	ClearCounts();
+	mouseX = mouseY = 0;
+	wheel->state = (UInt32)turn;
+	Frame();
+	Check( downEvents[key] == 1 && upEvents[key] == 1 && !keyDownState[key],
+		"a wheel turn presses and releases its wheel key" );
+	Check( mouseX == 0 && mouseY == 0, "the wheel is not movement" );
+	Check( downEvents[key == K_MWHEELUP ? K_MWHEELDOWN : K_MWHEELUP] == 0, "and not the other" );
+}
+
+static void IspWheel( void ) {
+	fakeDevice_t	*mouse;
+	fakeElement_t	*x, *y, *wheel, *second, *buttons[1];
+
+	mouse = AddDevice( kISpDeviceClass_Mouse );
+	x = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_X );
+	wheel = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_Z );
+	y = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_Y );
+	second = AddElement( mouse, kISpElementKind_Delta, kISpElementLabel_Delta_Z );
+	buttons[0] = AddElement( mouse, kISpElementKind_Button, kISpElementLabel_Btn_MouseOne );
+	Sys_InitInput();
+	CheckMouse( x, y, buttons, 1 );
+	CheckWheel( wheel, 0x10000, K_MWHEELUP );
+	CheckWheel( wheel, -0x10000, K_MWHEELDOWN );
+	CheckWheel( wheel, 3 * 0x10000, K_MWHEELUP );
+	ClearCounts();
+	second->state = 0x10000;
+	mouseX = mouseY = 0;
+	Frame();
+	Check( !downEvents[K_MWHEELUP] && !downEvents[K_MWHEELDOWN], "a still wheel, or a second one, sends nothing" );
+	Check( mouseX == 0 && mouseY == 0, "a second wheel is not movement either" );
+	Check( !AnyKeyDown(), "nothing is left down" );
 }
 
 /* #17: more buttons than mouse keys */
@@ -1381,8 +1467,12 @@ int main( int argc, char **argv ) {
 		Overflow();
 	} else if ( !strcmp( currentCase, "overflow-releases" ) ) {
 		OverflowReleases();
+	} else if ( !strcmp( currentCase, "typed-chars" ) ) {
+		TypedChars();
 	} else if ( !strcmp( currentCase, "isp-shuffled" ) ) {
 		IspShuffled();
+	} else if ( !strcmp( currentCase, "isp-wheel" ) ) {
+		IspWheel();
 	} else if ( !strcmp( currentCase, "isp-many-buttons" ) ) {
 		IspManyButtons();
 	} else if ( !strcmp( currentCase, "isp-other-kinds" ) ) {

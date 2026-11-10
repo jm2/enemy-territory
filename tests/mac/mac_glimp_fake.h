@@ -284,10 +284,6 @@ typedef CGrafPtr					AGLDrawable;
 #define AGL_NO_ERROR			0
 #define AGL_BAD_ALLOC			10016
 
-#define GLM_PAGE_SIZE			0x0001
-#define GLM_NUMBER_PAGES		0x0002
-#define GLM_CURRENT_MEMORY		0x0003
-#define GLM_MAXIMUM_MEMORY		0x0004
 
 void			aglGetVersion( GLint *major, GLint *minor );
 AGLPixelFormat	aglChoosePixelFormat( const AGLDevice *gdevs, GLint ndev, const GLint *attribs );

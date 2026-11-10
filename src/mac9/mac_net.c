@@ -194,6 +194,25 @@ void NET_GetLocalAddress( void ) {
 	}
 }
 
+/*
+=====================
+Sys_ShowIP
+
+The showip command: the addresses Open Transport reported at start-up.
+=====================
+*/
+void Sys_ShowIP( void ) {
+	int		i;
+
+	for ( i = 0 ; i < numIP ; i++ ) {
+		Com_Printf( "IP: %i.%i.%i.%i\n",
+			((byte *)&sys_inetInfo[i].fAddress)[0],
+			((byte *)&sys_inetInfo[i].fAddress)[1],
+			((byte *)&sys_inetInfo[i].fAddress)[2],
+			((byte *)&sys_inetInfo[i].fAddress)[3] );
+	}
+}
+
 
 /*
 =================

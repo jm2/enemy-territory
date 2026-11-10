@@ -120,7 +120,7 @@ int	vkeyToQuakeKey[256] = {
 /*0x18*/	'=', '9', '7', '-', '8', '0', ']', 'o',
 /*0x20*/	'u', '[', 'i', 'p', K_ENTER, 'l', 'j', '\'',
 /*0x28*/	'k', ';', '\\', ',', '/', 'n', 'm', '.',
-/*0x30*/	K_TAB, K_SPACE, '`', K_BACKSPACE, 0, K_ESCAPE, 0, K_COMMAND,
+/*0x30*/	K_TAB, K_SPACE, '`', K_BACKSPACE, K_KP_ENTER, K_ESCAPE, 0, K_COMMAND,	// 0x34: a PowerBook's Enter
 /*0x38*/	K_SHIFT, K_CAPSLOCK, K_ALT, K_CTRL, 0, 0, 0, 0,
 /*0x40*/	0, K_KP_DEL, 0, K_KP_STAR, 0, K_KP_PLUS, 0, K_KP_NUMLOCK,
 /*0x48*/	0, 0, 0, K_KP_SLASH, K_KP_ENTER, 0, K_KP_MINUS, 0,
@@ -131,6 +131,32 @@ int	vkeyToQuakeKey[256] = {
 /*0x70*/	0, K_F15, K_INS, K_HOME, K_PGUP, K_DEL, K_F4, K_END,
 /*0x78*/	K_F2, K_PGDN, K_F1, K_LEFTARROW, K_RIGHTARROW, K_DOWNARROW, K_UPARROW, K_POWER
 };
+
+/*
+==================
+Sys_KeyTypesChar
+
+Whether a key's character goes to the text fields (#266).  The Mac gives
+navigation and editing keys ASCII control characters, which Field_CharEvent
+reads as Ctrl shortcuts: Help (0x05) as Ctrl-E, keypad Enter (0x03) as
+Ctrl-C, which cleared the line, and Forward Delete (0x7F) typed a glyph
+after K_DEL had deleted.  Win32 and X11 send no character for these keys.
+Tab, Return, Escape, Backspace and the keypad's digits and operators keep
+theirs; so do printing keys with no Quake key, such as the ISO section key.
+==================
+*/
+static qboolean Sys_KeyTypesChar( int quakeKey ) {
+	switch ( quakeKey ) {
+	case K_UPARROW: case K_DOWNARROW: case K_LEFTARROW: case K_RIGHTARROW:
+	case K_INS: case K_DEL: case K_HOME: case K_END: case K_PGUP: case K_PGDN:
+	case K_F1: case K_F2: case K_F3: case K_F4: case K_F5: case K_F6: case K_F7: case K_F8:
+	case K_F9: case K_F10: case K_F11: case K_F12: case K_F13: case K_F14: case K_F15:
+	case K_KP_ENTER: case K_KP_NUMLOCK: case K_POWER:
+		return qfalse;
+	default:
+		return qtrue;
+	}
+}
 
 void DoKeyDown(EventRecord *event)
 {
@@ -144,6 +170,22 @@ void DoKeyDown(EventRecord *event)
 	quakeKey = vkeyToQuakeKey[ myKeyCode ];
 	if ( quakeKey ) {
 		Sys_QueEvent( Sys_MsecForMacEvent(), SE_KEY, quakeKey, 1, 0, NULL );
+	}
+	if ( !Sys_KeyTypesChar( quakeKey ) ) {
+		return;
+	}
+	// Any other key giving a control character without Control held, such
+	// as a key code missing from the table, types nothing either: only
+	// Return, Tab, Backspace and Escape mean something as characters.
+	if ( !( event->modifiers & controlKey ) && ( myCharCode == 0x7F
+		|| ( myCharCode < ' ' && myCharCode != '\r' && myCharCode != '\t'
+			&& myCharCode != '\b' && myCharCode != 0x1B ) ) ) {
+		return;
+	}
+	// Cmd-V pastes, as everywhere on the Mac: the text fields paste on
+	// Ctrl-V's character.  The V key itself still goes to the binds.
+	if ( ( event->modifiers & cmdKey ) && ( myCharCode == 'v' || myCharCode == 'V' ) ) {
+		myCharCode = 'v' - 'a' + 1;
 	}
 	Sys_QueEvent( Sys_MsecForMacEvent(), SE_CHAR, myCharCode, 0, 0, NULL );
 }

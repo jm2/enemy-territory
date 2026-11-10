@@ -2,7 +2,6 @@
 // typedef int sysEventType_t;	// FIXME...
 #include "../renderer/tr_local.h"
 #include "mac_local.h"
-#include <glm.h>
 #include "MacGamma.h"
 
 // MAX_DEVICES and macGlInfo moved to mac_local.h
@@ -11,10 +10,6 @@ cvar_t			*r_device;
 cvar_t			*r_ext_transform_hint;
 cvar_t			*r_ext_texture_filter_anisotropic;
 
-#ifndef GLM_PAGE_SIZE
-#define GLM_PAGE_SIZE 1
-#endif
-GLint glmGetInteger( GLenum param ) { return 4096; }
 glHardwareType_t		sys_hardwareType;
 macGlInfo		sys_gl;
 
@@ -426,19 +421,10 @@ void GLimp_AglDescribe_f( void ) {
 	aglDescribePixelFormat(sys_gl.fmt, AGL_RENDERER_ID, &value);
 	ri.Printf( PRINT_ALL, "RENDERER_ID: %i\n", (int)value );
 
-	// memory functions
-	value = glmGetInteger( GLM_PAGE_SIZE );
-	ri.Printf( PRINT_ALL, "GLM_PAGE_SIZE: %i\n", (int)value );
-	
-	value = glmGetInteger( GLM_NUMBER_PAGES );
-	ri.Printf( PRINT_ALL, "GLM_NUMBER_PAGES: %i\n", (int)value );
-	
-	value = glmGetInteger( GLM_CURRENT_MEMORY );
-	ri.Printf( PRINT_ALL, "GLM_CURRENT_MEMORY: %i\n", (int)value );
-	
-	value = glmGetInteger( GLM_MAXIMUM_MEMORY );
-	ri.Printf( PRINT_ALL, "GLM_MAXIMUM_MEMORY: %i\n", (int)value );
-	
+	// Retail also printed four GLM_ values here from Apple's GL memory
+	// manager.  This port does not link that library (each import is a
+	// launch risk), and the stub that stood in for it printed made-up
+	// numbers, so they are gone.
 }
 
 /*
@@ -589,7 +575,9 @@ static void GLimp_Extensions( void ) {
 
 	// apple transform hint
 	if ( strstr( extensions, "GL_APPLE_transform_hint" ) ) {
-		if ( r_ext_compiled_vertex_array->integer && r_allowExtensions->integer ) {
+		// retail tested r_ext_compiled_vertex_array here, so
+		// r_ext_transform_hint was registered but never read
+		if ( r_ext_transform_hint->integer && r_allowExtensions->integer ) {
 			glHint( GL_TRANSFORM_HINT_APPLE, GL_FASTEST );
 			ri.Printf( PRINT_ALL, "...using GL_APPLE_transform_hint\n" );
 		} else {
@@ -598,6 +586,52 @@ static void GLimp_Extensions( void ) {
 	} else {
 		ri.Printf( PRINT_ALL, "...GL_APPLE_transform_hint not found\n" );
 	}
+}
+
+/*
+===================
+GLimp_HardwareType
+
+CheckDevices calls any card with under 16,000,000 bytes of texture memory a
+Rage Pro, as retail did.  A 16 MB Rage 128 or Radeon reports less than that
+once the frame buffer is out of VRAM, and got the Rage Pro approximations:
+no damage blend, Rage Pro smoke and particles and menu background, and
+cinematics capped at 256.  The renderer name settles it, as on win32 and
+Linux: a Rage Pro by name always, a small card named as a later family
+never; an unknown name keeps the memory guess.  The other names win32 sorts
+(Banshee and Voodoo3, Permedia2, Riva 128) get its types too.
+===================
+*/
+static glHardwareType_t GLimp_HardwareType( const char *renderer, glHardwareType_t byMemory ) {
+	static const char	*capable[] = {
+		"rage 128", "rage128", "mobility 128", "radeon", "voodoo", "3dfx", "geforce", "nvidia"
+	};
+	char	name[MAX_STRING_CHARS];
+	int		i;
+
+	Q_strncpyz( name, renderer, sizeof( name ) );
+	Q_strlwr( name );
+	if ( strstr( name, "rage pro" ) || strstr( name, "ragepro" ) ) {
+		return GLHW_RAGEPRO;
+	}
+	if ( strstr( name, "banshee" ) || strstr( name, "voodoo3" ) ) {
+		return GLHW_3DFX_2D3D;
+	}
+	if ( strstr( name, "permedia2" ) ) {
+		return GLHW_PERMEDIA2;
+	}
+	if ( strstr( name, "riva 128" ) ) {
+		return GLHW_RIVA128;
+	}
+	if ( byMemory == GLHW_RAGEPRO ) {
+		for ( i = 0 ; i < (int)( sizeof( capable ) / sizeof( capable[0] ) ) ; i++ ) {
+			if ( strstr( name, capable[i] ) ) {
+				ri.Printf( PRINT_ALL, "...%s is not a Rage Pro, despite its texture memory\n", renderer );
+				return GLHW_GENERIC;
+			}
+		}
+	}
+	return byMemory;
 }
 
 /*
@@ -694,8 +728,8 @@ static void CheckDeviceRenderers( GDHandle device ) {
 		if ( accelerated ) {		
 			aglDescribeRenderer( info, AGL_TEXTURE_MEMORY, &textureMemory );
 			aglDescribeRenderer( info, AGL_VIDEO_MEMORY, &videoMemory );
-			ri.Printf( PRINT_ALL, "    AGL_VIDEO_MEMORY: %i\n", (int)textureMemory );
-			ri.Printf( PRINT_ALL, "    AGL_TEXTURE_MEMORY: %i\n", (int)videoMemory );
+			ri.Printf( PRINT_ALL, "    AGL_TEXTURE_MEMORY: %i\n", (int)textureMemory );
+			ri.Printf( PRINT_ALL, "    AGL_VIDEO_MEMORY: %i\n", (int)videoMemory );
 			
 			// save the device with the most texture memory
 			if ( sys_gl.textureMemory < textureMemory ) {
@@ -1079,7 +1113,6 @@ qboolean GLimp_SetMode( void ) {
 		return qfalse;
 	}
 #endif
-	glConfig.hardwareType = sys_hardwareType;		// FIXME: this isn't really right
 	
 	// draw something to show that GL is alive	
 	qglClearColor( 1, 0.5, 0.2, 0 );
@@ -1093,6 +1126,9 @@ qboolean GLimp_SetMode( void ) {
 
 	// get the extensions	
 	GLimp_Extensions();
+
+	// the renderer name is known now
+	glConfig.hardwareType = GLimp_HardwareType( glConfig.renderer_string, sys_hardwareType );
 
 	CheckErrors();
 	

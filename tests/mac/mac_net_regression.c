@@ -257,6 +257,7 @@ qboolean Sys_WaitEvent( long sleepTicks, qboolean *cancel ) {
 #include "mac_net_resolve_extracted.c"
 #include "mac_net_extracted.c"
 #include "mac_net_sleep_extracted.c"
+#include "mac_net_showip_extracted.c"
 
 /* Before each case: nothing open, no cvars, a fresh fake. */
 static void ResetInit( void ) {
@@ -1049,6 +1050,22 @@ static void SleepClient( void ) {
 	Check( Sleep( 50 ) == 0 && waitCalls == 0 && fakeOTCountCalls == 0, "nor a server without UDP" );
 }
 
+/* showip lists the addresses Open Transport reported, as dotted quads */
+static void ShowIP( void ) {
+	static const byte	addresses[2][4] = { { 192, 168, 1, 5 }, { 10, 0, 0, 2 } };
+
+	memcpy( &sys_inetInfo[0].fAddress, addresses[0], 4 );
+	memcpy( &sys_inetInfo[1].fAddress, addresses[1], 4 );
+	numIP = 2;
+	printed[0] = 0;
+	Sys_ShowIP();
+	Check( !strcmp( printed, "IP: 192.168.1.5\nIP: 10.0.0.2\n" ), "showip prints each local address" );
+	numIP = 0;
+	printed[0] = 0;
+	Sys_ShowIP();
+	Check( printed[0] == 0, "and nothing without one" );
+}
+
 int main( int argc, char **argv ) {
 	if ( argc != 2 ) {
 		fprintf( stderr, "usage: %s case\n", argv[0] );
@@ -1105,6 +1122,8 @@ int main( int argc, char **argv ) {
 		ResolveTimeout();
 	} else if ( !strcmp( currentCase, "resolve-cancel" ) ) {
 		ResolveCancel();
+	} else if ( !strcmp( currentCase, "showip" ) ) {
+		ShowIP();
 	} else if ( !strcmp( currentCase, "sleep-timeout" ) ) {
 		SleepTimeout();
 	} else if ( !strcmp( currentCase, "sleep-packet" ) ) {

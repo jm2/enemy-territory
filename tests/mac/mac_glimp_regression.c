@@ -69,12 +69,14 @@ void	*qglMultiTexCoord2fARB, *qglActiveTextureARB, *qglClientActiveTextureARB;
 void	*qglLockArraysEXT, *qglUnlockArraysEXT;
 
 static const char	*glExtensions = "";
+static const char	*glRenderer = "Fake Rage 128";
 static int			glClears;
+static int			transformHints;
 
 const GLubyte *qglGetString( GLenum name ) {
 	switch ( name ) {
 	case GL_VENDOR:		return (const GLubyte *)"Fake";
-	case GL_RENDERER:	return (const GLubyte *)"Fake Rage 128";
+	case GL_RENDERER:	return (const GLubyte *)glRenderer;
 	case GL_VERSION:	return (const GLubyte *)"1.1";
 	default:			return (const GLubyte *)glExtensions;
 	}
@@ -88,6 +90,9 @@ void qglClear( GLbitfield mask ) {
 }
 
 void glHint( GLenum target, GLenum mode ) {
+	if ( target == GL_TRANSFORM_HINT_APPLE && mode == GL_FASTEST ) {
+		transformHints++;
+	}
 }
 
 /* the five entry points retail called, which become PEF imports */
@@ -1522,6 +1527,72 @@ static void TestFastPaths( void ) {
 	CheckFastPaths( "fast paths, restored", 1, 1 );
 }
 
+/* A Rage Pro by renderer name; a small card of a later family is not one.
+ * CheckDevices measures memory only on the first fullscreen start, so the
+ * memory guess is passed in, and one GLimp_Init checks glConfig gets it. */
+static void CheckHardwareType( const char *renderer, glHardwareType_t byMemory, glHardwareType_t want ) {
+	glHardwareType_t	got;
+
+	currentCase = renderer;
+	got = GLimp_HardwareType( renderer, byMemory );
+	if ( got != want ) {
+		fprintf( stderr, "%s, memory guess %i: hardware type %i, want %i\n",
+			renderer, (int)byMemory, (int)got, (int)want );
+	}
+	Check( got == want, "the hardware type follows the renderer name" );
+}
+
+static void TestHardwareType( void ) {
+	ResetAll();
+	CheckHardwareType( "ATI Rage 128 OpenGL Engine", GLHW_RAGEPRO, GLHW_GENERIC );
+	CheckHardwareType( "ATI Rage128 Pro", GLHW_RAGEPRO, GLHW_GENERIC );
+	CheckHardwareType( "ATI Radeon OpenGL Engine", GLHW_RAGEPRO, GLHW_GENERIC );
+	CheckHardwareType( "ATI Rage Mobility 128", GLHW_RAGEPRO, GLHW_GENERIC );
+	CheckHardwareType( "3Dfx Voodoo4", GLHW_RAGEPRO, GLHW_GENERIC );
+	CheckHardwareType( "3Dfx Voodoo3", GLHW_RAGEPRO, GLHW_3DFX_2D3D );	/* win32's types */
+	CheckHardwareType( "3Dfx Banshee", GLHW_GENERIC, GLHW_3DFX_2D3D );
+	CheckHardwareType( "3Dlabs Permedia2", GLHW_RAGEPRO, GLHW_PERMEDIA2 );
+	CheckHardwareType( "NVIDIA Riva 128", GLHW_GENERIC, GLHW_RIVA128 );
+	CheckHardwareType( "ATI Rage Pro OpenGL Engine", GLHW_RAGEPRO, GLHW_RAGEPRO );
+	CheckHardwareType( "ATI RAGE PRO", GLHW_GENERIC, GLHW_RAGEPRO );	/* by name, whatever the memory */
+	CheckHardwareType( "Unknown Engine", GLHW_RAGEPRO, GLHW_RAGEPRO );	/* an unknown name keeps the guess */
+	CheckHardwareType( "Unknown Engine", GLHW_GENERIC, GLHW_GENERIC );
+
+	currentCase = "hardware type in glConfig";
+	glRenderer = "ATI Rage Pro OpenGL Engine";
+	Check( Init(), "GLimp_Init succeeds" );
+	CheckLive();
+	Check( glConfig.hardwareType == GLHW_RAGEPRO, "glConfig has the hardware type from the renderer name" );
+	GLimp_Shutdown();
+	CheckReleased();
+	glRenderer = "Fake Rage 128";
+}
+
+/* r_ext_transform_hint, not r_ext_compiled_vertex_array, sets the hint */
+static void CheckTransformHint( const char *name, const char *hint, const char *cva, int want ) {
+	currentCase = name;
+	CvarSet( "r_ext_transform_hint", hint );
+	CvarSet( "r_ext_compiled_vertex_array", cva );
+	transformHints = 0;
+	Check( Init(), "GLimp_Init succeeds" );
+	CheckLive();
+	Check( transformHints == want, "the transform hint follows r_ext_transform_hint" );
+	GLimp_Shutdown();
+	CheckReleased();
+}
+
+static void TestTransformHint( void ) {
+	ResetAll();
+	glExtensions = "GL_APPLE_transform_hint";
+	CheckTransformHint( "transform hint on", "1", "1", 1 );
+	CheckTransformHint( "transform hint off", "0", "1", 0 );
+	CheckTransformHint( "transform hint without compiled vertex arrays", "1", "0", 1 );
+	glExtensions = "";
+	CheckTransformHint( "transform hint absent", "1", "1", 0 );
+	CvarSet( "r_ext_transform_hint", "1" );
+	CvarSet( "r_ext_compiled_vertex_array", "1" );
+}
+
 /* #15: fail each call once, and every time, windowed and fullscreen */
 static void TestFaults( void ) {
 	static const char	*calls[] = {
@@ -1813,6 +1884,8 @@ int main( void ) {
 	TestRefresh();
 	TestStencil();
 	TestFastPaths();
+	TestHardwareType();
+	TestTransformHint();
 	TestFaults();
 	TestFullscreenConfig();
 	TestPixelFormat();
